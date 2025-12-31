@@ -497,6 +497,7 @@ export type Database = {
           contact_id: string
           created_at: string
           id: string
+          is_bot_active: boolean | null
           kanban_column_id: string | null
           last_message_at: string | null
           priority: number | null
@@ -512,6 +513,7 @@ export type Database = {
           contact_id: string
           created_at?: string
           id?: string
+          is_bot_active?: boolean | null
           kanban_column_id?: string | null
           last_message_at?: string | null
           priority?: number | null
@@ -527,6 +529,7 @@ export type Database = {
           contact_id?: string
           created_at?: string
           id?: string
+          is_bot_active?: boolean | null
           kanban_column_id?: string | null
           last_message_at?: string | null
           priority?: number | null

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -60,6 +60,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 // Template variable replacement helper
 const replaceTemplateVariables = (
@@ -91,6 +92,7 @@ interface MediaPreview {
 }
 
 export default function Atendimento() {
+  const [activeTab, setActiveTab] = useState<'attending' | 'completed' | 'chatbot'>('attending');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -246,16 +248,39 @@ export default function Atendimento() {
       const query = searchQuery.toLowerCase();
       const matchesSearch = name.includes(query) || phone.includes(query);
       
-      // Status filter
+      // Tab filter
+      let matchesTab = false;
+      if (activeTab === 'attending') {
+        // Atendendo: manual attendance (is_bot_active = false) AND status is new or in_progress
+        matchesTab = !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress');
+      } else if (activeTab === 'completed') {
+        // Concluído: status is resolved
+        matchesTab = c.status === 'resolved';
+      } else if (activeTab === 'chatbot') {
+        // Chatbot: is_bot_active = true AND status is not resolved/archived
+        matchesTab = c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived';
+      }
+      
+      // Status filter (additional filter within tab)
       const matchesStatus = statusFilter.length === 0 || statusFilter.includes(c.status);
       
       // Tag filter (we need to check conversation tags)
       // For now, we'll include all if no tag filter, otherwise we need to check
       const matchesTags = tagFilter.length === 0;
       
-      return matchesSearch && matchesStatus && matchesTags;
+      return matchesSearch && matchesTab && matchesStatus && matchesTags;
     });
-  }, [conversations, searchQuery, statusFilter, tagFilter]);
+  }, [conversations, searchQuery, activeTab, statusFilter, tagFilter]);
+
+  // Tab counts
+  const tabCounts = useMemo(() => {
+    if (!conversations) return { attending: 0, completed: 0, chatbot: 0 };
+    return {
+      attending: conversations.filter(c => !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress')).length,
+      completed: conversations.filter(c => c.status === 'resolved').length,
+      chatbot: conversations.filter(c => c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived').length,
+    };
+  }, [conversations]);
 
   const activeFiltersCount = statusFilter.length + tagFilter.length;
 
@@ -721,6 +746,35 @@ export default function Atendimento() {
         "w-full md:w-80 lg:w-96 border-r border-border flex flex-col",
         showMobileChat && "hidden md:flex"
       )}>
+        {/* Category Tabs */}
+        <div className="p-2 border-b border-border">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'attending' | 'completed' | 'chatbot')} className="w-full">
+            <TabsList className="grid w-full grid-cols-3 h-9">
+              <TabsTrigger value="attending" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <UserCheck className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Atendendo</span>
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.attending}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="completed" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Concluído</span>
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.completed}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="chatbot" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Bot className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Chatbot</span>
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.chatbot}
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+        </div>
+        
         <div className="p-3 sm:p-4 border-b border-border space-y-3">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
