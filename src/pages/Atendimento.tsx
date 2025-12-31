@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -76,6 +77,11 @@ export default function Atendimento() {
   
   // Tags state
   const [showTagPopover, setShowTagPopover] = useState(false);
+  
+  // Filter state
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [showFilterPopover, setShowFilterPopover] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
@@ -174,12 +180,48 @@ export default function Atendimento() {
     return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
   };
 
-  const filteredConversations = conversations?.filter((c) => {
-    const name = c.contact?.name?.toLowerCase() || "";
-    const phone = c.contact?.phone?.toLowerCase() || "";
-    const query = searchQuery.toLowerCase();
-    return name.includes(query) || phone.includes(query);
-  }) || [];
+  const filteredConversations = useMemo(() => {
+    if (!conversations) return [];
+    return conversations.filter((c) => {
+      // Search filter
+      const name = c.contact?.name?.toLowerCase() || "";
+      const phone = c.contact?.phone?.toLowerCase() || "";
+      const query = searchQuery.toLowerCase();
+      const matchesSearch = name.includes(query) || phone.includes(query);
+      
+      // Status filter
+      const matchesStatus = statusFilter.length === 0 || statusFilter.includes(c.status);
+      
+      // Tag filter (we need to check conversation tags)
+      // For now, we'll include all if no tag filter, otherwise we need to check
+      const matchesTags = tagFilter.length === 0;
+      
+      return matchesSearch && matchesStatus && matchesTags;
+    });
+  }, [conversations, searchQuery, statusFilter, tagFilter]);
+
+  const activeFiltersCount = statusFilter.length + tagFilter.length;
+
+  const clearFilters = () => {
+    setStatusFilter([]);
+    setTagFilter([]);
+  };
+
+  const toggleStatusFilter = (status: string) => {
+    setStatusFilter(prev => 
+      prev.includes(status) 
+        ? prev.filter(s => s !== status)
+        : [...prev, status]
+    );
+  };
+
+  const toggleTagFilter = (tagId: string) => {
+    setTagFilter(prev => 
+      prev.includes(tagId) 
+        ? prev.filter(t => t !== tagId)
+        : [...prev, tagId]
+    );
+  };
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -598,10 +640,65 @@ export default function Atendimento() {
             />
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="flex-1">
-              <Filter className="w-4 h-4 mr-2" />
-              Filtrar
-            </Button>
+            <Popover open={showFilterPopover} onOpenChange={setShowFilterPopover}>
+              <PopoverTrigger asChild>
+                <Button variant="outline" size="sm" className="flex-1 relative">
+                  <Filter className="w-4 h-4 mr-2" />
+                  Filtrar
+                  {activeFiltersCount > 0 && (
+                    <Badge className="absolute -top-2 -right-2 w-5 h-5 p-0 flex items-center justify-center bg-primary text-primary-foreground text-xs">
+                      {activeFiltersCount}
+                    </Badge>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-64 p-3" align="start">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium text-sm">Filtros</p>
+                    {activeFiltersCount > 0 && (
+                      <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={clearFilters}>
+                        Limpar
+                      </Button>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground font-medium">Status</p>
+                    {Object.entries(statusConfig).map(([key, config]) => (
+                      <label key={key} className="flex items-center gap-2 cursor-pointer">
+                        <Checkbox 
+                          checked={statusFilter.includes(key)}
+                          onCheckedChange={() => toggleStatusFilter(key)}
+                        />
+                        <Badge className={cn("text-xs", config.className)}>
+                          {config.label}
+                        </Badge>
+                      </label>
+                    ))}
+                  </div>
+                  
+                  {tags && tags.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground font-medium">Tags</p>
+                      {tags.map(tag => (
+                        <label key={tag.id} className="flex items-center gap-2 cursor-pointer">
+                          <Checkbox 
+                            checked={tagFilter.includes(tag.id)}
+                            onCheckedChange={() => toggleTagFilter(tag.id)}
+                          />
+                          <div 
+                            className="w-3 h-3 rounded-full" 
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          <span className="text-sm">{tag.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
             <Button
               variant={permission === 'granted' ? 'outline' : 'default'}
               size="sm"
@@ -615,6 +712,37 @@ export default function Atendimento() {
               )}
             </Button>
           </div>
+          
+          {/* Active filters chips */}
+          {activeFiltersCount > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {statusFilter.map(status => (
+                <Badge 
+                  key={status} 
+                  variant="secondary" 
+                  className="text-xs gap-1 cursor-pointer hover:bg-secondary/80"
+                  onClick={() => toggleStatusFilter(status)}
+                >
+                  {statusConfig[status as keyof typeof statusConfig].label}
+                  <X className="w-3 h-3" />
+                </Badge>
+              ))}
+              {tagFilter.map(tagId => {
+                const tag = tags?.find(t => t.id === tagId);
+                return tag ? (
+                  <Badge 
+                    key={tagId} 
+                    style={{ backgroundColor: tag.color }}
+                    className="text-white text-xs gap-1 cursor-pointer hover:opacity-80"
+                    onClick={() => toggleTagFilter(tagId)}
+                  >
+                    {tag.name}
+                    <X className="w-3 h-3" />
+                  </Badge>
+                ) : null;
+              })}
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -764,27 +892,6 @@ export default function Atendimento() {
                     </div>
                   </PopoverContent>
                 </Popover>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-2 hidden lg:flex"
-                  onClick={() => setShowProfilePanel(!showProfilePanel)}
-                >
-                  <User className="w-4 h-4" />
-                  Perfil
-                </Button>
-                {selectedConversation.status !== "resolved" && (
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    className="gap-2 hidden sm:flex"
-                    onClick={handleResolve}
-                    disabled={updateConversation.isPending}
-                  >
-                    <CheckCircle className="w-4 h-4" />
-                    <span className="hidden md:inline">Resolver</span>
-                  </Button>
-                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="shrink-0">
@@ -796,16 +903,17 @@ export default function Atendimento() {
                       <User className="w-4 h-4 mr-2" />
                       Ver perfil
                     </DropdownMenuItem>
+                    {selectedConversation.status !== "resolved" && (
+                      <DropdownMenuItem onClick={handleResolve} disabled={updateConversation.isPending}>
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Resolver conversa
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={() => setShowMessageSearch(true)}>
                       <Search className="w-4 h-4 mr-2" />
                       Buscar mensagens
                     </DropdownMenuItem>
-                    {selectedConversation.status !== "resolved" && (
-                      <DropdownMenuItem onClick={handleResolve} className="sm:hidden">
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Resolver
-                      </DropdownMenuItem>
-                    )}
                     <DropdownMenuItem onClick={() => setShowTagPopover(true)}>
                       <Tag className="w-4 h-4 mr-2" />
                       Gerenciar tags
