@@ -45,7 +45,7 @@ serve(async (req) => {
         if (state === "open") {
           status = "connected";
         } else if (state === "connecting" || state === "qrcode") {
-          status = "qr_code";
+          status = "connecting";
         }
 
         await supabaseClient
@@ -67,7 +67,7 @@ serve(async (req) => {
           .from("connections")
           .update({ 
             qr_code: data?.qrcode?.base64,
-            status: "qr_code",
+            status: "connecting",
           })
           .eq("id", connection.id);
 

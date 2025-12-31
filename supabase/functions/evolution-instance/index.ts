@@ -63,7 +63,7 @@ serve(async (req) => {
           .insert({
             name: instanceName,
             type: "whatsapp",
-            status: "qr_code",
+            status: "connecting",
             session_data: { instanceName },
           })
           .select()
@@ -156,7 +156,7 @@ serve(async (req) => {
         console.log("Status response:", JSON.stringify(statusData));
 
         const isConnected = statusData.instance?.state === "open";
-        const newStatus = isConnected ? "connected" : statusData.instance?.state === "close" ? "disconnected" : "qr_code";
+        const newStatus = isConnected ? "connected" : statusData.instance?.state === "close" ? "disconnected" : "connecting";
 
         // Update status in database
         await supabaseClient
