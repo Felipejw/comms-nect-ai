@@ -37,7 +37,10 @@ serve(async (req) => {
 
     switch (action) {
       case "create": {
-        // Create instance in Evolution API with QR code enabled
+        // Get Supabase URL for webhook
+        const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+        
+        // Create instance in Evolution API with QR code enabled and webhook
         const createResponse = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
           method: "POST",
           headers: evolutionHeaders,
@@ -45,12 +48,18 @@ serve(async (req) => {
             instanceName,
             qrcode: true,
             integration: "WHATSAPP-BAILEYS",
+            webhook: {
+              url: `${SUPABASE_URL}/functions/v1/evolution-webhook`,
+              byEvents: false,
+              base64: true,
+              events: ["QRCODE_UPDATED", "CONNECTION_UPDATE", "MESSAGES_UPSERT", "MESSAGES_UPDATE"]
+            }
           }),
         });
 
         const createData = await createResponse.json();
         console.log("[Evolution Instance] Create response status:", createResponse.status);
-        console.log("[Evolution Instance] Create response:", JSON.stringify(createData));
+        console.log("[Evolution Instance] Create FULL response:", JSON.stringify(createData, null, 2));
 
         if (!createResponse.ok) {
           console.error("[Evolution Instance] Create failed:", createData);
@@ -90,22 +99,62 @@ serve(async (req) => {
           throw dbError;
         }
 
-        // If no QR from create, try to fetch it via connect endpoint
+        // If no QR from create, wait and try to fetch it via connect endpoint with retries
         if (!qrCodeBase64) {
-          console.log("[Evolution Instance] Fetching QR via connect endpoint...");
-          const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
-            method: "GET",
-            headers: evolutionHeaders,
-          });
-
-          const qrData = await qrResponse.json();
-          console.log("[Evolution Instance] Connect response:", JSON.stringify(qrData));
-
-          if (qrData.base64) {
-            qrCodeBase64 = qrData.base64.startsWith("data:") 
-              ? qrData.base64 
-              : `data:image/png;base64,${qrData.base64}`;
+          console.log("[Evolution Instance] Waiting 2s before fetching QR via connect endpoint...");
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          for (let attempt = 0; attempt < 5; attempt++) {
+            console.log(`[Evolution Instance] Fetch QR attempt ${attempt + 1}/5...`);
             
+            try {
+              const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+                method: "GET",
+                headers: evolutionHeaders,
+              });
+
+              const qrData = await qrResponse.json();
+              console.log(`[Evolution Instance] Connect response (attempt ${attempt + 1}):`, JSON.stringify(qrData, null, 2));
+
+              // Check for base64 QR
+              if (qrData.base64) {
+                qrCodeBase64 = qrData.base64.startsWith("data:") 
+                  ? qrData.base64 
+                  : `data:image/png;base64,${qrData.base64}`;
+                console.log("[Evolution Instance] Got QR from connect endpoint");
+                break;
+              }
+              
+              // If we have the QR string code, generate image
+              if (qrData.code) {
+                console.log("[Evolution Instance] Generating QR from code string...");
+                try {
+                  const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData.code)}`;
+                  const qrImageResponse = await fetch(qrApiUrl);
+                  
+                  if (qrImageResponse.ok) {
+                    const arrayBuffer = await qrImageResponse.arrayBuffer();
+                    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                    qrCodeBase64 = `data:image/png;base64,${base64}`;
+                    console.log("[Evolution Instance] QR code generated from code string");
+                    break;
+                  }
+                } catch (e) {
+                  console.error("[Evolution Instance] Failed to generate QR from string:", e);
+                }
+              }
+            } catch (e) {
+              console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
+            }
+            
+            // Wait 2 seconds before next retry
+            if (attempt < 4) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          }
+          
+          // Update database with QR if found
+          if (qrCodeBase64) {
             await supabaseClient
               .from("connections")
               .update({ qr_code: qrCodeBase64 })
@@ -377,8 +426,9 @@ serve(async (req) => {
           console.log("[Evolution Instance] Delete failed (might not exist):", e);
         }
 
-        // 2. Wait for delete to take effect
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // 2. Wait 2 seconds for delete to take effect
+        console.log("[Evolution Instance] Waiting 2s after delete...");
+        await new Promise(resolve => setTimeout(resolve, 2000));
 
         // 3. Get Supabase URL for webhook
         const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
@@ -401,7 +451,7 @@ serve(async (req) => {
         });
 
         const createData = await createResponse.json();
-        console.log("[Evolution Instance] Recreate response:", JSON.stringify(createData));
+        console.log("[Evolution Instance] Recreate FULL response:", JSON.stringify(createData, null, 2));
 
         if (!createResponse.ok) {
           throw new Error(createData.message || createData.error || "Failed to recreate instance");
@@ -420,12 +470,13 @@ serve(async (req) => {
           qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
         }
 
-        // 6. If no QR from create, retry fetching via connect endpoint
+        // 6. If no QR from create, retry fetching via connect endpoint with more retries
         if (!qrCodeBase64) {
-          console.log("[Evolution Instance] No QR from create, trying connect endpoint with retries...");
+          console.log("[Evolution Instance] No QR from create, waiting 2s then trying connect endpoint...");
+          await new Promise(resolve => setTimeout(resolve, 2000));
           
-          for (let attempt = 0; attempt < 3; attempt++) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+          for (let attempt = 0; attempt < 5; attempt++) {
+            console.log(`[Evolution Instance] Connect attempt ${attempt + 1}/5...`);
             
             try {
               const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instName}`, {
@@ -434,7 +485,7 @@ serve(async (req) => {
               });
               
               const qrData = await qrResponse.json();
-              console.log(`[Evolution Instance] Connect attempt ${attempt + 1}:`, JSON.stringify(qrData));
+              console.log(`[Evolution Instance] Connect response (attempt ${attempt + 1}):`, JSON.stringify(qrData, null, 2));
               
               // Check for base64 QR
               if (qrData.base64) {
@@ -456,7 +507,7 @@ serve(async (req) => {
                     const arrayBuffer = await qrImageResponse.arrayBuffer();
                     const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
                     qrCodeBase64 = `data:image/png;base64,${base64}`;
-                    console.log("[Evolution Instance] QR code generated from string");
+                    console.log("[Evolution Instance] QR code generated from code string");
                     break;
                   }
                 } catch (e) {
@@ -465,6 +516,11 @@ serve(async (req) => {
               }
             } catch (e) {
               console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
+            }
+            
+            // Wait 2 seconds before next retry
+            if (attempt < 4) {
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
           }
         }
@@ -485,6 +541,63 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             qrCode: qrCodeBase64,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      case "diagnose": {
+        // Diagnostic action to check Evolution API status
+        const { data: conn } = await supabaseClient
+          .from("connections")
+          .select("session_data, name")
+          .eq("id", connectionId)
+          .single();
+
+        const instName = conn?.session_data?.instanceName || conn?.name;
+        const diagnostics: Record<string, unknown> = { instanceName: instName };
+
+        // 1. Fetch all instances
+        try {
+          const instancesResponse = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+            method: "GET",
+            headers: evolutionHeaders,
+          });
+          diagnostics.fetchInstances = await instancesResponse.json();
+        } catch (e) {
+          diagnostics.fetchInstancesError = String(e);
+        }
+
+        // 2. Check connection state
+        if (instName) {
+          try {
+            const stateResponse = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${instName}`, {
+              method: "GET",
+              headers: evolutionHeaders,
+            });
+            diagnostics.connectionState = await stateResponse.json();
+          } catch (e) {
+            diagnostics.connectionStateError = String(e);
+          }
+
+          // 3. Try to get QR
+          try {
+            const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instName}`, {
+              method: "GET",
+              headers: evolutionHeaders,
+            });
+            diagnostics.connectResponse = await qrResponse.json();
+          } catch (e) {
+            diagnostics.connectError = String(e);
+          }
+        }
+
+        console.log("[Evolution Instance] Diagnostics:", JSON.stringify(diagnostics, null, 2));
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            diagnostics,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

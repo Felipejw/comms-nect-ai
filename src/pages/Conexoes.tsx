@@ -53,15 +53,20 @@ export default function Conexoes() {
 
   const [recreateAttempts, setRecreateAttempts] = useState<Record<string, number>>({});
 
+  const [pollCount, setPollCount] = useState(0);
+  
   // Polling for QR code and status updates
   useEffect(() => {
     if (!pollingConnection) return;
 
     const interval = setInterval(async () => {
+      setPollCount(prev => prev + 1);
+      
       const connection = connections.find(c => c.id === pollingConnection);
       
       if (!connection) {
         setPollingConnection(null);
+        setPollCount(0);
         return;
       }
 
@@ -69,22 +74,23 @@ export default function Conexoes() {
         setPollingConnection(null);
         setSelectedConnection(null);
         setRecreateAttempts({});
+        setPollCount(0);
         return;
       }
 
-      // If connecting but no QR code, try to recreate after 2 attempts
+      // If connecting but no QR code, try to recreate after 3 attempts (15 seconds)
       if (connection.status === "connecting" && !connection.qr_code) {
         const attempts = recreateAttempts[pollingConnection] || 0;
         
-        if (attempts >= 2) {
-          console.log("[Polling] No QR after 2 attempts, recreating instance...");
+        if (attempts >= 3) {
+          console.log("[Polling] No QR after 3 attempts, recreating instance...");
           setRecreateAttempts({});
           await recreateConnection.mutateAsync(pollingConnection).catch((e) => {
             console.error("[Polling] Failed to recreate:", e);
           });
         } else {
           setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: attempts + 1 }));
-          console.log(`[Polling] No QR code, attempt ${attempts + 1}/2`);
+          console.log(`[Polling] No QR code, attempt ${attempts + 1}/3`);
         }
       }
 
@@ -93,7 +99,7 @@ export default function Conexoes() {
       
       // Refresh connections
       refetch();
-    }, 3000);
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [pollingConnection, connections, checkStatus, recreateConnection, refetch, recreateAttempts]);
@@ -244,8 +250,13 @@ export default function Conexoes() {
                       <Loader2 className="w-12 h-12 animate-spin" />
                       <span className="text-sm">Gerando QR Code...</span>
                       <span className="text-xs text-center mt-2">
-                        Clique em "Reconectar" se demorar
+                        Aguardando resposta do servidor...
                       </span>
+                      {pollCount > 0 && (
+                        <span className="text-xs text-yellow-500">
+                          Verificação #{pollCount} em andamento
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
