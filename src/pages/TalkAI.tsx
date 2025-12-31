@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Brain, Settings, MessageSquare, Sparkles, RefreshCw, Save, Zap, HelpCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Brain, Settings, MessageSquare, Sparkles, RefreshCw, Save, Zap, HelpCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -19,10 +19,63 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useAISettings, useUpdateAISettings } from "@/hooks/useChatbot";
+import { toast } from "sonner";
+
+const aiModels = [
+  { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash", provider: "Google" },
+  { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro", provider: "Google" },
+  { value: "openai/gpt-5-mini", label: "GPT-5 Mini", provider: "OpenAI" },
+  { value: "openai/gpt-5", label: "GPT-5", provider: "OpenAI" },
+];
 
 export default function TalkAI() {
+  const { data: settings, isLoading } = useAISettings();
+  const updateSettings = useUpdateAISettings();
+  
   const [isEnabled, setIsEnabled] = useState(true);
+  const [selectedModel, setSelectedModel] = useState("google/gemini-2.5-flash");
   const [creativity, setCreativity] = useState([50]);
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [knowledgeBase, setKnowledgeBase] = useState("");
+
+  useEffect(() => {
+    if (settings) {
+      setIsEnabled(settings.is_enabled ?? true);
+      setSelectedModel(settings.model ?? "google/gemini-2.5-flash");
+      setCreativity([(settings.temperature ?? 0.5) * 100]);
+      setSystemPrompt(settings.system_prompt ?? "");
+      setKnowledgeBase(settings.knowledge_base ?? "");
+    }
+  }, [settings]);
+
+  const handleSave = async () => {
+    if (!settings) return;
+    
+    await updateSettings.mutateAsync({
+      id: settings.id,
+      is_enabled: isEnabled,
+      model: selectedModel,
+      temperature: creativity[0] / 100,
+      system_prompt: systemPrompt,
+      knowledge_base: knowledgeBase,
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -30,7 +83,7 @@ export default function TalkAI() {
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
             <Brain className="w-7 h-7 text-primary" />
-            Talk.AI
+            Chatbot IA
           </h2>
           <p className="text-muted-foreground">Inteligência artificial para respostas automáticas</p>
         </div>
@@ -42,8 +95,12 @@ export default function TalkAI() {
               {isEnabled ? "Ativo" : "Inativo"}
             </Badge>
           </div>
-          <Button className="gap-2">
-            <Save className="w-4 h-4" />
+          <Button className="gap-2" onClick={handleSave} disabled={updateSettings.isPending}>
+            {updateSettings.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4" />
+            )}
             Salvar Configurações
           </Button>
         </div>
@@ -116,6 +173,38 @@ export default function TalkAI() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <Card>
               <CardHeader>
+                <CardTitle>Modelo de IA</CardTitle>
+                <CardDescription>Escolha o modelo de inteligência artificial</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Provedor e Modelo</Label>
+                  <Select value={selectedModel} onValueChange={setSelectedModel}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Selecione o modelo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {aiModels.map((model) => (
+                        <SelectItem key={model.value} value={model.value}>
+                          <span className="flex items-center gap-2">
+                            <Badge variant="outline" className="text-xs">
+                              {model.provider}
+                            </Badge>
+                            {model.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    Gemini Flash é mais rápido e econômico. GPT-5 é mais preciso para tarefas complexas.
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
                 <CardTitle>Personalidade do Bot</CardTitle>
                 <CardDescription>Configure como a IA deve se comportar</CardDescription>
               </CardHeader>
@@ -125,13 +214,14 @@ export default function TalkAI() {
                   <Textarea
                     placeholder="Você é um assistente virtual amigável e profissional..."
                     rows={6}
-                    defaultValue="Você é um assistente virtual da nossa empresa. Seja sempre educado, prestativo e objetivo nas respostas. Use um tom profissional mas amigável. Se não souber a resposta, encaminhe para um atendente humano."
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
                   />
                 </div>
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <Label>Criatividade</Label>
-                    <span className="text-sm text-muted-foreground">{creativity}%</span>
+                    <span className="text-sm text-muted-foreground">{creativity[0]}%</span>
                   </div>
                   <Slider
                     value={creativity}
@@ -146,24 +236,27 @@ export default function TalkAI() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="lg:col-span-2">
               <CardHeader>
                 <CardTitle>Regras de Atuação</CardTitle>
                 <CardDescription>Quando a IA deve responder automaticamente</CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {[
-                  { label: "Responder fora do horário comercial", enabled: true },
-                  { label: "Responder perguntas frequentes", enabled: true },
-                  { label: "Coletar informações iniciais", enabled: true },
-                  { label: "Encaminhar para fila correta", enabled: false },
-                  { label: "Sugerir respostas para atendentes", enabled: true },
-                ].map((rule, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 rounded-lg border border-border">
-                    <span className="text-sm">{rule.label}</span>
-                    <Switch defaultChecked={rule.enabled} />
-                  </div>
-                ))}
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {[
+                    { label: "Responder fora do horário comercial", enabled: true },
+                    { label: "Responder perguntas frequentes", enabled: true },
+                    { label: "Coletar informações iniciais", enabled: true },
+                    { label: "Encaminhar para fila correta", enabled: false },
+                    { label: "Sugerir respostas para atendentes", enabled: true },
+                    { label: "Responder automaticamente em filas específicas", enabled: false },
+                  ].map((rule, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 rounded-lg border border-border">
+                      <span className="text-sm">{rule.label}</span>
+                      <Switch defaultChecked={rule.enabled} />
+                    </div>
+                  ))}
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -182,19 +275,9 @@ export default function TalkAI() {
                 <Label>Informações da Empresa</Label>
                 <Textarea
                   placeholder="Adicione informações sobre sua empresa, produtos, serviços..."
-                  rows={8}
-                  defaultValue={`Nossa empresa atua no mercado desde 2010.
-
-Horário de funcionamento: Segunda a Sexta, das 8h às 18h.
-
-Produtos principais:
-- Plano Básico: R$ 99/mês
-- Plano Profissional: R$ 199/mês
-- Plano Empresarial: R$ 399/mês
-
-Formas de pagamento: Cartão de crédito, boleto, PIX.
-
-Prazo de entrega: 3 a 5 dias úteis.`}
+                  rows={12}
+                  value={knowledgeBase}
+                  onChange={(e) => setKnowledgeBase(e.target.value)}
                 />
               </div>
               <div className="flex gap-2">
@@ -202,7 +285,8 @@ Prazo de entrega: 3 a 5 dias úteis.`}
                   <RefreshCw className="w-4 h-4" />
                   Retreinar IA
                 </Button>
-                <Button className="gap-2">
+                <Button className="gap-2" onClick={handleSave} disabled={updateSettings.isPending}>
+                  {updateSettings.isPending && <Loader2 className="w-4 h-4 animate-spin" />}
                   <Save className="w-4 h-4" />
                   Salvar Base
                 </Button>

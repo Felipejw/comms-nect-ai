@@ -461,6 +461,7 @@ export type Database = {
           contact_id: string
           created_at: string
           id: string
+          kanban_column_id: string | null
           last_message_at: string | null
           priority: number | null
           queue_id: string | null
@@ -475,6 +476,7 @@ export type Database = {
           contact_id: string
           created_at?: string
           id?: string
+          kanban_column_id?: string | null
           last_message_at?: string | null
           priority?: number | null
           queue_id?: string | null
@@ -489,6 +491,7 @@ export type Database = {
           contact_id?: string
           created_at?: string
           id?: string
+          kanban_column_id?: string | null
           last_message_at?: string | null
           priority?: number | null
           queue_id?: string | null
@@ -503,6 +506,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_kanban_column_id_fkey"
+            columns: ["kanban_column_id"]
+            isOneToOne: false
+            referencedRelation: "kanban_columns"
             referencedColumns: ["id"]
           },
           {
@@ -616,6 +626,33 @@ export type Database = {
           name?: string
           type?: string
           updated_at?: string
+        }
+        Relationships: []
+      }
+      kanban_columns: {
+        Row: {
+          color: string | null
+          created_at: string | null
+          id: string
+          name: string
+          position: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string | null
+          id?: string
+          name: string
+          position?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          color?: string | null
+          created_at?: string | null
+          id?: string
+          name?: string
+          position?: number | null
+          updated_at?: string | null
         }
         Relationships: []
       }
