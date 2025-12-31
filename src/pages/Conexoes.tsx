@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { QrCode, Smartphone, RefreshCw, Wifi, WifiOff, Plus, Trash2, Power, Loader2, Server, AlertTriangle } from "lucide-react";
+import { QrCode, Smartphone, RefreshCw, Wifi, WifiOff, Plus, Trash2, Power, Loader2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -39,7 +39,6 @@ export default function Conexoes() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState<WhatsAppConnection | null>(null);
   const [pollingConnection, setPollingConnection] = useState<string | null>(null);
-  const [serverHealth, setServerHealth] = useState<{ apiReachable?: boolean; instanceCount?: number } | null>(null);
   const { toast } = useToast();
 
   const {
@@ -180,32 +179,6 @@ export default function Conexoes() {
     }
   };
 
-  const handleCheckServerHealth = async () => {
-    try {
-      const result = await checkServerHealth.mutateAsync();
-      setServerHealth(result.health);
-      
-      if (result.health?.apiReachable) {
-        toast({
-          title: "Servidor Evolution API",
-          description: `Conectado! ${result.health.instanceCount || 0} instância(s) no servidor.`,
-        });
-      } else {
-        toast({
-          title: "Servidor não acessível",
-          description: "Verifique se o servidor Evolution API está rodando e acessível.",
-          variant: "destructive",
-        });
-      }
-    } catch (error) {
-      console.error("Error checking server health:", error);
-      toast({
-        title: "Erro ao verificar servidor",
-        description: error instanceof Error ? error.message : "Erro desconhecido",
-        variant: "destructive",
-      });
-    }
-  };
 
   const handleCleanupOrphaned = async () => {
     try {
@@ -241,19 +214,6 @@ export default function Conexoes() {
           <p className="text-muted-foreground">Gerencie suas conexões de WhatsApp</p>
         </div>
         <div className="flex gap-2">
-          <Button 
-            variant="outline" 
-            onClick={handleCheckServerHealth}
-            disabled={checkServerHealth.isPending}
-            className="gap-2"
-          >
-            {checkServerHealth.isPending ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Server className="w-4 h-4" />
-            )}
-            Verificar Servidor
-          </Button>
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2">
@@ -296,20 +256,6 @@ export default function Conexoes() {
         </div>
       </div>
 
-      {/* Server Health Alert */}
-      {serverHealth && !serverHealth.apiReachable && (
-        <Card className="border-destructive bg-destructive/10">
-          <CardContent className="flex items-center gap-4 py-4">
-            <AlertTriangle className="w-6 h-6 text-destructive" />
-            <div>
-              <p className="font-medium text-destructive">Servidor Evolution API não acessível</p>
-              <p className="text-sm text-muted-foreground">
-                Verifique se o servidor está rodando e se as variáveis EVOLUTION_API_URL e EVOLUTION_API_KEY estão configuradas corretamente.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* QR Code Card */}
