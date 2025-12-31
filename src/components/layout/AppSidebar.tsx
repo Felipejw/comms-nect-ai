@@ -52,7 +52,7 @@ const navSections: NavSection[] = [
   {
     title: "Atendimento",
     items: [
-      { title: "Caixa de Atendimento", href: "/atendimento", icon: MessageSquare },
+      { title: "WhatsApp", href: "/atendimento", icon: MessageSquare },
       { title: "Respostas Rápidas", href: "/respostas-rapidas", icon: Zap },
       { title: "Kanban", href: "/kanban", icon: Kanban },
       { title: "Contatos", href: "/contatos", icon: Users },

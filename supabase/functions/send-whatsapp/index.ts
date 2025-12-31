@@ -8,7 +8,7 @@ const corsHeaders = {
 interface SendMessagePayload {
   conversationId: string;
   content: string;
-  messageType?: "text" | "image" | "audio" | "document";
+  messageType?: "text" | "image" | "audio" | "document" | "video";
   mediaUrl?: string;
 }
 
@@ -164,6 +164,21 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           number: formattedPhone,
           audio: mediaUrl,
+        }),
+      });
+    } else if (messageType === "video" && mediaUrl) {
+      console.log(`Sending video to ${formattedPhone}`);
+      evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "apikey": evolutionApiKey,
+        },
+        body: JSON.stringify({
+          number: formattedPhone,
+          mediatype: "video",
+          media: mediaUrl,
+          caption: content,
         }),
       });
     } else {

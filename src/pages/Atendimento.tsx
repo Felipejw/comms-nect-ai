@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video } from "lucide-react";
+import Picker from '@emoji-mart/react';
+import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -67,7 +69,7 @@ const statusConfig = {
 
 interface MediaPreview {
   file: File;
-  type: 'image' | 'document' | 'audio';
+  type: 'image' | 'document' | 'audio' | 'video';
   previewUrl?: string;
 }
 
@@ -94,6 +96,9 @@ export default function Atendimento() {
   // Tags state
   const [showTagPopover, setShowTagPopover] = useState(false);
   
+  // Emoji picker state
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
@@ -103,6 +108,7 @@ export default function Atendimento() {
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
   const { user, profile } = useAuth();
@@ -295,20 +301,21 @@ export default function Atendimento() {
     }
   }, [currentSearchIndex, searchResults]);
 
-  const handleFileSelect = (e: ChangeEvent<HTMLInputElement>, type: 'image' | 'document') => {
+  const handleFileSelect = (e: ChangeEvent<HTMLInputElement>, type: 'image' | 'document' | 'video') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
+    const maxSize = type === 'video' ? 50 * 1024 * 1024 : 10 * 1024 * 1024;
+    if (file.size > maxSize) {
       toast({
         title: "Arquivo muito grande",
-        description: "O arquivo deve ter no máximo 10MB",
+        description: `O arquivo deve ter no máximo ${type === 'video' ? '50MB' : '10MB'}`,
         variant: "destructive",
       });
       return;
     }
 
-    const previewUrl = type === 'image' ? URL.createObjectURL(file) : undefined;
+    const previewUrl = (type === 'image' || type === 'video') ? URL.createObjectURL(file) : undefined;
     setMediaPreview({ file, type, previewUrl });
     setAttachmentOpen(false);
     e.target.value = '';
@@ -412,7 +419,7 @@ export default function Atendimento() {
 
       await sendMessage.mutateAsync({
         conversationId: selectedConversation.id,
-        content: messageText.trim() || (mediaPreview?.type === 'image' ? '📷 Imagem' : mediaPreview?.file.name || ''),
+        content: messageText.trim() || (mediaPreview?.type === 'image' ? '📷 Imagem' : mediaPreview?.type === 'video' ? '🎬 Vídeo' : mediaPreview?.file.name || ''),
         senderId: user.id,
         senderType: "agent",
         sendViaWhatsApp: isWhatsApp,
@@ -476,6 +483,11 @@ export default function Atendimento() {
     );
     setMessageText(processedMessage);
     setShowQuickReplies(false);
+  };
+
+  const handleEmojiSelect = (emoji: any) => {
+    setMessageText(prev => prev + emoji.native);
+    setShowEmojiPicker(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -596,6 +608,16 @@ export default function Atendimento() {
               <source src={message.media_url} />
             </audio>
           )}
+          {message.message_type === "video" && message.media_url && (
+            <video 
+              controls 
+              className="rounded-lg max-w-full mb-2"
+              style={{ maxHeight: '300px' }}
+            >
+              <source src={message.media_url} />
+              Seu navegador não suporta vídeos.
+            </video>
+          )}
           {message.content && (
             <p className="text-sm break-words">
               {messageSearchQuery ? highlightText(message.content, messageSearchQuery) : message.content}
@@ -628,7 +650,7 @@ export default function Atendimento() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] bg-card rounded-xl border border-border overflow-hidden">
+    <div className="flex h-[calc(100vh-7rem)] bg-card rounded-xl border border-border overflow-hidden shadow-sm">
       {/* Hidden file inputs */}
       <input
         ref={imageInputRef}
@@ -643,6 +665,13 @@ export default function Atendimento() {
         accept=".pdf,.doc,.docx,.xls,.xlsx,.txt"
         className="hidden"
         onChange={(e) => handleFileSelect(e, 'document')}
+      />
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept="video/*"
+        className="hidden"
+        onChange={(e) => handleFileSelect(e, 'video')}
       />
 
       {/* Contact List */}
@@ -1044,6 +1073,12 @@ export default function Atendimento() {
                     <Mic className="w-6 h-6 sm:w-8 sm:h-8 text-accent" />
                   </div>
                 )}
+                {mediaPreview.type === 'video' && mediaPreview.previewUrl && (
+                  <video 
+                    src={mediaPreview.previewUrl} 
+                    className="w-16 h-16 object-cover rounded-lg"
+                  />
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium truncate">{mediaPreview.file.name}</p>
                   <p className="text-xs text-muted-foreground">
@@ -1102,9 +1137,22 @@ export default function Atendimento() {
           {/* Message Input */}
           <div className="p-2 sm:p-4 border-t border-border">
             <div className="flex items-end gap-1 sm:gap-2">
-              <Button variant="ghost" size="icon" className="shrink-0 hidden sm:flex">
-                <Smile className="w-5 h-5" />
-              </Button>
+              <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
+                <PopoverTrigger asChild>
+                  <Button variant="ghost" size="icon" className="shrink-0 hidden sm:flex">
+                    <Smile className="w-5 h-5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0 border-0" align="start" side="top">
+                  <Picker 
+                    data={data} 
+                    onEmojiSelect={handleEmojiSelect} 
+                    locale="pt" 
+                    theme="auto"
+                    previewPosition="none"
+                  />
+                </PopoverContent>
+              </Popover>
               <Popover open={attachmentOpen} onOpenChange={setAttachmentOpen}>
                 <PopoverTrigger asChild>
                   <Button variant="ghost" size="icon" className="shrink-0">
@@ -1120,6 +1168,14 @@ export default function Atendimento() {
                     >
                       <Image className="w-4 h-4 text-primary" />
                       Imagem
+                    </Button>
+                    <Button 
+                      variant="ghost" 
+                      className="w-full justify-start gap-2"
+                      onClick={() => videoInputRef.current?.click()}
+                    >
+                      <Video className="w-4 h-4 text-accent" />
+                      Vídeo
                     </Button>
                     <Button 
                       variant="ghost" 
