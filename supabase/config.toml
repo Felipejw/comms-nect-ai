@@ -7,7 +7,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.evolution-instance]
-verify_jwt = true
+verify_jwt = false
 
 [functions.evolution-webhook]
 verify_jwt = false
