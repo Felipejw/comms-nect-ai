@@ -50,7 +50,7 @@ export default function Conexoes() {
     deleteConnection,
   } = useWhatsAppConnections();
 
-  // Polling for QR code and status updates
+  // Polling for QR code and status updates - faster interval for QR expiration
   useEffect(() => {
     if (!pollingConnection) return;
 
@@ -73,7 +73,7 @@ export default function Conexoes() {
       
       // Refresh connections
       refetch();
-    }, 5000);
+    }, 3000); // Reduced to 3 seconds for faster QR updates
 
     return () => clearInterval(interval);
   }, [pollingConnection, connections, checkStatus, refetch]);
@@ -91,6 +91,11 @@ export default function Conexoes() {
       if (result.connection) {
         setSelectedConnection(result.connection);
         setPollingConnection(result.connection.id);
+        
+        // If QR code was returned, update local state immediately
+        if (result.qrCode) {
+          console.log("QR Code received from create:", result.qrCode ? "Yes" : "No");
+        }
       }
     } catch (error) {
       console.error("Error creating connection:", error);
@@ -199,7 +204,7 @@ export default function Conexoes() {
           <CardContent className="flex flex-col items-center justify-center py-12">
             {pendingConnection ? (
               <>
-                <div className="w-64 h-64 rounded-2xl bg-white flex items-center justify-center mb-6 p-2">
+                <div className="w-64 h-64 rounded-2xl bg-white flex items-center justify-center mb-6 p-2 relative">
                   {pendingConnection.qr_code ? (
                     <img 
                       src={pendingConnection.qr_code} 
@@ -210,12 +215,18 @@ export default function Conexoes() {
                     <div className="flex flex-col items-center gap-2 text-muted-foreground">
                       <Loader2 className="w-12 h-12 animate-spin" />
                       <span className="text-sm">Gerando QR Code...</span>
+                      <span className="text-xs text-center mt-2">
+                        Clique em "Reconectar" se demorar
+                      </span>
                     </div>
                   )}
                 </div>
                 <h3 className="text-lg font-semibold mb-2">{pendingConnection.name}</h3>
                 <p className="text-muted-foreground text-center text-sm mb-4">
                   Escaneie o QR Code com seu WhatsApp para conectar
+                </p>
+                <p className="text-xs text-yellow-500 mb-4">
+                  ⚠️ O QR Code expira em ~40 segundos. Clique em "Reconectar" para gerar um novo.
                 </p>
                 <div className="flex gap-2">
                   <Button 
@@ -229,7 +240,7 @@ export default function Conexoes() {
                     ) : (
                       <RefreshCw className="w-4 h-4" />
                     )}
-                    Atualizar QR
+                    Reconectar
                   </Button>
                   <AlertDialog>
                     <AlertDialogTrigger asChild>
