@@ -4,7 +4,7 @@ project_id = "qducanwbpleoceynmend"
 verify_jwt = true
 
 [functions.send-whatsapp]
-verify_jwt = true
+verify_jwt = false
 
 [functions.evolution-instance]
 verify_jwt = false
