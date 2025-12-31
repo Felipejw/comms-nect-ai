@@ -36,6 +36,13 @@ import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
+import { useFileUpload } from "@/hooks/useFileUpload";
+import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { useQuickReplies, QuickReply } from "@/hooks/useQuickReplies";
+import { useTags } from "@/hooks/useTags";
+import { useConversationTags, useAddTagToConversation, useRemoveTagFromConversation } from "@/hooks/useConversationTags";
+import { useNotifications } from "@/hooks/useNotifications";
+import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 
 // Template variable replacement helper
 const replaceTemplateVariables = (
@@ -52,13 +59,6 @@ const replaceTemplateVariables = (
     .replace(/{hora}/gi, format(now, 'HH:mm'))
     .replace(/{atendente}/gi, attendantName || 'Atendente');
 };
-import { useFileUpload } from "@/hooks/useFileUpload";
-import { useAudioRecorder } from "@/hooks/useAudioRecorder";
-import { useQuickReplies, QuickReply } from "@/hooks/useQuickReplies";
-import { useTags } from "@/hooks/useTags";
-import { useConversationTags, useAddTagToConversation, useRemoveTagFromConversation } from "@/hooks/useConversationTags";
-import { useNotifications } from "@/hooks/useNotifications";
-import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 
 const statusConfig = {
   new: { label: "Novo", className: "bg-primary/10 text-primary" },
