@@ -16,6 +16,12 @@ export interface Message {
   created_at: string;
 }
 
+export interface ConversationTag {
+  id: string;
+  name: string;
+  color: string;
+}
+
 export interface Conversation {
   id: string;
   contact_id: string;
@@ -40,6 +46,7 @@ export interface Conversation {
     name: string;
     avatar_url: string | null;
   } | null;
+  tags?: ConversationTag[];
 }
 
 export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | 'archived') {
@@ -99,9 +106,33 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         profiles?.forEach(p => assigneeMap.set(p.user_id, p));
       }
       
+      // Fetch conversation tags
+      const conversationIds = (data || []).map(c => c.id);
+      let tagsMap = new Map<string, ConversationTag[]>();
+      
+      if (conversationIds.length > 0) {
+        const { data: convTags } = await supabase
+          .from('conversation_tags')
+          .select(`
+            conversation_id,
+            tag:tags(id, name, color)
+          `)
+          .in('conversation_id', conversationIds);
+        
+        convTags?.forEach(ct => {
+          const tag = ct.tag as unknown as { id: string; name: string; color: string };
+          if (tag) {
+            const existing = tagsMap.get(ct.conversation_id) || [];
+            existing.push({ id: tag.id, name: tag.name, color: tag.color });
+            tagsMap.set(ct.conversation_id, existing);
+          }
+        });
+      }
+      
       return (data || []).map(conv => ({
         ...conv,
         assignee: conv.assigned_to ? assigneeMap.get(conv.assigned_to) || null : null,
+        tags: tagsMap.get(conv.id) || [],
       })) as Conversation[];
     },
   });
