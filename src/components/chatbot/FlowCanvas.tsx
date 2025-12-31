@@ -116,7 +116,7 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn }: FlowCanva
       });
 
       const newNode: Node = {
-        id: `${type}_${Date.now()}`,
+        id: crypto.randomUUID(),
         type,
         position,
         data: { label: getDefaultLabel(type) },
