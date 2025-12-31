@@ -25,6 +25,7 @@ import Integracoes from "./pages/Integracoes";
 import Conexoes from "./pages/Conexoes";
 import Relatorios from "./pages/Relatorios";
 import Painel from "./pages/Painel";
+import Configuracoes from "./pages/Configuracoes";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -60,6 +61,7 @@ const App = () => (
               <Route path="/talk-ai" element={<TalkAI />} />
               <Route path="/integracoes" element={<Integracoes />} />
               <Route path="/conexoes" element={<Conexoes />} />
+              <Route path="/configuracoes" element={<Configuracoes />} />
             </Route>
             
             <Route path="*" element={<NotFound />} />
