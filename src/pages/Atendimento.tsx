@@ -34,6 +34,22 @@ import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
+
+// Template variable replacement helper
+const replaceTemplateVariables = (
+  text: string, 
+  contact?: { name?: string | null; phone?: string | null; company?: string | null },
+  attendantName?: string
+): string => {
+  const now = new Date();
+  return text
+    .replace(/{nome}/gi, contact?.name || 'Cliente')
+    .replace(/{telefone}/gi, contact?.phone || '')
+    .replace(/{empresa}/gi, contact?.company || '')
+    .replace(/{data}/gi, format(now, 'dd/MM/yyyy', { locale: ptBR }))
+    .replace(/{hora}/gi, format(now, 'HH:mm'))
+    .replace(/{atendente}/gi, attendantName || 'Atendente');
+};
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
 import { useQuickReplies, QuickReply } from "@/hooks/useQuickReplies";
@@ -89,7 +105,7 @@ export default function Atendimento() {
   const imageInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { toast } = useToast();
   const { data: conversations, isLoading: conversationsLoading } = useConversations();
   const { data: messages, isLoading: messagesLoading } = useMessages(selectedConversation?.id || "");
@@ -453,7 +469,12 @@ export default function Atendimento() {
   };
 
   const insertQuickReply = (reply: QuickReply) => {
-    setMessageText(reply.message);
+    const processedMessage = replaceTemplateVariables(
+      reply.message,
+      selectedConversation?.contact,
+      profile?.name
+    );
+    setMessageText(processedMessage);
     setShowQuickReplies(false);
   };
 

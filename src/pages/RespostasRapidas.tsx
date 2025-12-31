@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Plus, Search, Edit, Trash2, Copy, Zap, Loader2 } from "lucide-react";
+import { useState, useRef } from "react";
+import { Plus, Search, Edit, Trash2, Copy, Zap, Loader2, HelpCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -20,18 +20,35 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { useQuickReplies, useCreateQuickReply, useDeleteQuickReply } from "@/hooks/useQuickReplies";
+import { useQuickReplies, useCreateQuickReply, useDeleteQuickReply, useUpdateQuickReply, QuickReply } from "@/hooks/useQuickReplies";
 
 const defaultCategories = ["Todas", "Saudações", "Atendimento", "Logística", "Suporte"];
+
+const templateVariables = [
+  { name: "{nome}", description: "Nome do contato" },
+  { name: "{telefone}", description: "Telefone do contato" },
+  { name: "{empresa}", description: "Empresa do contato" },
+  { name: "{data}", description: "Data atual (DD/MM/AAAA)" },
+  { name: "{hora}", description: "Hora atual (HH:MM)" },
+  { name: "{atendente}", description: "Nome do atendente" },
+];
 
 export default function RespostasRapidas() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [editingReply, setEditingReply] = useState<QuickReply | null>(null);
+  
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   
   // Form state
   const [formData, setFormData] = useState({
@@ -44,6 +61,7 @@ export default function RespostasRapidas() {
   const { data: quickReplies, isLoading } = useQuickReplies();
   const createQuickReply = useCreateQuickReply();
   const deleteQuickReply = useDeleteQuickReply();
+  const updateQuickReply = useUpdateQuickReply();
 
   // Get unique categories from data
   const categories = ["Todas", ...new Set(quickReplies?.map(r => r.category).filter(Boolean) as string[])];
@@ -62,23 +80,57 @@ export default function RespostasRapidas() {
     toast.success("Mensagem copiada!");
   };
 
-  const handleCreate = async () => {
+  const resetForm = () => {
+    setFormData({ shortcut: "", title: "", message: "", category: "" });
+    setEditingReply(null);
+  };
+
+  const handleOpenDialog = (reply?: QuickReply) => {
+    if (reply) {
+      setEditingReply(reply);
+      setFormData({
+        shortcut: reply.shortcut,
+        title: reply.title,
+        message: reply.message,
+        category: reply.category || "",
+      });
+    } else {
+      resetForm();
+    }
+    setIsDialogOpen(true);
+  };
+
+  const handleCloseDialog = () => {
+    setIsDialogOpen(false);
+    resetForm();
+  };
+
+  const handleSave = async () => {
     if (!formData.shortcut || !formData.title || !formData.message) {
       toast.error("Preencha todos os campos obrigatórios");
       return;
     }
 
     const shortcut = formData.shortcut.startsWith('/') ? formData.shortcut : `/${formData.shortcut}`;
+
+    if (editingReply) {
+      await updateQuickReply.mutateAsync({
+        id: editingReply.id,
+        shortcut,
+        title: formData.title,
+        message: formData.message,
+        category: formData.category || undefined,
+      });
+    } else {
+      await createQuickReply.mutateAsync({
+        shortcut,
+        title: formData.title,
+        message: formData.message,
+        category: formData.category || undefined,
+      });
+    }
     
-    await createQuickReply.mutateAsync({
-      shortcut,
-      title: formData.title,
-      message: formData.message,
-      category: formData.category || undefined,
-    });
-    
-    setFormData({ shortcut: "", title: "", message: "", category: "" });
-    setIsDialogOpen(false);
+    handleCloseDialog();
   };
 
   const handleDelete = async () => {
@@ -87,6 +139,26 @@ export default function RespostasRapidas() {
     setDeleteId(null);
   };
 
+  const insertVariable = (variable: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentMessage = formData.message;
+    const newMessage = currentMessage.substring(0, start) + variable + currentMessage.substring(end);
+    
+    setFormData(prev => ({ ...prev, message: newMessage }));
+    
+    // Restore focus and cursor position
+    setTimeout(() => {
+      textarea.focus();
+      textarea.setSelectionRange(start + variable.length, start + variable.length);
+    }, 0);
+  };
+
+  const isPending = createQuickReply.isPending || updateQuickReply.isPending;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -94,16 +166,18 @@ export default function RespostasRapidas() {
           <h2 className="text-2xl font-bold">Respostas Rápidas</h2>
           <p className="text-muted-foreground">Crie atalhos para agilizar seus atendimentos</p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+        <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
           <DialogTrigger asChild>
             <Button className="gap-2">
               <Plus className="w-4 h-4" />
               Nova Resposta
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-lg">
             <DialogHeader>
-              <DialogTitle>Criar Resposta Rápida</DialogTitle>
+              <DialogTitle>
+                {editingReply ? "Editar Resposta Rápida" : "Criar Resposta Rápida"}
+              </DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-4">
               <div className="grid grid-cols-2 gap-4">
@@ -133,26 +207,59 @@ export default function RespostasRapidas() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Mensagem *</Label>
+                <div className="flex items-center justify-between">
+                  <Label>Mensagem *</Label>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-6 px-2 text-xs gap-1">
+                        <HelpCircle className="w-3 h-3" />
+                        Variáveis
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left" className="max-w-xs">
+                      <p className="font-medium mb-2">Variáveis dinâmicas:</p>
+                      <ul className="space-y-1 text-xs">
+                        {templateVariables.map(v => (
+                          <li key={v.name}>
+                            <code className="bg-muted px-1 rounded">{v.name}</code> - {v.description}
+                          </li>
+                        ))}
+                      </ul>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
                 <Textarea 
-                  placeholder="Digite a mensagem..." 
+                  ref={textareaRef}
+                  placeholder="Digite a mensagem... Use {nome} para inserir o nome do contato automaticamente" 
                   rows={4} 
                   value={formData.message}
                   onChange={(e) => setFormData(prev => ({ ...prev, message: e.target.value }))}
                 />
+                <div className="flex flex-wrap gap-1">
+                  {templateVariables.map(v => (
+                    <Badge 
+                      key={v.name}
+                      variant="outline" 
+                      className="cursor-pointer hover:bg-accent text-xs"
+                      onClick={() => insertVariable(v.name)}
+                    >
+                      {v.name}
+                    </Badge>
+                  ))}
+                </div>
               </div>
               <Button 
                 className="w-full" 
-                onClick={handleCreate}
-                disabled={createQuickReply.isPending}
+                onClick={handleSave}
+                disabled={isPending}
               >
-                {createQuickReply.isPending ? (
+                {isPending ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Criando...
+                    {editingReply ? "Salvando..." : "Criando..."}
                   </>
                 ) : (
-                  "Criar Resposta"
+                  editingReply ? "Salvar Alterações" : "Criar Resposta"
                 )}
               </Button>
             </div>
@@ -219,7 +326,12 @@ export default function RespostasRapidas() {
                   >
                     <Copy className="w-4 h-4" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="w-8 h-8">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="w-8 h-8"
+                    onClick={() => handleOpenDialog(reply)}
+                  >
                     <Edit className="w-4 h-4" />
                   </Button>
                   <Button 
