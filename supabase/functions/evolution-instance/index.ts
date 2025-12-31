@@ -124,7 +124,7 @@ serve(async (req) => {
       }
 
       case "getQrCode": {
-        // First, restart the instance to force new QR code generation
+        // Get instance name from database
         const { data: conn } = await supabaseClient
           .from("connections")
           .select("session_data")
@@ -133,23 +133,7 @@ serve(async (req) => {
 
         const instName = conn?.session_data?.instanceName || instanceName;
 
-        console.log(`[Evolution Instance] Restarting instance ${instName} to refresh QR...`);
-
-        // Try to restart instance first (this regenerates QR)
-        try {
-          const restartResponse = await fetch(`${EVOLUTION_API_URL}/instance/restart/${instName}`, {
-            method: "PUT",
-            headers: evolutionHeaders,
-          });
-          console.log("[Evolution Instance] Restart response status:", restartResponse.status);
-        } catch (e) {
-          console.log("[Evolution Instance] Restart failed, trying connect directly:", e);
-        }
-
-        // Wait a bit for restart to take effect
-        await new Promise(resolve => setTimeout(resolve, 1000));
-
-        // Now fetch the QR code
+        // Fetch the QR code from connect endpoint
         const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instName}`, {
           method: "GET",
           headers: evolutionHeaders,
@@ -159,13 +143,31 @@ serve(async (req) => {
         console.log("[Evolution Instance] Get QR response:", JSON.stringify(qrData));
 
         let qrCodeBase64 = null;
+        
+        // Check for base64 first (some Evolution versions return it)
         if (qrData.base64) {
           qrCodeBase64 = qrData.base64.startsWith("data:") 
             ? qrData.base64 
             : `data:image/png;base64,${qrData.base64}`;
-        } else if (qrData.code) {
-          // If only string code is returned, we'll need to generate QR on frontend
-          console.log("[Evolution Instance] Only QR code string returned, not base64");
+        }
+        
+        // If we have the QR string code, generate the image using a QR code API
+        if (!qrCodeBase64 && qrData.code) {
+          console.log("[Evolution Instance] Generating QR from code string...");
+          try {
+            // Use a public QR code generation API
+            const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData.code)}`;
+            const qrImageResponse = await fetch(qrApiUrl);
+            
+            if (qrImageResponse.ok) {
+              const arrayBuffer = await qrImageResponse.arrayBuffer();
+              const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+              qrCodeBase64 = `data:image/png;base64,${base64}`;
+              console.log("[Evolution Instance] QR code generated from string");
+            }
+          } catch (e) {
+            console.error("[Evolution Instance] Failed to generate QR from string:", e);
+          }
         }
 
         // Update QR code in database
@@ -174,6 +176,8 @@ serve(async (req) => {
             .from("connections")
             .update({ qr_code: qrCodeBase64, status: "connecting" })
             .eq("id", connectionId);
+        } else {
+          console.log("[Evolution Instance] No QR code available, instance might need to be recreated");
         }
 
         return new Response(
@@ -182,6 +186,7 @@ serve(async (req) => {
             qrCode: qrCodeBase64,
             qrString: qrData.code,
             pairingCode: qrData.pairingCode,
+            count: qrData.count,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
