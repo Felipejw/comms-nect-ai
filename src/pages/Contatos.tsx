@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2 } from "lucide-react";
+import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -25,9 +26,19 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
-import { useContacts, useCreateContact, useDeleteContact, Contact } from "@/hooks/useContacts";
-import { useAuth } from "@/contexts/AuthContext";
+import { Textarea } from "@/components/ui/textarea";
+import { useContacts, useCreateContact, useDeleteContact, useUpdateContact, Contact } from "@/hooks/useContacts";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -35,12 +46,17 @@ import { ptBR } from "date-fns/locale";
 export default function Contatos() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [newContact, setNewContact] = useState({ name: "", email: "", phone: "" });
+  const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [newContact, setNewContact] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
+  const [editContact, setEditContact] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
   
   const { data: contacts, isLoading } = useContacts();
   const createContact = useCreateContact();
   const deleteContact = useDeleteContact();
-  const { isAdmin } = useAuth();
+  const updateContact = useUpdateContact();
 
   const filteredContacts = contacts?.filter(
     (c) =>
@@ -59,16 +75,60 @@ export default function Contatos() {
       name: newContact.name.trim(),
       email: newContact.email.trim() || undefined,
       phone: newContact.phone.trim() || undefined,
+      company: newContact.company.trim() || undefined,
+      notes: newContact.notes.trim() || undefined,
     });
     
-    setNewContact({ name: "", email: "", phone: "" });
+    setNewContact({ name: "", email: "", phone: "", company: "", notes: "" });
     setIsDialogOpen(false);
   };
 
-  const handleDeleteContact = async (id: string) => {
-    if (confirm("Tem certeza que deseja excluir este contato?")) {
-      await deleteContact.mutateAsync(id);
+  const handleUpdateContact = async () => {
+    if (!selectedContact || !editContact.name.trim()) {
+      toast.error("Nome é obrigatório");
+      return;
     }
+    
+    await updateContact.mutateAsync({
+      id: selectedContact.id,
+      name: editContact.name.trim(),
+      email: editContact.email.trim() || undefined,
+      phone: editContact.phone.trim() || undefined,
+      company: editContact.company.trim() || undefined,
+      notes: editContact.notes.trim() || undefined,
+    });
+    
+    setIsEditDialogOpen(false);
+    setSelectedContact(null);
+  };
+
+  const handleDeleteContact = async () => {
+    if (!selectedContact) return;
+    await deleteContact.mutateAsync(selectedContact.id);
+    setIsDeleteDialogOpen(false);
+    setSelectedContact(null);
+  };
+
+  const openViewDialog = (contact: Contact) => {
+    setSelectedContact(contact);
+    setIsViewDialogOpen(true);
+  };
+
+  const openEditDialog = (contact: Contact) => {
+    setSelectedContact(contact);
+    setEditContact({
+      name: contact.name,
+      email: contact.email || "",
+      phone: contact.phone || "",
+      company: contact.company || "",
+      notes: contact.notes || "",
+    });
+    setIsEditDialogOpen(true);
+  };
+
+  const openDeleteDialog = (contact: Contact) => {
+    setSelectedContact(contact);
+    setIsDeleteDialogOpen(true);
   };
 
   const formatLastContact = (date: string | null) => {
@@ -128,6 +188,22 @@ export default function Contatos() {
                   placeholder="(00) 00000-0000"
                   value={newContact.phone}
                   onChange={(e) => setNewContact(prev => ({ ...prev, phone: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Empresa</Label>
+                <Input 
+                  placeholder="Nome da empresa"
+                  value={newContact.company}
+                  onChange={(e) => setNewContact(prev => ({ ...prev, company: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Notas</Label>
+                <Textarea 
+                  placeholder="Observações sobre o contato"
+                  value={newContact.notes}
+                  onChange={(e) => setNewContact(prev => ({ ...prev, notes: e.target.value }))}
                 />
               </div>
               <Button 
@@ -239,23 +315,26 @@ export default function Contatos() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openViewDialog(contact)}>
+                          <Eye className="w-4 h-4 mr-2" />
+                          Ver informações
+                        </DropdownMenuItem>
                         <DropdownMenuItem>
                           <MessageSquare className="w-4 h-4 mr-2" />
                           Iniciar conversa
                         </DropdownMenuItem>
-                        <DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openEditDialog(contact)}>
                           <Edit className="w-4 h-4 mr-2" />
                           Editar
                         </DropdownMenuItem>
-                        {isAdmin && (
-                          <DropdownMenuItem 
-                            className="text-destructive"
-                            onClick={() => handleDeleteContact(contact.id)}
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            Excluir
-                          </DropdownMenuItem>
-                        )}
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem 
+                          className="text-destructive"
+                          onClick={() => openDeleteDialog(contact)}
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Excluir
+                        </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -265,6 +344,197 @@ export default function Contatos() {
           </TableBody>
         </Table>
       </div>
+
+      {/* View Contact Dialog */}
+      <Dialog open={isViewDialogOpen} onOpenChange={setIsViewDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Informações do Contato</DialogTitle>
+          </DialogHeader>
+          {selectedContact && (
+            <div className="space-y-6 py-4">
+              <div className="flex items-center gap-4">
+                <Avatar className="w-16 h-16">
+                  <AvatarImage src={selectedContact.avatar_url || undefined} />
+                  <AvatarFallback className="bg-primary/10 text-primary text-xl">
+                    {selectedContact.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <div>
+                  <h3 className="text-lg font-semibold">{selectedContact.name}</h3>
+                  <Badge
+                    className={
+                      selectedContact.status === "active"
+                        ? "bg-success/10 text-success"
+                        : "bg-muted text-muted-foreground"
+                    }
+                  >
+                    {selectedContact.status === "active" ? "Ativo" : "Inativo"}
+                  </Badge>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {selectedContact.email && (
+                  <div className="flex items-center gap-3 text-sm">
+                    <Mail className="w-4 h-4 text-muted-foreground" />
+                    <span>{selectedContact.email}</span>
+                  </div>
+                )}
+                {selectedContact.phone && (
+                  <div className="flex items-center gap-3 text-sm">
+                    <Phone className="w-4 h-4 text-muted-foreground" />
+                    <span>{selectedContact.phone}</span>
+                  </div>
+                )}
+                {selectedContact.company && (
+                  <div className="flex items-center gap-3 text-sm">
+                    <Building className="w-4 h-4 text-muted-foreground" />
+                    <span>{selectedContact.company}</span>
+                  </div>
+                )}
+              </div>
+
+              {selectedContact.tags && selectedContact.tags.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Tag className="w-4 h-4" />
+                    <span>Tags</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedContact.tags.map((tag) => (
+                      <Badge 
+                        key={tag.id} 
+                        variant="secondary"
+                        style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {selectedContact.notes && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <FileText className="w-4 h-4" />
+                    <span>Notas</span>
+                  </div>
+                  <p className="text-sm bg-muted/50 rounded-lg p-3">{selectedContact.notes}</p>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-4 border-t">
+                <Button 
+                  variant="outline" 
+                  className="flex-1"
+                  onClick={() => {
+                    setIsViewDialogOpen(false);
+                    openEditDialog(selectedContact);
+                  }}
+                >
+                  <Edit className="w-4 h-4 mr-2" />
+                  Editar
+                </Button>
+                <Button className="flex-1">
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Iniciar Conversa
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Contact Dialog */}
+      <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Editar Contato</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input 
+                placeholder="Nome completo"
+                value={editContact.name}
+                onChange={(e) => setEditContact(prev => ({ ...prev, name: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>E-mail</Label>
+              <Input 
+                type="email" 
+                placeholder="email@exemplo.com"
+                value={editContact.email}
+                onChange={(e) => setEditContact(prev => ({ ...prev, email: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Telefone</Label>
+              <Input 
+                placeholder="(00) 00000-0000"
+                value={editContact.phone}
+                onChange={(e) => setEditContact(prev => ({ ...prev, phone: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Empresa</Label>
+              <Input 
+                placeholder="Nome da empresa"
+                value={editContact.company}
+                onChange={(e) => setEditContact(prev => ({ ...prev, company: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Notas</Label>
+              <Textarea 
+                placeholder="Observações sobre o contato"
+                value={editContact.notes}
+                onChange={(e) => setEditContact(prev => ({ ...prev, notes: e.target.value }))}
+              />
+            </div>
+            <Button 
+              className="w-full" 
+              onClick={handleUpdateContact}
+              disabled={updateContact.isPending}
+            >
+              {updateContact.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Salvando...
+                </>
+              ) : (
+                "Salvar Alterações"
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir contato?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir o contato "{selectedContact?.name}"? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteContact}
+              disabled={deleteContact.isPending}
+            >
+              {deleteContact.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Excluir
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
