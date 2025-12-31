@@ -53,9 +53,42 @@ export default function Atendimento() {
   const sendMessage = useSendMessage();
   const updateConversation = useUpdateConversation();
 
-  const filteredConversations = conversations?.filter((c) =>
-    c.contact?.name.toLowerCase().includes(searchQuery.toLowerCase())
-  ) || [];
+  // Helper para obter nome de exibição (nome > telefone > "Contato")
+  const getDisplayName = (contact?: Conversation['contact']) => {
+    if (!contact) return "Contato";
+    return contact.name || contact.phone || "Contato";
+  };
+
+  // Helper para formatar telefone para exibição
+  const formatPhoneDisplay = (phone?: string | null) => {
+    if (!phone) return null;
+    // Tenta formatar como +55 (XX) XXXXX-XXXX
+    const cleaned = phone.replace(/\D/g, '');
+    if (cleaned.length === 13) {
+      return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9)}`;
+    } else if (cleaned.length === 12) {
+      return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
+    }
+    return phone;
+  };
+
+  // Helper para obter iniciais
+  const getInitials = (contact?: Conversation['contact']) => {
+    const name = getDisplayName(contact);
+    if (name === "Contato") return "?";
+    // Se for telefone, usa os últimos 2 dígitos
+    if (/^\d+$/.test(name.replace(/\D/g, '')) && name.replace(/\D/g, '').length > 2) {
+      return name.replace(/\D/g, '').slice(-2);
+    }
+    return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+  };
+
+  const filteredConversations = conversations?.filter((c) => {
+    const name = c.contact?.name?.toLowerCase() || "";
+    const phone = c.contact?.phone?.toLowerCase() || "";
+    const query = searchQuery.toLowerCase();
+    return name.includes(query) || phone.includes(query);
+  }) || [];
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -68,6 +101,16 @@ export default function Atendimento() {
       setSelectedConversation(conversations[0]);
     }
   }, [conversations, selectedConversation]);
+
+  // Atualizar conversa selecionada quando os dados mudarem (real-time sync)
+  useEffect(() => {
+    if (selectedConversation && conversations) {
+      const updated = conversations.find(c => c.id === selectedConversation.id);
+      if (updated) {
+        setSelectedConversation(updated);
+      }
+    }
+  }, [conversations]);
 
   // Cleanup preview URL on unmount
   useEffect(() => {
@@ -290,15 +333,15 @@ export default function Atendimento() {
                   selectedConversation?.id === conversation.id && "conversation-item-active"
                 )}
               >
-                <Avatar className="w-12 h-12">
+              <Avatar className="w-12 h-12">
                   <AvatarImage src={conversation.contact?.avatar_url || undefined} />
                   <AvatarFallback className="bg-primary/10 text-primary font-medium">
-                    {conversation.contact?.name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                    {getInitials(conversation.contact)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <p className="font-medium text-sm truncate">{conversation.contact?.name || "Contato"}</p>
+                    <p className="font-medium text-sm truncate">{getDisplayName(conversation.contact)}</p>
                     <span className="text-xs text-muted-foreground">
                       {formatRelativeTime(conversation.last_message_at)}
                     </span>
@@ -332,14 +375,14 @@ export default function Atendimento() {
               <Avatar className="w-10 h-10">
                 <AvatarImage src={selectedConversation.contact?.avatar_url || undefined} />
                 <AvatarFallback className="bg-primary/10 text-primary">
-                  {selectedConversation.contact?.name?.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                  {getInitials(selectedConversation.contact)}
                 </AvatarFallback>
               </Avatar>
               <div>
-                <p className="font-medium">{selectedConversation.contact?.name || "Contato"}</p>
+                <p className="font-medium">{getDisplayName(selectedConversation.contact)}</p>
                 <div className="flex items-center gap-2">
                   <p className="text-xs text-muted-foreground">
-                    {selectedConversation.contact?.phone || selectedConversation.contact?.email || "-"}
+                    {formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"}
                   </p>
                   {selectedConversation.channel === "whatsapp" && (
                     <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1 text-green-600 border-green-600/30">
