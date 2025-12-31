@@ -131,14 +131,16 @@ export default function Conexoes() {
     switch (status) {
       case "connected":
         return <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Online</Badge>;
-      case "qr_code":
+      case "connecting":
         return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">Aguardando QR</Badge>;
+      case "error":
+        return <Badge variant="destructive">Erro</Badge>;
       default:
         return <Badge variant="secondary">Desconectado</Badge>;
     }
   };
 
-  const pendingConnection = connections.find(c => c.status === "qr_code");
+  const pendingConnection = connections.find(c => c.status === "connecting");
 
   return (
     <div className="space-y-6">
