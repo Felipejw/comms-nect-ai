@@ -549,10 +549,23 @@ serve(async (req) => {
           qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
         }
 
-        // 6. If no QR from create, retry fetching via connect endpoint with more retries
+        // 6. If no QR from create, restart instance and retry fetching via connect endpoint
         if (!qrCodeBase64) {
-          console.log("[Evolution Instance] No QR from create, waiting 2s then trying connect endpoint...");
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          console.log("[Evolution Instance] No QR from create, restarting instance...");
+          
+          // Call restart to force new QR generation
+          try {
+            await fetch(`${EVOLUTION_API_URL}/instance/restart/${instName}`, {
+              method: "PUT",
+              headers: evolutionHeaders,
+            });
+            console.log("[Evolution Instance] Restart called, waiting 5s...");
+          } catch (e) {
+            console.log("[Evolution Instance] Restart failed:", e);
+          }
+          
+          // Wait longer for WhatsApp to initialize
+          await new Promise(resolve => setTimeout(resolve, 5000));
           
           for (let attempt = 0; attempt < 5; attempt++) {
             console.log(`[Evolution Instance] Connect attempt ${attempt + 1}/5...`);
@@ -577,7 +590,7 @@ serve(async (req) => {
               
               // If we have the QR string code, generate image
               if (qrData.code) {
-                console.log("[Evolution Instance] Generating QR from code string...");
+                console.log("[Evolution Instance] Generating QR from code string:", qrData.code.substring(0, 50) + "...");
                 try {
                   const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData.code)}`;
                   const qrImageResponse = await fetch(qrApiUrl);
@@ -593,13 +606,18 @@ serve(async (req) => {
                   console.error("[Evolution Instance] Failed to generate QR from string:", e);
                 }
               }
+              
+              // If we have pairing code, we can use that as fallback
+              if (qrData.pairingCode) {
+                console.log("[Evolution Instance] Pairing code available:", qrData.pairingCode);
+              }
             } catch (e) {
               console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
             }
             
-            // Wait 2 seconds before next retry
+            // Wait 3 seconds before next retry (increased from 2)
             if (attempt < 4) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
+              await new Promise(resolve => setTimeout(resolve, 3000));
             }
           }
         }
