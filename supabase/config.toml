@@ -1,1 +1,13 @@
 project_id = "qducanwbpleoceynmend"
+
+[functions.create-user]
+verify_jwt = true
+
+[functions.send-whatsapp]
+verify_jwt = true
+
+[functions.evolution-instance]
+verify_jwt = true
+
+[functions.evolution-webhook]
+verify_jwt = false
