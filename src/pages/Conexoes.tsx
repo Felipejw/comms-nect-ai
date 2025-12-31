@@ -58,6 +58,7 @@ export default function Conexoes() {
 
   const [recreateAttempts, setRecreateAttempts] = useState<Record<string, number>>({});
   const [pollCount, setPollCount] = useState(0);
+  const [qrError, setQrError] = useState<string | null>(null);
   
   // Polling for QR code and status updates
   useEffect(() => {
@@ -79,22 +80,28 @@ export default function Conexoes() {
         setSelectedConnection(null);
         setRecreateAttempts({});
         setPollCount(0);
+        setQrError(null);
+        toast({
+          title: "WhatsApp conectado!",
+          description: `Dispositivo ${connection.name} conectado com sucesso.`,
+        });
         return;
       }
 
-      // If connecting but no QR code, try to recreate after 3 attempts (15 seconds)
+      // If connecting but no QR code, track attempts but DON'T auto-recreate
       if (connection.status === "connecting" && !connection.qr_code) {
         const attempts = recreateAttempts[pollingConnection] || 0;
         
-        if (attempts >= 3) {
-          console.log("[Polling] No QR after 3 attempts, recreating instance...");
-          setRecreateAttempts({});
-          await recreateConnection.mutateAsync(pollingConnection).catch((e) => {
-            console.error("[Polling] Failed to recreate:", e);
-          });
+        if (attempts >= 5) {
+          // Stop polling and show error - let user manually retry
+          console.log("[Polling] No QR after 5 attempts, stopping and showing error");
+          setQrError("O servidor não conseguiu gerar o QR Code. Clique em 'Tentar Novamente' para recriar a instância.");
+          setPollingConnection(null);
+          setPollCount(0);
+          return;
         } else {
           setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: attempts + 1 }));
-          console.log(`[Polling] No QR code, attempt ${attempts + 1}/3`);
+          console.log(`[Polling] No QR code, attempt ${attempts + 1}/5`);
         }
       }
 
@@ -106,7 +113,7 @@ export default function Conexoes() {
     }, 5000);
 
     return () => clearInterval(interval);
-  }, [pollingConnection, connections, checkStatus, recreateConnection, refetch, recreateAttempts]);
+  }, [pollingConnection, connections, checkStatus, refetch, recreateAttempts, toast]);
 
   const handleCreateConnection = async () => {
     if (!newInstanceName.trim()) return;
@@ -140,13 +147,16 @@ export default function Conexoes() {
 
   const handleRefreshQrCode = async (connection: WhatsAppConnection) => {
     try {
-      // Use recreate to get a fresh QR code
+      // Clear error state and recreate instance
+      setQrError(null);
       setRecreateAttempts({});
+      setPollCount(0);
       await recreateConnection.mutateAsync(connection.id);
       setPollingConnection(connection.id);
       refetch();
     } catch (error) {
       console.error("Error refreshing QR code:", error);
+      setQrError("Erro ao recriar instância. Verifique se o servidor Evolution API está acessível.");
     }
   };
 
@@ -305,10 +315,18 @@ export default function Conexoes() {
         {/* QR Code Card */}
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center justify-center py-12">
-            {pendingConnection ? (
+            {pendingConnection || qrError ? (
               <>
                 <div className="w-64 h-64 rounded-2xl bg-white flex items-center justify-center mb-6 p-2 relative">
-                  {pendingConnection.qr_code ? (
+                  {qrError ? (
+                    <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
+                      <AlertTriangle className="w-12 h-12" />
+                      <span className="text-sm font-medium">Erro ao gerar QR Code</span>
+                      <span className="text-xs text-muted-foreground">
+                        {qrError}
+                      </span>
+                    </div>
+                  ) : pendingConnection?.qr_code ? (
                     <img 
                       src={pendingConnection.qr_code} 
                       alt="QR Code" 
@@ -323,54 +341,72 @@ export default function Conexoes() {
                       </span>
                       {pollCount > 0 && (
                         <span className="text-xs text-yellow-500">
-                          Verificação #{pollCount} em andamento
+                          Verificação #{pollCount}/5 em andamento
                         </span>
                       )}
                     </div>
                   )}
                 </div>
-                <h3 className="text-lg font-semibold mb-2">{pendingConnection.name}</h3>
+                <h3 className="text-lg font-semibold mb-2">{pendingConnection?.name || "Conexão"}</h3>
                 <p className="text-muted-foreground text-center text-sm mb-4">
-                  Escaneie o QR Code com seu WhatsApp para conectar
+                  {qrError 
+                    ? "Não foi possível gerar o QR Code. Tente novamente ou verifique o servidor."
+                    : "Escaneie o QR Code com seu WhatsApp para conectar"
+                  }
                 </p>
-                <p className="text-xs text-yellow-500 mb-4">
-                  ⚠️ O QR Code expira em ~40 segundos. Clique em "Reconectar" para gerar um novo.
-                </p>
+                {!qrError && (
+                  <p className="text-xs text-yellow-500 mb-4">
+                    ⚠️ O QR Code expira em ~40 segundos. Clique em "Reconectar" para gerar um novo.
+                  </p>
+                )}
                 <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => handleRefreshQrCode(pendingConnection)}
-                    disabled={recreateConnection.isPending}
-                    className="gap-2"
-                  >
-                    {recreateConnection.isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="w-4 h-4" />
-                    )}
-                    Reconectar
-                  </Button>
-                  <AlertDialog>
-                    <AlertDialogTrigger asChild>
-                      <Button variant="destructive" size="icon">
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </AlertDialogTrigger>
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Excluir conexão?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          Esta ação não pode ser desfeita. A conexão será removida permanentemente.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                        <AlertDialogAction onClick={() => handleDelete(pendingConnection.id)}>
-                          Excluir
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                  {pendingConnection && (
+                    <Button 
+                      variant={qrError ? "default" : "outline"}
+                      onClick={() => handleRefreshQrCode(pendingConnection)}
+                      disabled={recreateConnection.isPending}
+                      className="gap-2"
+                    >
+                      {recreateConnection.isPending ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="w-4 h-4" />
+                      )}
+                      {qrError ? "Tentar Novamente" : "Reconectar"}
+                    </Button>
+                  )}
+                  {pendingConnection && (
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="destructive" size="icon">
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Excluir conexão?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            Esta ação não pode ser desfeita. A conexão será removida permanentemente.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => handleDelete(pendingConnection.id)}>
+                            Excluir
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
+                  {qrError && !pendingConnection && (
+                    <Button 
+                      variant="outline"
+                      onClick={() => setQrError(null)}
+                      className="gap-2"
+                    >
+                      Fechar
+                    </Button>
+                  )}
                 </div>
               </>
             ) : (

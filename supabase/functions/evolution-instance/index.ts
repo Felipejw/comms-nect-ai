@@ -96,23 +96,43 @@ serve(async (req) => {
         // Get Supabase URL for webhook
         const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
         
-        // First, check if instance already exists and delete it
+        // First, fetch actual instances from Evolution API to check if exists
+        console.log("[Evolution Instance] Fetching existing instances from Evolution API...");
         try {
-          const existingCheck = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${cleanInstanceName}`, {
+          const instancesResponse = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
             method: "GET",
             headers: evolutionHeaders,
           });
           
-          if (existingCheck.ok) {
-            console.log(`[Evolution Instance] Instance ${cleanInstanceName} already exists, deleting first...`);
-            await fetch(`${EVOLUTION_API_URL}/instance/delete/${cleanInstanceName}`, {
-              method: "DELETE",
-              headers: evolutionHeaders,
-            });
-            await new Promise(resolve => setTimeout(resolve, 2000));
+          if (instancesResponse.ok) {
+            const instances = await instancesResponse.json();
+            console.log(`[Evolution Instance] Found ${instances?.length || 0} instances in Evolution API`);
+            
+            // Check if our instance exists in the actual list
+            const existingInstance = Array.isArray(instances) 
+              ? instances.find((i: { instance?: { instanceName?: string } }) => 
+                  i.instance?.instanceName === cleanInstanceName)
+              : null;
+            
+            if (existingInstance) {
+              console.log(`[Evolution Instance] Instance ${cleanInstanceName} exists, deleting...`);
+              try {
+                const deleteResp = await fetch(`${EVOLUTION_API_URL}/instance/delete/${cleanInstanceName}`, {
+                  method: "DELETE",
+                  headers: evolutionHeaders,
+                });
+                console.log(`[Evolution Instance] Delete response: ${deleteResp.status}`);
+                // Ignore delete errors - instance might be in an inconsistent state
+              } catch (deleteError) {
+                console.log(`[Evolution Instance] Delete error (ignoring): ${deleteError}`);
+              }
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            } else {
+              console.log("[Evolution Instance] Instance not found in Evolution API, proceeding with create");
+            }
           }
         } catch (e) {
-          console.log("[Evolution Instance] No existing instance found, proceeding with create");
+          console.log(`[Evolution Instance] Error fetching instances (ignoring): ${e}`);
         }
         
         // Create instance in Evolution API with QR code enabled and webhook
