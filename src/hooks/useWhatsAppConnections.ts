@@ -167,6 +167,50 @@ export function useWhatsAppConnections() {
     },
   });
 
+  const checkServerHealth = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+        body: { action: "serverHealth" },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      return data;
+    },
+  });
+
+  const cleanupOrphaned = useMutation({
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+        body: { action: "cleanupOrphanedInstances" },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: (data) => {
+      if (data.deleted?.length > 0) {
+        toast({
+          title: "Limpeza concluída",
+          description: `${data.deleted.length} instância(s) órfã(s) removida(s)`,
+        });
+      } else {
+        toast({
+          title: "Nenhuma limpeza necessária",
+          description: "Todas as instâncias estão sincronizadas",
+        });
+      }
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro na limpeza",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   return {
     connections,
     isLoading,
@@ -177,5 +221,7 @@ export function useWhatsAppConnections() {
     disconnect,
     deleteConnection,
     recreateConnection,
+    checkServerHealth,
+    cleanupOrphaned,
   };
 }

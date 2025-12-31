@@ -9,6 +9,55 @@ const corsHeaders = {
 const EVOLUTION_API_URL = Deno.env.get("EVOLUTION_API_URL");
 const EVOLUTION_API_KEY = Deno.env.get("EVOLUTION_API_KEY");
 
+// Helper function to get instance name from connection
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getInstanceName(supabaseClient: any, connectionId: string): Promise<string | null> {
+  const { data: conn } = await supabaseClient
+    .from("connections")
+    .select("session_data, name")
+    .eq("id", connectionId)
+    .single();
+
+  if (!conn) {
+    console.log(`[Evolution Instance] Connection not found: ${connectionId}`);
+    return null;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const connData = conn as any;
+  const instName = connData.session_data?.instanceName || connData.name;
+  
+  if (!instName) {
+    console.log(`[Evolution Instance] No instance name found for connection: ${connectionId}`);
+    return null;
+  }
+
+  return instName;
+}
+
+// Helper to check if instance exists in Evolution API
+async function instanceExists(instanceName: string, headers: Record<string, string>): Promise<boolean> {
+  try {
+    const response = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${instanceName}`, {
+      method: "GET",
+      headers,
+    });
+    
+    if (!response.ok) {
+      const data = await response.json();
+      // Check for specific "not found" errors
+      if (data.message?.includes("not found") || data.error?.includes("not found")) {
+        return false;
+      }
+    }
+    
+    return response.ok;
+  } catch (e) {
+    console.log(`[Evolution Instance] Error checking instance existence: ${e}`);
+    return false;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -37,6 +86,13 @@ serve(async (req) => {
 
     switch (action) {
       case "create": {
+        // Validate instanceName
+        if (!instanceName || typeof instanceName !== 'string' || !instanceName.trim()) {
+          throw new Error("Instance name is required and must be a non-empty string");
+        }
+
+        const cleanInstanceName = instanceName.trim();
+
         // Get Supabase URL for webhook
         const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
         
@@ -45,7 +101,7 @@ serve(async (req) => {
           method: "POST",
           headers: evolutionHeaders,
           body: JSON.stringify({
-            instanceName,
+            instanceName: cleanInstanceName,
             qrcode: true,
             integration: "WHATSAPP-BAILEYS",
             webhook: {
@@ -85,11 +141,11 @@ serve(async (req) => {
         const { data: connection, error: dbError } = await supabaseClient
           .from("connections")
           .insert({
-            name: instanceName,
+            name: cleanInstanceName,
             type: "whatsapp",
             status: "connecting",
             qr_code: qrCodeBase64,
-            session_data: { instanceName },
+            session_data: { instanceName: cleanInstanceName },
           })
           .select()
           .single();
@@ -108,7 +164,7 @@ serve(async (req) => {
             console.log(`[Evolution Instance] Fetch QR attempt ${attempt + 1}/5...`);
             
             try {
-              const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instanceName}`, {
+              const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${cleanInstanceName}`, {
                 method: "GET",
                 headers: evolutionHeaders,
               });
@@ -174,13 +230,26 @@ serve(async (req) => {
 
       case "getQrCode": {
         // Get instance name from database
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data")
-          .eq("id", connectionId)
-          .single();
+        const instName = await getInstanceName(supabaseClient, connectionId);
+        
+        if (!instName) {
+          throw new Error("Instance name not found for this connection");
+        }
 
-        const instName = conn?.session_data?.instanceName || instanceName;
+        // Check if instance exists
+        const exists = await instanceExists(instName, evolutionHeaders);
+        if (!exists) {
+          console.log(`[Evolution Instance] Instance ${instName} does not exist in Evolution API`);
+          return new Response(
+            JSON.stringify({
+              success: true,
+              qrCode: null,
+              needsRecreate: true,
+              message: "Instance not found in Evolution API. Please recreate the connection.",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         // Fetch the QR code from connect endpoint
         const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instName}`, {
@@ -236,20 +305,18 @@ serve(async (req) => {
             qrString: qrData.code,
             pairingCode: qrData.pairingCode,
             count: qrData.count,
+            needsRecreate: !qrCodeBase64 && qrData.count === 0,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
       case "restart": {
-        // Restart instance to get new QR code
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data")
-          .eq("id", connectionId)
-          .single();
-
-        const instName = conn?.session_data?.instanceName || instanceName;
+        const instName = await getInstanceName(supabaseClient, connectionId);
+        
+        if (!instName) {
+          throw new Error("Instance name not found for this connection");
+        }
 
         console.log(`[Evolution Instance] Restarting instance ${instName}...`);
 
@@ -273,14 +340,47 @@ serve(async (req) => {
       }
 
       case "status": {
-        // Check connection status
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data")
-          .eq("id", connectionId)
-          .single();
+        const instName = await getInstanceName(supabaseClient, connectionId);
+        
+        if (!instName) {
+          // Connection exists in DB but has no instance name - mark as disconnected
+          await supabaseClient
+            .from("connections")
+            .update({ status: "disconnected" })
+            .eq("id", connectionId);
+            
+          return new Response(
+            JSON.stringify({
+              success: true,
+              status: "disconnected",
+              state: "no_instance",
+              message: "No instance name found",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
-        const instName = conn?.session_data?.instanceName || instanceName;
+        // Check if instance exists in Evolution API
+        const exists = await instanceExists(instName, evolutionHeaders);
+        
+        if (!exists) {
+          console.log(`[Evolution Instance] Instance ${instName} not found in Evolution API`);
+          await supabaseClient
+            .from("connections")
+            .update({ status: "disconnected", qr_code: null })
+            .eq("id", connectionId);
+            
+          return new Response(
+            JSON.stringify({
+              success: true,
+              status: "disconnected",
+              state: "not_found",
+              needsRecreate: true,
+              message: "Instance not found in Evolution API",
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         const statusResponse = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${instName}`, {
           method: "GET",
@@ -338,14 +438,7 @@ serve(async (req) => {
       }
 
       case "disconnect": {
-        // Logout from WhatsApp
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data")
-          .eq("id", connectionId)
-          .single();
-
-        const instName = conn?.session_data?.instanceName;
+        const instName = await getInstanceName(supabaseClient, connectionId);
 
         if (instName) {
           const logoutResponse = await fetch(`${EVOLUTION_API_URL}/instance/logout/${instName}`, {
@@ -369,14 +462,7 @@ serve(async (req) => {
       }
 
       case "delete": {
-        // Delete instance completely
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data")
-          .eq("id", connectionId)
-          .single();
-
-        const instName = conn?.session_data?.instanceName;
+        const instName = await getInstanceName(supabaseClient, connectionId);
 
         if (instName) {
           const deleteResponse = await fetch(`${EVOLUTION_API_URL}/instance/delete/${instName}`, {
@@ -400,17 +486,10 @@ serve(async (req) => {
       }
 
       case "recreate": {
-        // Recreate instance - delete from Evolution API and create new one with QR code
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data, name")
-          .eq("id", connectionId)
-          .single();
-
-        const instName = conn?.session_data?.instanceName || conn?.name;
+        const instName = await getInstanceName(supabaseClient, connectionId);
 
         if (!instName) {
-          throw new Error("Instance name not found");
+          throw new Error("Instance name not found for this connection. Please delete and create a new connection.");
         }
 
         console.log(`[Evolution Instance] Recreating instance ${instName}...`);
@@ -548,23 +627,19 @@ serve(async (req) => {
       
       case "diagnose": {
         // Diagnostic action to check Evolution API status
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("session_data, name")
-          .eq("id", connectionId)
-          .single();
+        const instName = await getInstanceName(supabaseClient, connectionId);
+        const diagnostics: Record<string, unknown> = { instanceName: instName || "NOT_FOUND" };
 
-        const instName = conn?.session_data?.instanceName || conn?.name;
-        const diagnostics: Record<string, unknown> = { instanceName: instName };
-
-        // 1. Fetch all instances
+        // 1. Check API connectivity
         try {
-          const instancesResponse = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+          const pingResponse = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
             method: "GET",
             headers: evolutionHeaders,
           });
-          diagnostics.fetchInstances = await instancesResponse.json();
+          diagnostics.apiReachable = pingResponse.ok;
+          diagnostics.fetchInstances = await pingResponse.json();
         } catch (e) {
+          diagnostics.apiReachable = false;
           diagnostics.fetchInstancesError = String(e);
         }
 
@@ -575,8 +650,10 @@ serve(async (req) => {
               method: "GET",
               headers: evolutionHeaders,
             });
+            diagnostics.instanceExists = stateResponse.ok;
             diagnostics.connectionState = await stateResponse.json();
           } catch (e) {
+            diagnostics.instanceExists = false;
             diagnostics.connectionStateError = String(e);
           }
 
@@ -598,6 +675,101 @@ serve(async (req) => {
           JSON.stringify({
             success: true,
             diagnostics,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      case "serverHealth": {
+        // Check Evolution API server health and configuration
+        const health: Record<string, unknown> = {
+          apiUrl: EVOLUTION_API_URL,
+          hasApiKey: !!EVOLUTION_API_KEY,
+          timestamp: new Date().toISOString(),
+        };
+
+        try {
+          const response = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+            method: "GET",
+            headers: evolutionHeaders,
+          });
+          health.apiReachable = response.ok;
+          health.statusCode = response.status;
+          
+          if (response.ok) {
+            const instances = await response.json();
+            health.instanceCount = Array.isArray(instances) ? instances.length : 0;
+            health.instances = instances;
+          } else {
+            const error = await response.text();
+            health.error = error;
+          }
+        } catch (e) {
+          health.apiReachable = false;
+          health.error = String(e);
+        }
+
+        console.log("[Evolution Instance] Server health:", JSON.stringify(health, null, 2));
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            health,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      case "cleanupOrphanedInstances": {
+        // Get all instances from Evolution API
+        const instancesResponse = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+          method: "GET",
+          headers: evolutionHeaders,
+        });
+
+        const apiInstances = await instancesResponse.json();
+        console.log("[Evolution Instance] API instances:", JSON.stringify(apiInstances));
+
+        // Get all connections from database
+        const { data: dbConnections } = await supabaseClient
+          .from("connections")
+          .select("session_data, name");
+
+        const dbInstanceNames = new Set(
+          dbConnections?.map(c => c.session_data?.instanceName || c.name).filter(Boolean) || []
+        );
+
+        const deleted: string[] = [];
+        const errors: string[] = [];
+
+        // Delete instances that exist in API but not in DB
+        for (const instance of (Array.isArray(apiInstances) ? apiInstances : [])) {
+          const name = instance.name || instance.instanceName;
+          if (name && !dbInstanceNames.has(name)) {
+            console.log(`[Evolution Instance] Deleting orphaned instance: ${name}`);
+            try {
+              const deleteResponse = await fetch(`${EVOLUTION_API_URL}/instance/delete/${name}`, {
+                method: "DELETE",
+                headers: evolutionHeaders,
+              });
+              if (deleteResponse.ok) {
+                deleted.push(name);
+              } else {
+                errors.push(`Failed to delete ${name}: ${deleteResponse.status}`);
+              }
+            } catch (e) {
+              errors.push(`Error deleting ${name}: ${e}`);
+            }
+          }
+        }
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            deleted,
+            errors,
+            apiInstanceCount: Array.isArray(apiInstances) ? apiInstances.length : 0,
+            dbConnectionCount: dbInstanceNames.size,
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );

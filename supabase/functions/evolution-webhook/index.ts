@@ -25,6 +25,14 @@ serve(async (req) => {
 
     const { event, instance, data } = webhook;
 
+    // Skip if no instance name
+    if (!instance) {
+      console.log("[Webhook] No instance name in payload, ignoring");
+      return new Response(JSON.stringify({ success: true, message: "No instance" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Find connection by instance name
     const { data: connection } = await supabaseClient
       .from("connections")
@@ -32,15 +40,27 @@ serve(async (req) => {
       .eq("session_data->>instanceName", instance)
       .single();
 
-    if (!connection) {
-      console.log(`[Webhook] Connection not found for instance: ${instance}`);
-      return new Response(JSON.stringify({ success: true, message: "Connection not found" }), {
+    // Also try matching by name if session_data doesn't match
+    let conn = connection;
+    if (!conn) {
+      const { data: connByName } = await supabaseClient
+        .from("connections")
+        .select("*")
+        .eq("name", instance)
+        .single();
+      conn = connByName;
+    }
+
+    if (!conn) {
+      // Silently ignore events for orphaned instances (not in our DB)
+      console.log(`[Webhook] Connection not found for instance: ${instance} (orphaned, ignoring)`);
+      return new Response(JSON.stringify({ success: true, message: "Orphaned instance" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
     
-    console.log(`[Webhook] Found connection: ${connection.id} (${connection.name})`);
-    console.log(`[Webhook] Current status: ${connection.status}, has QR: ${!!connection.qr_code}`);
+    console.log(`[Webhook] Found connection: ${conn.id} (${conn.name})`);
+    console.log(`[Webhook] Current status: ${conn.status}, has QR: ${!!conn.qr_code}`);
     
 
     // Normalize event name to lowercase for comparison
@@ -63,12 +83,12 @@ serve(async (req) => {
           .from("connections")
           .update({ 
             status,
-            phone_number: data?.instance?.wuid?.split("@")[0] || connection.phone_number,
-            qr_code: status === "connected" ? null : connection.qr_code,
+            phone_number: data?.instance?.wuid?.split("@")[0] || conn.phone_number,
+            qr_code: status === "connected" ? null : conn.qr_code,
           })
-          .eq("id", connection.id);
+          .eq("id", conn.id);
 
-        console.log(`Connection ${connection.id} status updated to: ${status}`);
+        console.log(`Connection ${conn.id} status updated to: ${status}`);
         break;
       }
 
@@ -99,9 +119,9 @@ serve(async (req) => {
               qr_code: qrBase64,
               status: "connecting",
             })
-            .eq("id", connection.id);
+            .eq("id", conn.id);
 
-          console.log(`[Webhook] QR Code updated for connection ${connection.id}, length: ${qrBase64.length}`);
+          console.log(`[Webhook] QR Code updated for connection ${conn.id}, length: ${qrBase64.length}`);
         } else {
           console.log(`[Webhook] QR Code event received but no valid base64 found. Data type: ${typeof qrBase64}`);
         }
