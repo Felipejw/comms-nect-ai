@@ -11,6 +11,9 @@ export default function Chatbot() {
   const [nodeUpdateFn, setNodeUpdateFn] = useState<
     ((nodeId: string, data: Record<string, unknown>) => void) | null
   >(null);
+  const [nodeDeleteFn, setNodeDeleteFn] = useState<
+    ((nodeId: string) => void) | null
+  >(null);
 
   const handleNodeSelect = useCallback((node: Node | null) => {
     setSelectedNode(node);
@@ -31,6 +34,19 @@ export default function Chatbot() {
     [nodeUpdateFn]
   );
 
+  const handleNodeDelete = useCallback(
+    (nodeId: string) => {
+      if (nodeDeleteFn) {
+        nodeDeleteFn(nodeId);
+      }
+    },
+    [nodeDeleteFn]
+  );
+
+  const handleRegisterDeleteFn = useCallback((fn: (nodeId: string) => void) => {
+    setNodeDeleteFn(() => fn);
+  }, []);
+
   return (
     <div className="flex h-[calc(100vh-4rem)] -m-6">
       <FlowSidebar
@@ -41,12 +57,17 @@ export default function Chatbot() {
           setConfigPanelOpen(false);
         }}
       />
-      <FlowCanvas flowId={selectedFlowId} onNodeSelect={handleNodeSelect} />
+      <FlowCanvas
+        flowId={selectedFlowId}
+        onNodeSelect={handleNodeSelect}
+        onRegisterDeleteFn={handleRegisterDeleteFn}
+      />
       <NodeConfigPanel
         node={selectedNode}
         open={configPanelOpen}
         onClose={handleCloseConfig}
         onUpdate={handleNodeUpdate}
+        onDelete={handleNodeDelete}
       />
     </div>
   );
