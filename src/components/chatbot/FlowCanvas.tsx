@@ -24,6 +24,8 @@ import DelayNode from "./nodes/DelayNode";
 import MenuNode from "./nodes/MenuNode";
 import TransferNode from "./nodes/TransferNode";
 import EndNode from "./nodes/EndNode";
+import AINode from "./nodes/AINode";
+import CRMNode from "./nodes/CRMNode";
 import { useFlow, useSaveFlowData } from "@/hooks/useFlows";
 import { toast } from "sonner";
 import { Loader2, Save } from "lucide-react";
@@ -37,6 +39,8 @@ const nodeTypes: NodeTypes = {
   menu: MenuNode,
   transfer: TransferNode,
   end: EndNode,
+  ai: AINode,
+  crm: CRMNode,
 };
 
 interface FlowCanvasProps {
@@ -131,6 +135,8 @@ function FlowCanvasInner({ flowId, onNodeSelect }: FlowCanvasProps) {
       menu: "Menu",
       transfer: "Transferir",
       end: "Encerrar",
+      ai: "IA",
+      crm: "CRM",
     };
     return labels[type] || "Bloco";
   };
@@ -271,6 +277,8 @@ function FlowCanvasInner({ flowId, onNodeSelect }: FlowCanvasProps) {
                 menu: "#f97316",
                 transfer: "hsl(var(--destructive))",
                 end: "#ec4899",
+                ai: "#8b5cf6",
+                crm: "#0ea5e9",
               };
               return colors[node.type || ""] || "#6b7280";
             }}
