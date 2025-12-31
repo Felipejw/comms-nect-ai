@@ -34,6 +34,7 @@ export interface Conversation {
   unread_count: number;
   last_message_at: string;
   created_at: string;
+  is_bot_active: boolean;
   contact?: {
     id: string;
     name: string;
