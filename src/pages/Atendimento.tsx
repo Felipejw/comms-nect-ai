@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -52,6 +52,7 @@ import { useConversationTags, useAddTagToConversation, useRemoveTagFromConversat
 import { useNotifications } from "@/hooks/useNotifications";
 import { useCreateSchedule } from "@/hooks/useSchedules";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
+import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 
 // Template variable replacement helper
 const replaceTemplateVariables = (
@@ -144,8 +145,14 @@ export default function Atendimento() {
   const removeTagFromConversation = useRemoveTagFromConversation();
   const { requestPermission, showNotification, permission } = useNotifications();
   const createSchedule = useCreateSchedule();
+  
+  // Typing indicator
+  const { typingUsers, handleTyping, stopTyping } = useTypingIndicator(
+    selectedConversation?.id || '',
+    user?.id || '',
+    profile?.name || 'Atendente'
+  );
 
-  // Request notification permission on mount
   useEffect(() => {
     requestPermission();
   }, [requestPermission]);
@@ -446,6 +453,7 @@ export default function Atendimento() {
 
       setMessageText("");
       clearMediaPreview();
+      stopTyping(); // Stop typing indicator when message is sent
 
       if (selectedConversation.status === "new") {
         await updateConversation.mutateAsync({
@@ -484,6 +492,12 @@ export default function Atendimento() {
 
   const handleTextChange = (value: string) => {
     setMessageText(value);
+    
+    // Trigger typing indicator
+    if (value.length > 0) {
+      handleTyping();
+    }
+    
     if (value.startsWith('/') && value.length >= 1) {
       setShowQuickReplies(true);
       setSelectedQuickReplyIndex(0);
@@ -1082,6 +1096,26 @@ export default function Atendimento() {
             ) : messages && messages.length > 0 ? (
               <>
                 {messages.map(renderMessage)}
+                
+                {/* Typing indicator */}
+                {typingUsers.length > 0 && (
+                  <div className="flex justify-start">
+                    <div className="bg-muted px-4 py-2 rounded-2xl rounded-bl-md flex items-center gap-2">
+                      <div className="flex gap-1">
+                        <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:-0.3s]" />
+                        <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce [animation-delay:-0.15s]" />
+                        <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" />
+                      </div>
+                      <span className="text-xs text-muted-foreground ml-1">
+                        {typingUsers.length === 1 
+                          ? `${typingUsers[0].name} está digitando...`
+                          : `${typingUsers.length} pessoas digitando...`
+                        }
+                      </span>
+                    </div>
+                  </div>
+                )}
+                
                 <div ref={messagesEndRef} />
               </>
             ) : (
