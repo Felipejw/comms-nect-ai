@@ -96,6 +96,25 @@ serve(async (req) => {
         // Get Supabase URL for webhook
         const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
         
+        // First, check if instance already exists and delete it
+        try {
+          const existingCheck = await fetch(`${EVOLUTION_API_URL}/instance/connectionState/${cleanInstanceName}`, {
+            method: "GET",
+            headers: evolutionHeaders,
+          });
+          
+          if (existingCheck.ok) {
+            console.log(`[Evolution Instance] Instance ${cleanInstanceName} already exists, deleting first...`);
+            await fetch(`${EVOLUTION_API_URL}/instance/delete/${cleanInstanceName}`, {
+              method: "DELETE",
+              headers: evolutionHeaders,
+            });
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
+        } catch (e) {
+          console.log("[Evolution Instance] No existing instance found, proceeding with create");
+        }
+        
         // Create instance in Evolution API with QR code enabled and webhook
         const createResponse = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
           method: "POST",
@@ -122,29 +141,14 @@ serve(async (req) => {
           throw new Error(createData.message || createData.error || "Failed to create instance");
         }
 
-        // Extract QR code from create response - Evolution API v2 returns it directly
-        let qrCodeBase64 = null;
-        if (createData.qrcode?.base64) {
-          qrCodeBase64 = createData.qrcode.base64;
-        } else if (createData.base64) {
-          qrCodeBase64 = createData.base64;
-        }
-        
-        // Ensure QR code has proper data URI prefix
-        if (qrCodeBase64 && !qrCodeBase64.startsWith("data:")) {
-          qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
-        }
-
-        console.log("[Evolution Instance] QR Code from create:", qrCodeBase64 ? "Found" : "Not found");
-
-        // Save connection to database with QR code if available
+        // Save connection to database first
         const { data: connection, error: dbError } = await supabaseClient
           .from("connections")
           .insert({
             name: cleanInstanceName,
             type: "whatsapp",
             status: "connecting",
-            qr_code: qrCodeBase64,
+            qr_code: null,
             session_data: { instanceName: cleanInstanceName },
           })
           .select()
@@ -155,67 +159,73 @@ serve(async (req) => {
           throw dbError;
         }
 
-        // If no QR from create, wait and try to fetch it via connect endpoint with retries
-        if (!qrCodeBase64) {
-          console.log("[Evolution Instance] Waiting 2s before fetching QR via connect endpoint...");
-          await new Promise(resolve => setTimeout(resolve, 2000));
+        // Wait for Evolution API to initialize the WhatsApp connection
+        console.log("[Evolution Instance] Waiting 3s for WhatsApp initialization...");
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        // Now fetch QR code using the connect endpoint - this forces QR generation
+        let qrCodeBase64 = null;
+        
+        for (let attempt = 0; attempt < 8; attempt++) {
+          console.log(`[Evolution Instance] Fetch QR attempt ${attempt + 1}/8...`);
           
-          for (let attempt = 0; attempt < 5; attempt++) {
-            console.log(`[Evolution Instance] Fetch QR attempt ${attempt + 1}/5...`);
+          try {
+            const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${cleanInstanceName}`, {
+              method: "GET",
+              headers: evolutionHeaders,
+            });
+
+            const qrData = await qrResponse.json();
+            console.log(`[Evolution Instance] Connect response (attempt ${attempt + 1}):`, JSON.stringify(qrData));
+
+            // Check for base64 QR directly
+            if (qrData.base64) {
+              qrCodeBase64 = qrData.base64.startsWith("data:") 
+                ? qrData.base64 
+                : `data:image/png;base64,${qrData.base64}`;
+              console.log("[Evolution Instance] Got base64 QR from connect endpoint");
+              break;
+            }
             
-            try {
-              const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${cleanInstanceName}`, {
-                method: "GET",
-                headers: evolutionHeaders,
-              });
-
-              const qrData = await qrResponse.json();
-              console.log(`[Evolution Instance] Connect response (attempt ${attempt + 1}):`, JSON.stringify(qrData, null, 2));
-
-              // Check for base64 QR
-              if (qrData.base64) {
-                qrCodeBase64 = qrData.base64.startsWith("data:") 
-                  ? qrData.base64 
-                  : `data:image/png;base64,${qrData.base64}`;
-                console.log("[Evolution Instance] Got QR from connect endpoint");
-                break;
-              }
-              
-              // If we have the QR string code, generate image
-              if (qrData.code) {
-                console.log("[Evolution Instance] Generating QR from code string...");
-                try {
-                  const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData.code)}`;
-                  const qrImageResponse = await fetch(qrApiUrl);
-                  
-                  if (qrImageResponse.ok) {
-                    const arrayBuffer = await qrImageResponse.arrayBuffer();
-                    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-                    qrCodeBase64 = `data:image/png;base64,${base64}`;
-                    console.log("[Evolution Instance] QR code generated from code string");
-                    break;
-                  }
-                } catch (e) {
-                  console.error("[Evolution Instance] Failed to generate QR from string:", e);
+            // Check for code string (WhatsApp connection string)
+            if (qrData.code && typeof qrData.code === 'string' && qrData.code.length > 20) {
+              console.log("[Evolution Instance] Got QR code string, generating image...");
+              try {
+                const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData.code)}`;
+                const qrImageResponse = await fetch(qrApiUrl);
+                
+                if (qrImageResponse.ok) {
+                  const arrayBuffer = await qrImageResponse.arrayBuffer();
+                  const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                  qrCodeBase64 = `data:image/png;base64,${base64}`;
+                  console.log("[Evolution Instance] QR code image generated from string");
+                  break;
                 }
+              } catch (e) {
+                console.error("[Evolution Instance] Failed to generate QR from string:", e);
               }
-            } catch (e) {
-              console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
             }
             
-            // Wait 2 seconds before next retry
-            if (attempt < 4) {
-              await new Promise(resolve => setTimeout(resolve, 2000));
+            // If count is 0 and no QR, wait longer
+            if (qrData.count === 0) {
+              console.log("[Evolution Instance] QR count is 0, waiting for WhatsApp to generate...");
             }
+          } catch (e) {
+            console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
           }
           
-          // Update database with QR if found
-          if (qrCodeBase64) {
-            await supabaseClient
-              .from("connections")
-              .update({ qr_code: qrCodeBase64 })
-              .eq("id", connection.id);
-          }
+          // Wait 2.5 seconds before next retry (longer wait to give WhatsApp time)
+          await new Promise(resolve => setTimeout(resolve, 2500));
+        }
+        
+        // Update database with QR if found
+        if (qrCodeBase64) {
+          await supabaseClient
+            .from("connections")
+            .update({ qr_code: qrCodeBase64 })
+            .eq("id", connection.id);
+        } else {
+          console.log("[Evolution Instance] WARNING: Could not get QR code after all attempts");
         }
 
         return new Response(
