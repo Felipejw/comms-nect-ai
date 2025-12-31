@@ -19,15 +19,20 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL")!;
     const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY")!;
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+    // Client for validating user token
+    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
+    // Client for database operations with elevated privileges
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     // Get auth user
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
+      console.error("Missing authorization header");
       return new Response(
         JSON.stringify({ success: false, error: "Missing authorization header" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -35,14 +40,17 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token);
     
     if (authError || !user) {
+      console.error("Auth validation failed:", authError?.message);
       return new Response(
-        JSON.stringify({ success: false, error: "Invalid token" }),
+        JSON.stringify({ success: false, error: "Invalid token", details: authError?.message }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+
+    console.log(`Authenticated user: ${user.id}`);
 
     const payload: SendMessagePayload = await req.json();
     const { conversationId, content, messageType = "text", mediaUrl } = payload;
@@ -50,7 +58,7 @@ Deno.serve(async (req) => {
     console.log(`Sending WhatsApp message for conversation: ${conversationId}`);
 
     // Get conversation with contact phone
-    const { data: conversation, error: convError } = await supabase
+    const { data: conversation, error: convError } = await supabaseAdmin
       .from("conversations")
       .select(`
         *,
@@ -76,7 +84,7 @@ Deno.serve(async (req) => {
     }
 
     // Get default WhatsApp connection
-    const { data: connection, error: connError } = await supabase
+    const { data: connection, error: connError } = await supabaseAdmin
       .from("connections")
       .select("*")
       .eq("type", "whatsapp")
@@ -177,7 +185,7 @@ Deno.serve(async (req) => {
     }
 
     // Save message to database
-    const { data: message, error: msgError } = await supabase
+    const { data: message, error: msgError } = await supabaseAdmin
       .from("messages")
       .insert({
         conversation_id: conversationId,
