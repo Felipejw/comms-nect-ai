@@ -195,6 +195,9 @@ serve(async (req) => {
 
         // Get contact name with fallback
         const contactName = data?.pushName || phoneNumber || "Contato Desconhecido";
+        
+        // Tentar extrair foto do perfil do WhatsApp (pode estar em diferentes locais)
+        const profilePictureUrl = data?.profilePictureUrl || data?.pushName?.profilePictureUrl || null;
 
         console.log(`[Webhook] Message ${fromMe ? 'SENT' : 'RECEIVED'} - Phone: ${phoneNumber}, Content: ${messageContent.substring(0, 50)}`);
 
@@ -209,13 +212,26 @@ serve(async (req) => {
         if (existingContact) {
           contact = existingContact;
           
+          // Preparar atualizações para o contato
+          const updates: Record<string, string> = {};
+          
           // Update contact name if we have a better one (pushName) and current is just the phone
           if (data?.pushName && existingContact.name === existingContact.phone) {
+            updates.name = data.pushName;
+          }
+          
+          // Atualizar foto de perfil se disponível e contato não tem foto
+          if (profilePictureUrl && !existingContact.avatar_url) {
+            updates.avatar_url = profilePictureUrl;
+          }
+          
+          // Aplicar atualizações se houver
+          if (Object.keys(updates).length > 0) {
             await supabaseClient
               .from("contacts")
-              .update({ name: data.pushName })
+              .update(updates)
               .eq("id", existingContact.id);
-            console.log(`[Webhook] Updated contact name to: ${data.pushName}`);
+            console.log(`[Webhook] Updated contact: ${JSON.stringify(updates)}`);
           }
         } else {
           const { data: newContact, error: contactError } = await supabaseClient
@@ -223,6 +239,7 @@ serve(async (req) => {
             .insert({
               name: contactName,
               phone: phoneNumber,
+              avatar_url: profilePictureUrl,
               status: "active",
             })
             .select()
