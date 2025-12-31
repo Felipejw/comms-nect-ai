@@ -350,6 +350,88 @@ serve(async (req) => {
         );
       }
 
+      case "recreate": {
+        // Recreate instance - delete from Evolution API and create new one with QR code
+        const { data: conn } = await supabaseClient
+          .from("connections")
+          .select("session_data, name")
+          .eq("id", connectionId)
+          .single();
+
+        const instName = conn?.session_data?.instanceName || conn?.name;
+
+        if (!instName) {
+          throw new Error("Instance name not found");
+        }
+
+        console.log(`[Evolution Instance] Recreating instance ${instName}...`);
+
+        // 1. Try to delete existing instance from Evolution API (ignore errors)
+        try {
+          const deleteResponse = await fetch(`${EVOLUTION_API_URL}/instance/delete/${instName}`, {
+            method: "DELETE",
+            headers: evolutionHeaders,
+          });
+          console.log("[Evolution Instance] Delete response:", deleteResponse.status);
+        } catch (e) {
+          console.log("[Evolution Instance] Delete failed (might not exist):", e);
+        }
+
+        // 2. Wait a bit for the delete to take effect
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // 3. Create new instance with QR code
+        const createResponse = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
+          method: "POST",
+          headers: evolutionHeaders,
+          body: JSON.stringify({
+            instanceName: instName,
+            qrcode: true,
+            integration: "WHATSAPP-BAILEYS",
+          }),
+        });
+
+        const createData = await createResponse.json();
+        console.log("[Evolution Instance] Recreate response:", JSON.stringify(createData));
+
+        if (!createResponse.ok) {
+          throw new Error(createData.message || createData.error || "Failed to recreate instance");
+        }
+
+        // 4. Extract QR code from response
+        let qrCodeBase64 = null;
+        if (createData.qrcode?.base64) {
+          qrCodeBase64 = createData.qrcode.base64;
+        } else if (createData.base64) {
+          qrCodeBase64 = createData.base64;
+        }
+
+        // Ensure proper data URI prefix
+        if (qrCodeBase64 && !qrCodeBase64.startsWith("data:")) {
+          qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
+        }
+
+        // 5. Update database with new QR code
+        await supabaseClient
+          .from("connections")
+          .update({
+            qr_code: qrCodeBase64,
+            status: "connecting",
+            session_data: { instanceName: instName },
+          })
+          .eq("id", connectionId);
+
+        console.log("[Evolution Instance] Recreated with QR:", qrCodeBase64 ? "Yes" : "No");
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            qrCode: qrCodeBase64,
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }
