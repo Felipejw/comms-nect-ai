@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, MoreHorizontal, Clock, User, Edit, Trash2, Loader2 } from "lucide-react";
+import { Plus, MoreHorizontal, Clock, User, Edit, Trash2, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -41,6 +41,7 @@ import {
   KanbanConversation,
 } from "@/hooks/useKanban";
 import { useNavigate } from "react-router-dom";
+import { useRef } from "react";
 
 const priorityConfig = {
   0: { label: "Baixa", className: "bg-muted text-muted-foreground" },
@@ -71,6 +72,7 @@ export default function Kanban() {
   const deleteColumn = useDeleteKanbanColumn();
   const moveConversation = useMoveConversationToColumn();
   const navigate = useNavigate();
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -78,6 +80,7 @@ export default function Kanban() {
   const [selectedColumn, setSelectedColumn] = useState<KanbanColumn | null>(null);
   const [newColumnName, setNewColumnName] = useState("");
   const [newColumnColor, setNewColumnColor] = useState("#3B82F6");
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const handleCreateColumn = async () => {
     if (!newColumnName.trim()) return;
@@ -104,9 +107,14 @@ export default function Kanban() {
 
   const handleDeleteColumn = async () => {
     if (!selectedColumn) return;
-    await deleteColumn.mutateAsync(selectedColumn.id);
-    setIsDeleteDialogOpen(false);
-    setSelectedColumn(null);
+    setIsDeleting(true);
+    try {
+      await deleteColumn.mutateAsync(selectedColumn.id);
+      setIsDeleteDialogOpen(false);
+      setSelectedColumn(null);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const openEditDialog = (column: KanbanColumn) => {
@@ -133,10 +141,8 @@ export default function Kanban() {
   const handleDragEnd = async (result: DropResult) => {
     const { destination, source, draggableId } = result;
 
-    // Dropped outside a valid droppable
     if (!destination) return;
 
-    // Dropped in the same position
     if (
       destination.droppableId === source.droppableId &&
       destination.index === source.index
@@ -144,14 +150,24 @@ export default function Kanban() {
       return;
     }
 
-    // Get target column ID (handle "unassigned" special case)
     const targetColumnId = destination.droppableId === "unassigned" ? null : destination.droppableId;
 
-    // Move the conversation
     await moveConversation.mutateAsync({
       conversationId: draggableId,
       columnId: targetColumnId,
     });
+  };
+
+  const scrollLeft = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: -350, behavior: "smooth" });
+    }
+  };
+
+  const scrollRight = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollBy({ left: 350, behavior: "smooth" });
+    }
   };
 
   const isLoading = columnsLoading || conversationsLoading;
@@ -178,121 +194,145 @@ export default function Kanban() {
       </div>
 
       <DragDropContext onDragEnd={handleDragEnd}>
-        <div className="flex gap-6 overflow-x-auto pb-4">
-          {/* Unassigned column */}
-          {getUnassignedConversations().length > 0 && (
-            <div className="kanban-column min-w-[320px] flex-shrink-0 opacity-70">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full bg-muted" />
-                  <h3 className="font-semibold">Sem Coluna</h3>
-                  <Badge variant="secondary" className="ml-1">
-                    {getUnassignedConversations().length}
-                  </Badge>
-                </div>
-              </div>
+        <div className="relative">
+          {/* Scroll buttons */}
+          <Button
+            variant="outline"
+            size="icon"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-background shadow-md"
+            onClick={scrollLeft}
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-background shadow-md"
+            onClick={scrollRight}
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Button>
 
-              <Droppable droppableId="unassigned">
-                {(provided, snapshot) => (
-                  <div
-                    ref={provided.innerRef}
-                    {...provided.droppableProps}
-                    className={cn(
-                      "space-y-3 min-h-[100px] rounded-lg transition-colors",
-                      snapshot.isDraggingOver && "bg-muted/50"
-                    )}
-                  >
-                    {getUnassignedConversations().map((conv, index) => (
-                      <Draggable key={conv.id} draggableId={conv.id} index={index}>
-                        {(provided, snapshot) => (
-                          <div
-                            ref={provided.innerRef}
-                            {...provided.draggableProps}
-                            {...provided.dragHandleProps}
-                            style={provided.draggableProps.style}
-                          >
-                            <ConversationCard
-                              conversation={conv}
-                              isDragging={snapshot.isDragging}
-                              onClick={() => navigate("/atendimento")}
-                            />
-                          </div>
-                        )}
-                      </Draggable>
-                    ))}
-                    {provided.placeholder}
+          <div 
+            ref={scrollContainerRef}
+            className="flex gap-6 overflow-x-auto pb-4 px-10 scrollbar-thin scroll-smooth"
+            style={{ scrollbarWidth: "thin" }}
+          >
+            {/* Unassigned column */}
+            {getUnassignedConversations().length > 0 && (
+              <div className="kanban-column min-w-[320px] flex-shrink-0 opacity-70">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-muted" />
+                    <h3 className="font-semibold">Sem Coluna</h3>
+                    <Badge variant="secondary" className="ml-1">
+                      {getUnassignedConversations().length}
+                    </Badge>
                   </div>
-                )}
-              </Droppable>
-            </div>
-          )}
-
-          {columns.map((column) => (
-            <div key={column.id} className="kanban-column min-w-[320px] flex-shrink-0">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: column.color }} />
-                  <h3 className="font-semibold">{column.name}</h3>
-                  <Badge variant="secondary" className="ml-1">
-                    {getConversationsForColumn(column.id).length}
-                  </Badge>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="w-8 h-8">
-                      <MoreHorizontal className="w-4 h-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => openEditDialog(column)}>
-                      <Edit className="w-4 h-4 mr-2" />
-                      Editar
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => openDeleteDialog(column)}
-                      className="text-destructive"
+
+                <Droppable droppableId="unassigned">
+                  {(provided, snapshot) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className={cn(
+                        "space-y-3 min-h-[100px] rounded-lg transition-colors",
+                        snapshot.isDraggingOver && "bg-muted/50"
+                      )}
                     >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Excluir
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                      {getUnassignedConversations().map((conv, index) => (
+                        <Draggable key={conv.id} draggableId={conv.id} index={index}>
+                          {(provided, snapshot) => (
+                            <div
+                              ref={provided.innerRef}
+                              {...provided.draggableProps}
+                              {...provided.dragHandleProps}
+                              style={provided.draggableProps.style}
+                            >
+                              <ConversationCard
+                                conversation={conv}
+                                isDragging={snapshot.isDragging}
+                                onClick={() => navigate("/atendimento")}
+                              />
+                            </div>
+                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
               </div>
+            )}
 
-              <Droppable droppableId={column.id}>
-                {(provided, snapshot) => (
-                  <div
-                    ref={provided.innerRef}
-                    {...provided.droppableProps}
-                    className={cn(
-                      "space-y-3 min-h-[100px] rounded-lg transition-colors",
-                      snapshot.isDraggingOver && "bg-primary/5 ring-2 ring-primary/20"
-                    )}
-                  >
-                    {getConversationsForColumn(column.id).map((conv, index) => (
-                      <Draggable key={conv.id} draggableId={conv.id} index={index}>
-                        {(provided, snapshot) => (
-                          <div
-                            ref={provided.innerRef}
-                            {...provided.draggableProps}
-                            {...provided.dragHandleProps}
-                            style={provided.draggableProps.style}
-                          >
-                            <ConversationCard
-                              conversation={conv}
-                              isDragging={snapshot.isDragging}
-                              onClick={() => navigate("/atendimento")}
-                            />
-                          </div>
-                        )}
-                      </Draggable>
-                    ))}
-                    {provided.placeholder}
+            {columns.map((column) => (
+              <div key={column.id} className="kanban-column min-w-[320px] flex-shrink-0">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: column.color }} />
+                    <h3 className="font-semibold">{column.name}</h3>
+                    <Badge variant="secondary" className="ml-1">
+                      {getConversationsForColumn(column.id).length}
+                    </Badge>
                   </div>
-                )}
-              </Droppable>
-            </div>
-          ))}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="icon" className="w-8 h-8">
+                        <MoreHorizontal className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => openEditDialog(column)}>
+                        <Edit className="w-4 h-4 mr-2" />
+                        Editar
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => openDeleteDialog(column)}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Excluir
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+
+                <Droppable droppableId={column.id}>
+                  {(provided, snapshot) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className={cn(
+                        "space-y-3 min-h-[100px] rounded-lg transition-colors",
+                        snapshot.isDraggingOver && "bg-primary/5 ring-2 ring-primary/20"
+                      )}
+                    >
+                      {getConversationsForColumn(column.id).map((conv, index) => (
+                        <Draggable key={conv.id} draggableId={conv.id} index={index}>
+                          {(provided, snapshot) => (
+                            <div
+                              ref={provided.innerRef}
+                              {...provided.draggableProps}
+                              {...provided.dragHandleProps}
+                              style={provided.draggableProps.style}
+                            >
+                              <ConversationCard
+                                conversation={conv}
+                                isDragging={snapshot.isDragging}
+                                onClick={() => navigate("/atendimento")}
+                              />
+                            </div>
+                          )}
+                        </Draggable>
+                      ))}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </div>
+            ))}
+          </div>
         </div>
       </DragDropContext>
 
@@ -396,8 +436,15 @@ export default function Kanban() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteColumn}>Excluir</AlertDialogAction>
+            <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
+            <Button 
+              variant="destructive" 
+              onClick={handleDeleteColumn}
+              disabled={isDeleting}
+            >
+              {isDeleting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Excluir
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

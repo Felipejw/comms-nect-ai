@@ -25,6 +25,7 @@ import {
   MessagesSquare,
   Menu,
   X,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -64,11 +65,11 @@ const navSections: NavSection[] = [
   {
     title: "Administração",
     items: [
-      { title: "Campanhas", href: "/campanhas", icon: Send },
+      { title: "Disparo em Massa", href: "/campanhas", icon: Send },
       { title: "FlowBuilder", href: "/flowbuilder", icon: GitBranch },
       { title: "API Interna", href: "/api", icon: Code },
       { title: "Atendentes", href: "/usuarios", icon: UserCog },
-      { title: "Filas & Chatbot", href: "/filas-chatbot", icon: Bot },
+      { title: "Setores", href: "/filas-chatbot", icon: Building2 },
       { title: "Chatbot IA", href: "/talk-ai", icon: Brain },
       { title: "Integrações", href: "/integracoes", icon: Plug },
       { title: "Conexões", href: "/conexoes", icon: QrCode },

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Plus, Search, Clock, User, Calendar as CalendarIcon, Bell, MoreHorizontal, Loader2, Check, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -87,8 +87,8 @@ export default function Agendamentos() {
 
     await createSchedule.mutateAsync({
       title: title.trim(),
-      description: description.trim() || null,
-      contact_id: contactId || null,
+      description: description.trim() || undefined,
+      contact_id: contactId || undefined,
       user_id: user.id,
       scheduled_at: scheduledAt.toISOString(),
       reminder,
@@ -153,7 +153,7 @@ export default function Agendamentos() {
                     <SelectValue placeholder="Selecione um contato" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Nenhum contato</SelectItem>
+                    <SelectItem value="none">Nenhum contato</SelectItem>
                     {contacts.map((contact) => (
                       <SelectItem key={contact.id} value={contact.id}>
                         {contact.name} {contact.phone ? `(${contact.phone})` : ""}

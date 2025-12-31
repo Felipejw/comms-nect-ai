@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck } from "lucide-react";
+import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck, Plus, MessageSquare } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -16,6 +16,12 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface TeamMember {
   id: string;
@@ -31,6 +37,7 @@ export default function ChatInterno() {
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [isNewChatDialogOpen, setIsNewChatDialogOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const { data: messages = [], isLoading: messagesLoading } = useChatMessages(
@@ -108,6 +115,11 @@ export default function ChatInterno() {
     return receipt?.isRead || false;
   };
 
+  const handleSelectMember = (member: TeamMember) => {
+    setSelectedMember(member);
+    setIsNewChatDialogOpen(false);
+  };
+
   if (usersLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -121,7 +133,26 @@ export default function ChatInterno() {
       {/* Members List */}
       <div className="w-80 border-r border-border flex flex-col">
         <div className="p-4 border-b border-border">
-          <h3 className="font-semibold mb-3">Chat da Equipe</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold">Chat da Equipe</h3>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="w-8 h-8"
+                    onClick={() => setIsNewChatDialogOpen(true)}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Iniciar nova conversa</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
@@ -314,10 +345,68 @@ export default function ChatInterno() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          Selecione um membro da equipe para iniciar uma conversa
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4">
+          <MessageSquare className="w-16 h-16 text-muted-foreground/30" />
+          <div className="text-center">
+            <p className="font-medium">Selecione um membro da equipe</p>
+            <p className="text-sm">ou inicie uma nova conversa</p>
+          </div>
+          <Button 
+            variant="outline" 
+            className="gap-2"
+            onClick={() => setIsNewChatDialogOpen(true)}
+          >
+            <Plus className="w-4 h-4" />
+            Nova Conversa
+          </Button>
         </div>
       )}
+
+      {/* New Chat Dialog */}
+      <Dialog open={isNewChatDialogOpen} onOpenChange={setIsNewChatDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Iniciar Nova Conversa</DialogTitle>
+          </DialogHeader>
+          <div className="py-4">
+            <div className="relative mb-4">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar atendente..."
+                className="pl-9"
+              />
+            </div>
+            <div className="space-y-2 max-h-[300px] overflow-y-auto">
+              {teamMembers.map((member) => (
+                <div
+                  key={member.id}
+                  onClick={() => handleSelectMember(member)}
+                  className="flex items-center gap-3 p-3 rounded-lg cursor-pointer hover:bg-muted transition-colors"
+                >
+                  <div className="relative">
+                    <Avatar className="w-10 h-10">
+                      <AvatarImage src={member.avatar_url || undefined} />
+                      <AvatarFallback className="bg-primary/10 text-primary">
+                        {member.name.split(" ").map((n) => n[0]).join("")}
+                      </AvatarFallback>
+                    </Avatar>
+                    <span
+                      className={cn(
+                        "absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card",
+                        member.online ? "bg-green-500" : "bg-muted"
+                      )}
+                    />
+                  </div>
+                  <div>
+                    <p className="font-medium text-sm">{member.name}</p>
+                    <p className="text-xs text-muted-foreground">{member.role}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
