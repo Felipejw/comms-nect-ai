@@ -280,13 +280,13 @@ serve(async (req) => {
         }
 
         // Create message
-        // sender_type: 'contact' for received, 'user' for sent by us
+        // sender_type: 'contact' for received, 'agent' for sent by us
         const { error: msgError } = await supabaseClient
           .from("messages")
           .insert({
             conversation_id: conversation.id,
             content: messageContent,
-            sender_type: fromMe ? "user" : "contact",
+            sender_type: fromMe ? "agent" : "contact",
             message_type: messageType,
             media_url: mediaUrl,
           });
