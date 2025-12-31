@@ -12,6 +12,7 @@ export interface Message {
   message_type: 'text' | 'image' | 'audio' | 'document';
   media_url: string | null;
   is_read: boolean;
+  delivery_status: 'sent' | 'delivered' | 'read' | null;
   created_at: string;
 }
 
@@ -277,6 +278,37 @@ export function useUpdateConversation() {
     },
     onError: (error: Error) => {
       toast.error('Erro ao atualizar conversa: ' + error.message);
+    },
+  });
+}
+
+export function useDeleteConversation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (conversationId: string) => {
+      // First delete all messages in the conversation
+      const { error: messagesError } = await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', conversationId);
+
+      if (messagesError) throw messagesError;
+
+      // Then delete the conversation
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', conversationId);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      toast.success('Conversa excluída!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao excluir conversa: ' + error.message);
     },
   });
 }
