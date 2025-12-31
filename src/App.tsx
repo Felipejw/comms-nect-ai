@@ -16,7 +16,7 @@ import RespostasRapidas from "./pages/RespostasRapidas";
 import Agendamentos from "./pages/Agendamentos";
 import ChatInterno from "./pages/ChatInterno";
 import Campanhas from "./pages/Campanhas";
-import FlowBuilder from "./pages/FlowBuilder";
+import Chatbot from "./pages/Chatbot";
 import Usuarios from "./pages/Usuarios";
 import FilasChatbot from "./pages/FilasChatbot";
 import TalkAI from "./pages/TalkAI";
@@ -54,7 +54,7 @@ const App = () => (
               <Route path="/tags" element={<Tags />} />
               <Route path="/chat-interno" element={<ChatInterno />} />
               <Route path="/campanhas" element={<Campanhas />} />
-              <Route path="/flowbuilder" element={<FlowBuilder />} />
+              <Route path="/chatbot" element={<Chatbot />} />
               <Route path="/api" element={<API />} />
               <Route path="/usuarios" element={<Usuarios />} />
               <Route path="/filas-chatbot" element={<FilasChatbot />} />

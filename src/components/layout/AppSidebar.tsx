@@ -66,7 +66,7 @@ const navSections: NavSection[] = [
     title: "Administração",
     items: [
       { title: "Disparo em Massa", href: "/campanhas", icon: Send },
-      { title: "FlowBuilder", href: "/flowbuilder", icon: GitBranch },
+      { title: "Chatbot", href: "/chatbot", icon: Bot },
       { title: "API Interna", href: "/api", icon: Code },
       { title: "Atendentes", href: "/usuarios", icon: UserCog },
       { title: "Setores", href: "/filas-chatbot", icon: Building2 },
