@@ -46,9 +46,11 @@ const nodeTypes: NodeTypes = {
 interface FlowCanvasProps {
   flowId: string | null;
   onNodeSelect: (node: Node | null) => void;
+  onDeleteNode?: (nodeId: string) => void;
+  onRegisterDeleteFn?: (fn: (nodeId: string) => void) => void;
 }
 
-function FlowCanvasInner({ flowId, onNodeSelect }: FlowCanvasProps) {
+function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn }: FlowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -212,6 +214,22 @@ function FlowCanvasInner({ flowId, onNodeSelect }: FlowCanvasProps) {
     },
     [setNodes]
   );
+
+  const deleteNode = useCallback(
+    (nodeId: string) => {
+      setNodes((nds) => nds.filter((node) => node.id !== nodeId));
+      setEdges((eds) => eds.filter((edge) => edge.source !== nodeId && edge.target !== nodeId));
+      setHasChanges(true);
+    },
+    [setNodes, setEdges]
+  );
+
+  // Register delete function with parent
+  useEffect(() => {
+    if (onRegisterDeleteFn) {
+      onRegisterDeleteFn(deleteNode);
+    }
+  }, [onRegisterDeleteFn, deleteNode]);
 
   if (!flowId) {
     return (

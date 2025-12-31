@@ -31,6 +31,7 @@ interface NodeConfigPanelProps {
   open: boolean;
   onClose: () => void;
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void;
+  onDelete?: (nodeId: string) => void;
 }
 
 const AI_MODELS = [
@@ -42,7 +43,7 @@ const AI_MODELS = [
   { value: "openai/gpt-5-nano", label: "GPT-5 Nano" },
 ];
 
-export function NodeConfigPanel({ node, open, onClose, onUpdate }: NodeConfigPanelProps) {
+export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete }: NodeConfigPanelProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const { data: queues } = useQueues();
   const { data: users } = useUsers();
@@ -612,6 +613,13 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate }: NodeConfigPan
     return titles[node.type || ""] || "Configurar Bloco";
   };
 
+  const handleDelete = () => {
+    if (node && onDelete) {
+      onDelete(node.id);
+      onClose();
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
       <DialogContent className="max-w-md max-h-[85vh]">
@@ -621,6 +629,18 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate }: NodeConfigPan
         <ScrollArea className="max-h-[65vh] pr-4">
           <div className="space-y-4">{renderFields()}</div>
         </ScrollArea>
+        {onDelete && (
+          <div className="pt-4 border-t border-border">
+            <Button
+              variant="destructive"
+              className="w-full gap-2"
+              onClick={handleDelete}
+            >
+              <Trash2 className="w-4 h-4" />
+              Excluir bloco
+            </Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
