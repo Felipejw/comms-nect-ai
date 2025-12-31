@@ -927,7 +927,7 @@ export type Database = {
         | "negotiation"
         | "closed_won"
         | "closed_lost"
-      message_type: "text" | "image" | "audio" | "document"
+      message_type: "text" | "image" | "audio" | "document" | "video"
       queue_status: "active" | "paused"
       schedule_status: "pending" | "completed" | "cancelled"
     }
@@ -1069,7 +1069,7 @@ export const Constants = {
         "closed_won",
         "closed_lost",
       ],
-      message_type: ["text", "image", "audio", "document"],
+      message_type: ["text", "image", "audio", "document", "video"],
       queue_status: ["active", "paused"],
       schedule_status: ["pending", "completed", "cancelled"],
     },

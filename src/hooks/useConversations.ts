@@ -9,7 +9,7 @@ export interface Message {
   sender_id: string | null;
   sender_type: 'agent' | 'contact' | 'bot';
   content: string;
-  message_type: 'text' | 'image' | 'audio' | 'document';
+  message_type: 'text' | 'image' | 'audio' | 'document' | 'video';
   media_url: string | null;
   is_read: boolean;
   delivery_status: 'sent' | 'delivered' | 'read' | null;
@@ -208,7 +208,7 @@ export function useSendMessage() {
       senderId: string;
       senderType?: 'agent' | 'contact' | 'bot';
       sendViaWhatsApp?: boolean;
-      messageType?: 'text' | 'image' | 'audio' | 'document';
+      messageType?: 'text' | 'image' | 'audio' | 'document' | 'video';
       mediaUrl?: string;
     }) => {
       // If sending via WhatsApp, use the edge function
