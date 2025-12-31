@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,6 +22,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
+import { useFileUpload } from "@/hooks/useFileUpload";
+import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 
 const statusConfig = {
   new: { label: "Novo", className: "bg-primary/10 text-primary" },
@@ -42,6 +44,8 @@ export default function Atendimento() {
   const [searchQuery, setSearchQuery] = useState("");
   const [mediaPreview, setMediaPreview] = useState<MediaPreview | null>(null);
   const [attachmentOpen, setAttachmentOpen] = useState(false);
+  const [showProfilePanel, setShowProfilePanel] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -52,6 +56,7 @@ export default function Atendimento() {
   const { data: messages, isLoading: messagesLoading } = useMessages(selectedConversation?.id || "");
   const sendMessage = useSendMessage();
   const updateConversation = useUpdateConversation();
+  const uploadFile = useFileUpload();
 
   // Helper para obter nome de exibição (nome > telefone > "Contato")
   const getDisplayName = (contact?: Conversation['contact']) => {
@@ -121,6 +126,11 @@ export default function Atendimento() {
     };
   }, [mediaPreview]);
 
+  // Close profile panel when conversation changes
+  useEffect(() => {
+    setShowProfilePanel(false);
+  }, [selectedConversation?.id]);
+
   const handleFileSelect = (e: ChangeEvent<HTMLInputElement>, type: 'image' | 'document') => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -156,39 +166,39 @@ export default function Atendimento() {
     const isWhatsApp = selectedConversation.channel === "whatsapp";
 
     try {
+      let mediaUrl: string | undefined;
+
+      // Upload file if there's media
       if (mediaPreview) {
-        // For now, we'll need to upload the file first and get a URL
-        // This is a placeholder - in production, you'd upload to Supabase Storage
+        setIsUploading(true);
         toast({
-          title: "Enviando mídia...",
-          description: `Enviando ${mediaPreview.type === 'image' ? 'imagem' : 'documento'}`,
+          title: "Enviando arquivo...",
+          description: `Fazendo upload do ${mediaPreview.type === 'image' ? 'imagem' : 'documento'}`,
         });
 
-        // TODO: Upload file to storage and get URL
-        // For now, just send the text content
-        if (messageText.trim()) {
-          await sendMessage.mutateAsync({
-            conversationId: selectedConversation.id,
-            content: messageText.trim(),
-            senderId: user.id,
-            senderType: "agent",
-            sendViaWhatsApp: isWhatsApp,
-            messageType: mediaPreview.type,
-          });
+        try {
+          mediaUrl = await uploadFile.mutateAsync(mediaPreview.file);
+        } catch (uploadError) {
+          console.error("Upload error:", uploadError);
+          setIsUploading(false);
+          return;
         }
-
-        clearMediaPreview();
-      } else {
-        await sendMessage.mutateAsync({
-          conversationId: selectedConversation.id,
-          content: messageText.trim(),
-          senderId: user.id,
-          senderType: "agent",
-          sendViaWhatsApp: isWhatsApp,
-        });
+        setIsUploading(false);
       }
 
+      // Send message with or without media
+      await sendMessage.mutateAsync({
+        conversationId: selectedConversation.id,
+        content: messageText.trim() || (mediaPreview?.type === 'image' ? '📷 Imagem' : mediaPreview?.file.name || ''),
+        senderId: user.id,
+        senderType: "agent",
+        sendViaWhatsApp: isWhatsApp,
+        messageType: mediaPreview?.type || 'text',
+        mediaUrl,
+      });
+
       setMessageText("");
+      clearMediaPreview();
 
       // Update conversation status if it's new
       if (selectedConversation.status === "new") {
@@ -394,6 +404,15 @@ export default function Atendimento() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-2"
+                onClick={() => setShowProfilePanel(!showProfilePanel)}
+              >
+                <User className="w-4 h-4" />
+                Perfil
+              </Button>
               {selectedConversation.status !== "resolved" && (
                 <Button 
                   variant="outline" 
@@ -413,7 +432,9 @@ export default function Atendimento() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem>Ver perfil</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShowProfilePanel(true)}>
+                    Ver perfil
+                  </DropdownMenuItem>
                   <DropdownMenuItem>Adicionar tag</DropdownMenuItem>
                   <DropdownMenuItem>Transferir</DropdownMenuItem>
                   <DropdownMenuItem className="text-destructive">Arquivar</DropdownMenuItem>
@@ -527,9 +548,9 @@ export default function Atendimento() {
                 size="icon" 
                 className="shrink-0 bg-accent hover:bg-accent/90"
                 onClick={handleSendMessage}
-                disabled={(!messageText.trim() && !mediaPreview) || sendMessage.isPending}
+                disabled={(!messageText.trim() && !mediaPreview) || sendMessage.isPending || isUploading}
               >
-                {sendMessage.isPending ? (
+                {(sendMessage.isPending || isUploading) ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
                   <Send className="w-5 h-5" />
@@ -542,6 +563,14 @@ export default function Atendimento() {
         <div className="flex-1 flex items-center justify-center text-muted-foreground">
           Selecione uma conversa para começar
         </div>
+      )}
+
+      {/* Contact Profile Panel */}
+      {showProfilePanel && selectedConversation?.contact?.id && (
+        <ContactProfilePanel
+          contactId={selectedConversation.contact.id}
+          onClose={() => setShowProfilePanel(false)}
+        />
       )}
     </div>
   );
