@@ -36,8 +36,12 @@ serve(async (req) => {
       });
     }
 
-    switch (event) {
-      case "connection.update": {
+    // Normalize event name to lowercase for comparison
+    const eventLower = event?.toLowerCase();
+    
+    switch (eventLower) {
+      case "connection.update":
+      case "connection_update": {
         // Connection status changed
         const state = data?.state;
         let status = "disconnected";
@@ -61,17 +65,29 @@ serve(async (req) => {
         break;
       }
 
-      case "qrcode.updated": {
-        // QR Code updated
-        await supabaseClient
-          .from("connections")
-          .update({ 
-            qr_code: data?.qrcode?.base64,
-            status: "connecting",
-          })
-          .eq("id", connection.id);
+      case "qrcode.updated":
+      case "qrcode_updated": {
+        // QR Code updated - extract base64 from various possible locations
+        let qrBase64 = data?.qrcode?.base64 || data?.base64 || data?.qrcode;
+        
+        // Ensure proper data URI prefix
+        if (qrBase64 && typeof qrBase64 === 'string' && !qrBase64.startsWith("data:")) {
+          qrBase64 = `data:image/png;base64,${qrBase64}`;
+        }
+        
+        if (qrBase64) {
+          await supabaseClient
+            .from("connections")
+            .update({ 
+              qr_code: qrBase64,
+              status: "connecting",
+            })
+            .eq("id", connection.id);
 
-        console.log(`QR Code updated for connection ${connection.id}`);
+          console.log(`QR Code updated for connection ${connection.id}`);
+        } else {
+          console.log(`QR Code event received but no base64 found for connection ${connection.id}`);
+        }
         break;
       }
 

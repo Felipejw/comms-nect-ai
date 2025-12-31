@@ -377,10 +377,13 @@ serve(async (req) => {
           console.log("[Evolution Instance] Delete failed (might not exist):", e);
         }
 
-        // 2. Wait a bit for the delete to take effect
+        // 2. Wait for delete to take effect
         await new Promise(resolve => setTimeout(resolve, 500));
 
-        // 3. Create new instance with QR code
+        // 3. Get Supabase URL for webhook
+        const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+
+        // 4. Create new instance with QR code and webhook configuration
         const createResponse = await fetch(`${EVOLUTION_API_URL}/instance/create`, {
           method: "POST",
           headers: evolutionHeaders,
@@ -388,6 +391,12 @@ serve(async (req) => {
             instanceName: instName,
             qrcode: true,
             integration: "WHATSAPP-BAILEYS",
+            webhook: {
+              url: `${SUPABASE_URL}/functions/v1/evolution-webhook`,
+              byEvents: false,
+              base64: true,
+              events: ["QRCODE_UPDATED", "CONNECTION_UPDATE", "MESSAGES_UPSERT", "MESSAGES_UPDATE"]
+            }
           }),
         });
 
@@ -398,7 +407,7 @@ serve(async (req) => {
           throw new Error(createData.message || createData.error || "Failed to recreate instance");
         }
 
-        // 4. Extract QR code from response
+        // 5. Extract QR code from response
         let qrCodeBase64 = null;
         if (createData.qrcode?.base64) {
           qrCodeBase64 = createData.qrcode.base64;
@@ -411,7 +420,56 @@ serve(async (req) => {
           qrCodeBase64 = `data:image/png;base64,${qrCodeBase64}`;
         }
 
-        // 5. Update database with new QR code
+        // 6. If no QR from create, retry fetching via connect endpoint
+        if (!qrCodeBase64) {
+          console.log("[Evolution Instance] No QR from create, trying connect endpoint with retries...");
+          
+          for (let attempt = 0; attempt < 3; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            
+            try {
+              const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${instName}`, {
+                method: "GET",
+                headers: evolutionHeaders,
+              });
+              
+              const qrData = await qrResponse.json();
+              console.log(`[Evolution Instance] Connect attempt ${attempt + 1}:`, JSON.stringify(qrData));
+              
+              // Check for base64 QR
+              if (qrData.base64) {
+                qrCodeBase64 = qrData.base64.startsWith("data:") 
+                  ? qrData.base64 
+                  : `data:image/png;base64,${qrData.base64}`;
+                console.log("[Evolution Instance] Got QR from connect endpoint");
+                break;
+              }
+              
+              // If we have the QR string code, generate image
+              if (qrData.code) {
+                console.log("[Evolution Instance] Generating QR from code string...");
+                try {
+                  const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrData.code)}`;
+                  const qrImageResponse = await fetch(qrApiUrl);
+                  
+                  if (qrImageResponse.ok) {
+                    const arrayBuffer = await qrImageResponse.arrayBuffer();
+                    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+                    qrCodeBase64 = `data:image/png;base64,${base64}`;
+                    console.log("[Evolution Instance] QR code generated from string");
+                    break;
+                  }
+                } catch (e) {
+                  console.error("[Evolution Instance] Failed to generate QR from string:", e);
+                }
+              }
+            } catch (e) {
+              console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
+            }
+          }
+        }
+
+        // 7. Update database with new QR code
         await supabaseClient
           .from("connections")
           .update({
