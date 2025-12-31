@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, ChangeEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Square } from "lucide-react";
+import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -28,13 +28,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useConversations, useMessages, useSendMessage, useUpdateConversation, useDeleteConversation, Conversation, Message } from "@/hooks/useConversations";
+import { useConversations, useMessages, useSendMessage, useUpdateConversation, useDeleteConversation, useMarkConversationAsRead, Conversation, Message } from "@/hooks/useConversations";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useToast } from "@/hooks/use-toast";
 import { useFileUpload } from "@/hooks/useFileUpload";
 import { useAudioRecorder } from "@/hooks/useAudioRecorder";
+import { useQuickReplies, QuickReply } from "@/hooks/useQuickReplies";
+import { useTags } from "@/hooks/useTags";
+import { useConversationTags, useAddTagToConversation, useRemoveTagFromConversation } from "@/hooks/useConversationTags";
+import { useNotifications } from "@/hooks/useNotifications";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 
 const statusConfig = {
@@ -60,9 +64,24 @@ export default function Atendimento() {
   const [isUploading, setIsUploading] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showMobileChat, setShowMobileChat] = useState(false);
+  
+  // Message search state
+  const [showMessageSearch, setShowMessageSearch] = useState(false);
+  const [messageSearchQuery, setMessageSearchQuery] = useState("");
+  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  
+  // Quick replies state
+  const [showQuickReplies, setShowQuickReplies] = useState(false);
+  const [selectedQuickReplyIndex, setSelectedQuickReplyIndex] = useState(0);
+  
+  // Tags state
+  const [showTagPopover, setShowTagPopover] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
+  const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
   const { user } = useAuth();
   const { toast } = useToast();
@@ -71,8 +90,61 @@ export default function Atendimento() {
   const sendMessage = useSendMessage();
   const updateConversation = useUpdateConversation();
   const deleteConversation = useDeleteConversation();
+  const markAsRead = useMarkConversationAsRead();
   const uploadFile = useFileUpload();
   const { isRecording, recordingTime, startRecording, stopRecording, cancelRecording } = useAudioRecorder();
+  const { data: quickReplies } = useQuickReplies();
+  const { data: tags } = useTags();
+  const { data: conversationTags } = useConversationTags(selectedConversation?.id);
+  const addTagToConversation = useAddTagToConversation();
+  const removeTagFromConversation = useRemoveTagFromConversation();
+  const { requestPermission, showNotification, permission } = useNotifications();
+
+  // Request notification permission on mount
+  useEffect(() => {
+    requestPermission();
+  }, [requestPermission]);
+
+  // Listen for new messages and show notifications
+  useEffect(() => {
+    if (messages && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      if (lastMessage.sender_type === 'contact' && !lastMessage.is_read) {
+        const contactName = selectedConversation?.contact?.name || 'Contato';
+        showNotification(
+          `Nova mensagem de ${contactName}`,
+          lastMessage.content.substring(0, 100),
+          selectedConversation?.contact?.avatar_url || undefined
+        );
+      }
+    }
+  }, [messages?.length]);
+
+  // Mark conversation as read when selected
+  useEffect(() => {
+    if (selectedConversation && selectedConversation.unread_count > 0) {
+      markAsRead.mutate(selectedConversation.id);
+    }
+  }, [selectedConversation?.id]);
+
+  // Filtered quick replies based on input
+  const filteredQuickReplies = useMemo(() => {
+    if (!showQuickReplies || !quickReplies) return [];
+    const query = messageText.slice(1).toLowerCase();
+    return quickReplies.filter(qr =>
+      qr.shortcut.toLowerCase().includes(query) ||
+      qr.title.toLowerCase().includes(query)
+    ).slice(0, 5);
+  }, [messageText, showQuickReplies, quickReplies]);
+
+  // Search results in messages
+  const searchResults = useMemo(() => {
+    if (!messageSearchQuery.trim() || !messages) return [];
+    const query = messageSearchQuery.toLowerCase();
+    return messages.filter(m => 
+      m.content.toLowerCase().includes(query)
+    );
+  }, [messages, messageSearchQuery]);
 
   // Helper para obter nome de exibição (nome > telefone > "Contato")
   const getDisplayName = (contact?: Conversation['contact']) => {
@@ -111,8 +183,10 @@ export default function Atendimento() {
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+    if (!showMessageSearch) {
+      messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages, showMessageSearch]);
 
   // Select first conversation by default
   useEffect(() => {
@@ -143,7 +217,25 @@ export default function Atendimento() {
   // Close profile panel when conversation changes
   useEffect(() => {
     setShowProfilePanel(false);
+    setShowMessageSearch(false);
+    setMessageSearchQuery("");
   }, [selectedConversation?.id]);
+
+  // Focus search input when opened
+  useEffect(() => {
+    if (showMessageSearch) {
+      messageSearchInputRef.current?.focus();
+    }
+  }, [showMessageSearch]);
+
+  // Scroll to search result
+  useEffect(() => {
+    if (searchResults.length > 0 && currentSearchIndex < searchResults.length) {
+      const messageId = searchResults[currentSearchIndex].id;
+      const element = messageRefs.current.get(messageId);
+      element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [currentSearchIndex, searchResults]);
 
   const handleFileSelect = (e: ChangeEvent<HTMLInputElement>, type: 'image' | 'document') => {
     const file = e.target.files?.[0];
@@ -308,12 +400,76 @@ export default function Atendimento() {
     setShowMobileChat(true);
   };
 
+  const handleTextChange = (value: string) => {
+    setMessageText(value);
+    if (value.startsWith('/') && value.length >= 1) {
+      setShowQuickReplies(true);
+      setSelectedQuickReplyIndex(0);
+    } else {
+      setShowQuickReplies(false);
+    }
+  };
+
+  const insertQuickReply = (reply: QuickReply) => {
+    setMessageText(reply.message);
+    setShowQuickReplies(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showQuickReplies && filteredQuickReplies.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedQuickReplyIndex(i => Math.min(i + 1, filteredQuickReplies.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedQuickReplyIndex(i => Math.max(i - 1, 0));
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        insertQuickReply(filteredQuickReplies[selectedQuickReplyIndex]);
+      } else if (e.key === 'Escape') {
+        setShowQuickReplies(false);
+      }
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  const handleAddTag = (tagId: string) => {
+    if (!selectedConversation) return;
+    addTagToConversation.mutate({ conversationId: selectedConversation.id, tagId });
+  };
+
+  const handleRemoveTag = (tagId: string) => {
+    if (!selectedConversation) return;
+    removeTagFromConversation.mutate({ conversationId: selectedConversation.id, tagId });
+  };
+
+  const navigateSearchResult = (direction: 'next' | 'prev') => {
+    if (searchResults.length === 0) return;
+    if (direction === 'next') {
+      setCurrentSearchIndex(i => (i + 1) % searchResults.length);
+    } else {
+      setCurrentSearchIndex(i => (i - 1 + searchResults.length) % searchResults.length);
+    }
+  };
+
   const formatTime = (date: string) => {
     return format(new Date(date), "HH:mm", { locale: ptBR });
   };
 
   const formatRelativeTime = (date: string) => {
     return formatDistanceToNow(new Date(date), { addSuffix: false, locale: ptBR });
+  };
+
+  const highlightText = (text: string, query: string) => {
+    if (!query.trim()) return text;
+    const parts = text.split(new RegExp(`(${query})`, 'gi'));
+    return parts.map((part, i) => 
+      part.toLowerCase() === query.toLowerCase() 
+        ? <mark key={i} className="bg-yellow-300 dark:bg-yellow-600 px-0.5 rounded">{part}</mark> 
+        : part
+    );
   };
 
   const renderDeliveryStatus = (message: Message) => {
@@ -323,7 +479,7 @@ export default function Atendimento() {
     
     switch (status) {
       case 'read':
-        return <CheckCheck className="w-3.5 h-3.5 text-blue-500" />;
+        return <CheckCheck className="w-3.5 h-3.5 text-primary" />;
       case 'delivered':
         return <CheckCheck className="w-3.5 h-3.5 text-muted-foreground" />;
       case 'sent':
@@ -334,10 +490,13 @@ export default function Atendimento() {
 
   const renderMessage = (message: Message) => {
     const isOutgoing = message.sender_type === "agent";
+    const isSearchResult = searchResults.some(r => r.id === message.id);
+    const isCurrentResult = searchResults[currentSearchIndex]?.id === message.id;
     
     return (
       <div
         key={message.id}
+        ref={(el) => el && messageRefs.current.set(message.id, el)}
         className={cn(
           "flex",
           isOutgoing ? "justify-end" : "justify-start"
@@ -346,7 +505,8 @@ export default function Atendimento() {
         <div
           className={cn(
             "max-w-[85%] sm:max-w-[70%]",
-            isOutgoing ? "chat-bubble-outgoing" : "chat-bubble-incoming"
+            isOutgoing ? "chat-bubble-outgoing" : "chat-bubble-incoming",
+            isCurrentResult && "ring-2 ring-primary ring-offset-2"
           )}
         >
           {message.message_type === "image" && message.media_url && (
@@ -374,7 +534,9 @@ export default function Atendimento() {
             </audio>
           )}
           {message.content && (
-            <p className="text-sm break-words">{message.content}</p>
+            <p className="text-sm break-words">
+              {messageSearchQuery ? highlightText(message.content, messageSearchQuery) : message.content}
+            </p>
           )}
           <div className="flex items-center justify-end gap-1 mt-1">
             <span className="text-[10px] text-muted-foreground">
@@ -386,6 +548,13 @@ export default function Atendimento() {
       </div>
     );
   };
+
+  // Get available tags (not already added to conversation)
+  const availableTags = useMemo(() => {
+    if (!tags || !conversationTags) return tags || [];
+    const addedTagIds = new Set(conversationTags.map(ct => ct.tag_id));
+    return tags.filter(t => !addedTagIds.has(t.id));
+  }, [tags, conversationTags]);
 
   if (conversationsLoading) {
     return (
@@ -433,6 +602,18 @@ export default function Atendimento() {
               <Filter className="w-4 h-4 mr-2" />
               Filtrar
             </Button>
+            <Button
+              variant={permission === 'granted' ? 'outline' : 'default'}
+              size="sm"
+              onClick={requestPermission}
+              title={permission === 'granted' ? 'Notificações ativadas' : 'Ativar notificações'}
+            >
+              {permission === 'granted' ? (
+                <Bell className="w-4 h-4 text-accent" />
+              ) : (
+                <BellOff className="w-4 h-4" />
+              )}
+            </Button>
           </div>
         </div>
 
@@ -473,7 +654,7 @@ export default function Atendimento() {
                     {statusConfig[conversation.status].label}
                   </Badge>
                   {conversation.unread_count > 0 && (
-                    <Badge className="bg-primary text-primary-foreground w-5 h-5 p-0 flex items-center justify-center rounded-full text-xs">
+                    <Badge className="bg-accent text-accent-foreground w-5 h-5 p-0 flex items-center justify-center rounded-full text-xs">
                       {conversation.unread_count}
                     </Badge>
                   )}
@@ -491,90 +672,209 @@ export default function Atendimento() {
           !showMobileChat && "hidden md:flex"
         )}>
           {/* Chat Header */}
-          <div className="h-14 sm:h-16 border-b border-border flex items-center justify-between px-3 sm:px-4 gap-2">
-            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <Button 
-                variant="ghost" 
-                size="icon" 
-                className="md:hidden shrink-0"
-                onClick={() => setShowMobileChat(false)}
-              >
-                <X className="w-5 h-5" />
-              </Button>
-              <Avatar className="w-8 h-8 sm:w-10 sm:h-10 shrink-0">
-                <AvatarImage src={selectedConversation.contact?.avatar_url || undefined} />
-                <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                  {getInitials(selectedConversation.contact)}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0">
-                <p className="font-medium text-sm sm:text-base truncate">{getDisplayName(selectedConversation.contact)}</p>
-                <div className="flex items-center gap-2">
-                  <p className="text-xs text-muted-foreground truncate">
-                    {formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"}
-                  </p>
-                  {selectedConversation.channel === "whatsapp" && (
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1 text-green-600 border-green-600/30 hidden sm:flex">
-                      <MessageCircle className="w-3 h-3" />
-                      WhatsApp
-                    </Badge>
-                  )}
+          <div className="border-b border-border px-3 sm:px-4 py-2">
+            <div className="flex items-center justify-between gap-2 h-12">
+              <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="md:hidden shrink-0"
+                  onClick={() => setShowMobileChat(false)}
+                >
+                  <X className="w-5 h-5" />
+                </Button>
+                <Avatar className="w-8 h-8 sm:w-10 sm:h-10 shrink-0">
+                  <AvatarImage src={selectedConversation.contact?.avatar_url || undefined} />
+                  <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                    {getInitials(selectedConversation.contact)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="min-w-0">
+                  <p className="font-medium text-sm sm:text-base truncate">{getDisplayName(selectedConversation.contact)}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs text-muted-foreground truncate">
+                      {formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"}
+                    </p>
+                    {selectedConversation.channel === "whatsapp" && (
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1 text-accent border-accent/30 hidden sm:flex">
+                        <MessageCircle className="w-3 h-3" />
+                        WhatsApp
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2 hidden lg:flex"
-                onClick={() => setShowProfilePanel(!showProfilePanel)}
-              >
-                <User className="w-4 h-4" />
-                Perfil
-              </Button>
-              {selectedConversation.status !== "resolved" && (
-                <Button 
-                  variant="outline" 
-                  size="sm" 
-                  className="gap-2 hidden sm:flex"
-                  onClick={handleResolve}
-                  disabled={updateConversation.isPending}
+              <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setShowMessageSearch(!showMessageSearch)}
+                  className={cn(showMessageSearch && "bg-primary/10 text-primary")}
                 >
-                  <CheckCircle className="w-4 h-4" />
-                  <span className="hidden md:inline">Resolver</span>
+                  <Search className="w-4 h-4" />
                 </Button>
-              )}
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" className="shrink-0">
-                    <MoreVertical className="w-5 h-5" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setShowProfilePanel(true)}>
-                    <User className="w-4 h-4 mr-2" />
-                    Ver perfil
-                  </DropdownMenuItem>
-                  {selectedConversation.status !== "resolved" && (
-                    <DropdownMenuItem onClick={handleResolve} className="sm:hidden">
-                      <CheckCircle className="w-4 h-4 mr-2" />
-                      Resolver
-                    </DropdownMenuItem>
-                  )}
-                  <DropdownMenuItem>Adicionar tag</DropdownMenuItem>
-                  <DropdownMenuItem>Transferir</DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem 
-                    className="text-destructive"
-                    onClick={() => setShowDeleteDialog(true)}
+                <Popover open={showTagPopover} onOpenChange={setShowTagPopover}>
+                  <PopoverTrigger asChild>
+                    <Button variant="ghost" size="icon">
+                      <Tag className="w-4 h-4" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-64 p-2" align="end">
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium px-2">Tags da conversa</p>
+                      {conversationTags && conversationTags.length > 0 && (
+                        <div className="flex flex-wrap gap-1 px-2 pb-2 border-b">
+                          {conversationTags.map(ct => (
+                            <Badge
+                              key={ct.id}
+                              style={{ backgroundColor: ct.tag?.color }}
+                              className="text-white text-xs gap-1 cursor-pointer hover:opacity-80"
+                              onClick={() => handleRemoveTag(ct.tag_id)}
+                            >
+                              {ct.tag?.name}
+                              <X className="w-3 h-3" />
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      {availableTags && availableTags.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-xs text-muted-foreground px-2">Adicionar tag:</p>
+                          {availableTags.map(tag => (
+                            <Button
+                              key={tag.id}
+                              variant="ghost"
+                              size="sm"
+                              className="w-full justify-start gap-2"
+                              onClick={() => handleAddTag(tag.id)}
+                            >
+                              <div 
+                                className="w-3 h-3 rounded-full" 
+                                style={{ backgroundColor: tag.color }}
+                              />
+                              {tag.name}
+                            </Button>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-xs text-muted-foreground text-center py-2">
+                          Todas as tags já foram adicionadas
+                        </p>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 hidden lg:flex"
+                  onClick={() => setShowProfilePanel(!showProfilePanel)}
+                >
+                  <User className="w-4 h-4" />
+                  Perfil
+                </Button>
+                {selectedConversation.status !== "resolved" && (
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="gap-2 hidden sm:flex"
+                    onClick={handleResolve}
+                    disabled={updateConversation.isPending}
                   >
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Excluir conversa
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <CheckCircle className="w-4 h-4" />
+                    <span className="hidden md:inline">Resolver</span>
+                  </Button>
+                )}
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon" className="shrink-0">
+                      <MoreVertical className="w-5 h-5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => setShowProfilePanel(true)}>
+                      <User className="w-4 h-4 mr-2" />
+                      Ver perfil
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowMessageSearch(true)}>
+                      <Search className="w-4 h-4 mr-2" />
+                      Buscar mensagens
+                    </DropdownMenuItem>
+                    {selectedConversation.status !== "resolved" && (
+                      <DropdownMenuItem onClick={handleResolve} className="sm:hidden">
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Resolver
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem onClick={() => setShowTagPopover(true)}>
+                      <Tag className="w-4 h-4 mr-2" />
+                      Gerenciar tags
+                    </DropdownMenuItem>
+                    <DropdownMenuItem>Transferir</DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem 
+                      className="text-destructive"
+                      onClick={() => setShowDeleteDialog(true)}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Excluir conversa
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
             </div>
+            
+            {/* Tags display */}
+            {conversationTags && conversationTags.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {conversationTags.map(ct => (
+                  <Badge
+                    key={ct.id}
+                    style={{ backgroundColor: ct.tag?.color }}
+                    className="text-white text-[10px] px-1.5 py-0"
+                  >
+                    {ct.tag?.name}
+                  </Badge>
+                ))}
+              </div>
+            )}
           </div>
+
+          {/* Message Search Bar */}
+          {showMessageSearch && (
+            <div className="px-3 sm:px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-2">
+              <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+              <Input
+                ref={messageSearchInputRef}
+                placeholder="Buscar nas mensagens..."
+                value={messageSearchQuery}
+                onChange={(e) => {
+                  setMessageSearchQuery(e.target.value);
+                  setCurrentSearchIndex(0);
+                }}
+                className="h-8 text-sm"
+              />
+              {searchResults.length > 0 && (
+                <div className="flex items-center gap-1 shrink-0">
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {currentSearchIndex + 1}/{searchResults.length}
+                  </span>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => navigateSearchResult('prev')}>
+                    <ChevronUp className="w-4 h-4" />
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => navigateSearchResult('next')}>
+                    <ChevronDown className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
+              <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => {
+                setShowMessageSearch(false);
+                setMessageSearchQuery("");
+              }}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 bg-muted/30 scrollbar-thin">
@@ -612,7 +912,7 @@ export default function Atendimento() {
                 )}
                 {mediaPreview.type === 'audio' && (
                   <div className="w-12 h-12 sm:w-16 sm:h-16 bg-muted rounded-lg flex items-center justify-center">
-                    <Mic className="w-6 h-6 sm:w-8 sm:h-8 text-green-500" />
+                    <Mic className="w-6 h-6 sm:w-8 sm:h-8 text-accent" />
                   </div>
                 )}
                 <div className="flex-1 min-w-0">
@@ -643,6 +943,33 @@ export default function Atendimento() {
             </div>
           )}
 
+          {/* Quick Replies Dropdown */}
+          {showQuickReplies && filteredQuickReplies.length > 0 && (
+            <div className="px-3 sm:px-4 border-t border-border">
+              <div className="bg-popover rounded-lg border shadow-lg max-h-48 overflow-y-auto">
+                {filteredQuickReplies.map((reply, index) => (
+                  <button
+                    key={reply.id}
+                    className={cn(
+                      "w-full text-left px-3 py-2 hover:bg-muted transition-colors",
+                      index === selectedQuickReplyIndex && "bg-muted"
+                    )}
+                    onClick={() => insertQuickReply(reply)}
+                    onMouseEnter={() => setSelectedQuickReplyIndex(index)}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-mono bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                        /{reply.shortcut}
+                      </span>
+                      <span className="text-sm font-medium truncate">{reply.title}</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate mt-0.5">{reply.message}</p>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Message Input */}
           <div className="p-2 sm:p-4 border-t border-border">
             <div className="flex items-end gap-1 sm:gap-2">
@@ -662,7 +989,7 @@ export default function Atendimento() {
                       className="w-full justify-start gap-2"
                       onClick={() => imageInputRef.current?.click()}
                     >
-                      <Image className="w-4 h-4 text-blue-500" />
+                      <Image className="w-4 h-4 text-primary" />
                       Imagem
                     </Button>
                     <Button 
@@ -670,7 +997,7 @@ export default function Atendimento() {
                       className="w-full justify-start gap-2"
                       onClick={() => fileInputRef.current?.click()}
                     >
-                      <FileText className="w-4 h-4 text-orange-500" />
+                      <FileText className="w-4 h-4 text-warning" />
                       Documento
                     </Button>
                   </div>
@@ -686,25 +1013,22 @@ export default function Atendimento() {
                     onClick={handleStartRecording}
                     disabled={!!mediaPreview}
                   >
-                    <Mic className="w-5 h-5 text-green-500" />
+                    <Mic className="w-5 h-5 text-accent" />
                   </Button>
-                  <Textarea
-                    placeholder="Digite sua mensagem..."
-                    value={messageText}
-                    onChange={(e) => setMessageText(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        handleSendMessage();
-                      }
-                    }}
-                    className="min-h-[40px] sm:min-h-[44px] max-h-32 resize-none text-sm"
-                    rows={1}
-                  />
+                  <div className="flex-1 relative">
+                    <Textarea
+                      placeholder="Digite / para respostas rápidas..."
+                      value={messageText}
+                      onChange={(e) => handleTextChange(e.target.value)}
+                      onKeyDown={handleKeyDown}
+                      className="min-h-[40px] sm:min-h-[44px] max-h-32 resize-none text-sm"
+                      rows={1}
+                    />
+                  </div>
                 </>
               ) : (
                 <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground">
-                  Clique no botão azul para enviar
+                  Clique no botão verde para enviar
                 </div>
               )}
               
