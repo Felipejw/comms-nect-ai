@@ -18,7 +18,10 @@ serve(async (req) => {
     );
 
     const webhook = await req.json();
-    console.log("Webhook received:", JSON.stringify(webhook));
+    console.log("[Webhook] ====== EVENT RECEIVED ======");
+    console.log("[Webhook] Event:", webhook.event);
+    console.log("[Webhook] Instance:", webhook.instance);
+    console.log("[Webhook] Full payload:", JSON.stringify(webhook, null, 2));
 
     const { event, instance, data } = webhook;
 
@@ -30,11 +33,15 @@ serve(async (req) => {
       .single();
 
     if (!connection) {
-      console.log(`Connection not found for instance: ${instance}`);
+      console.log(`[Webhook] Connection not found for instance: ${instance}`);
       return new Response(JSON.stringify({ success: true, message: "Connection not found" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    
+    console.log(`[Webhook] Found connection: ${connection.id} (${connection.name})`);
+    console.log(`[Webhook] Current status: ${connection.status}, has QR: ${!!connection.qr_code}`);
+    
 
     // Normalize event name to lowercase for comparison
     const eventLower = event?.toLowerCase();
@@ -68,14 +75,24 @@ serve(async (req) => {
       case "qrcode.updated":
       case "qrcode_updated": {
         // QR Code updated - extract base64 from various possible locations
+        console.log("[Webhook] Processing QRCODE event...");
+        console.log("[Webhook] Data keys:", Object.keys(data || {}));
+        console.log("[Webhook] data.qrcode:", data?.qrcode);
+        console.log("[Webhook] data.base64:", data?.base64?.substring?.(0, 50));
+        
         let qrBase64 = data?.qrcode?.base64 || data?.base64 || data?.qrcode;
+        
+        // If qrcode is an object, try to extract base64
+        if (qrBase64 && typeof qrBase64 === 'object' && qrBase64.base64) {
+          qrBase64 = qrBase64.base64;
+        }
         
         // Ensure proper data URI prefix
         if (qrBase64 && typeof qrBase64 === 'string' && !qrBase64.startsWith("data:")) {
           qrBase64 = `data:image/png;base64,${qrBase64}`;
         }
         
-        if (qrBase64) {
+        if (qrBase64 && typeof qrBase64 === 'string') {
           await supabaseClient
             .from("connections")
             .update({ 
@@ -84,9 +101,9 @@ serve(async (req) => {
             })
             .eq("id", connection.id);
 
-          console.log(`QR Code updated for connection ${connection.id}`);
+          console.log(`[Webhook] QR Code updated for connection ${connection.id}, length: ${qrBase64.length}`);
         } else {
-          console.log(`QR Code event received but no base64 found for connection ${connection.id}`);
+          console.log(`[Webhook] QR Code event received but no valid base64 found. Data type: ${typeof qrBase64}`);
         }
         break;
       }
