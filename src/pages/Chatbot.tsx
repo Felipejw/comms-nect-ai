@@ -7,12 +7,19 @@ import type { Node } from "@xyflow/react";
 export default function Chatbot() {
   const [selectedFlowId, setSelectedFlowId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [configPanelOpen, setConfigPanelOpen] = useState(false);
   const [nodeUpdateFn, setNodeUpdateFn] = useState<
     ((nodeId: string, data: Record<string, unknown>) => void) | null
   >(null);
 
   const handleNodeSelect = useCallback((node: Node | null) => {
     setSelectedNode(node);
+    setConfigPanelOpen(!!node);
+  }, []);
+
+  const handleCloseConfig = useCallback(() => {
+    setConfigPanelOpen(false);
+    setSelectedNode(null);
   }, []);
 
   const handleNodeUpdate = useCallback(
@@ -31,16 +38,16 @@ export default function Chatbot() {
         onSelectFlow={(id) => {
           setSelectedFlowId(id);
           setSelectedNode(null);
+          setConfigPanelOpen(false);
         }}
       />
       <FlowCanvas flowId={selectedFlowId} onNodeSelect={handleNodeSelect} />
-      {selectedNode && (
-        <NodeConfigPanel
-          node={selectedNode}
-          onClose={() => setSelectedNode(null)}
-          onUpdate={handleNodeUpdate}
-        />
-      )}
+      <NodeConfigPanel
+        node={selectedNode}
+        open={configPanelOpen}
+        onClose={handleCloseConfig}
+        onUpdate={handleNodeUpdate}
+      />
     </div>
   );
 }
