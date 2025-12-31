@@ -973,9 +973,25 @@ export default function Atendimento() {
                   )}
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
-                  <Badge className={cn("text-[10px] px-1.5 py-0.5", statusConfig[conversation.status].className)}>
-                    {statusConfig[conversation.status].label}
-                  </Badge>
+                  <div className="flex items-center gap-1">
+                    {conversation.is_bot_active && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <Badge variant="outline" className="p-0.5 h-5 w-5 flex items-center justify-center border-primary/50">
+                              <Bot className="w-3 h-3 text-primary" />
+                            </Badge>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Atendido pelo Chatbot</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    )}
+                    <Badge className={cn("text-[10px] px-1.5 py-0.5", statusConfig[conversation.status].className)}>
+                      {statusConfig[conversation.status].label}
+                    </Badge>
+                  </div>
                   {conversation.unread_count > 0 && (
                     <Badge className="bg-accent text-accent-foreground w-5 h-5 p-0 flex items-center justify-center rounded-full text-xs">
                       {conversation.unread_count}
