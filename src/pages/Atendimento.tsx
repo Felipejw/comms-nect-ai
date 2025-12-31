@@ -512,6 +512,37 @@ export default function Atendimento() {
     });
   };
 
+  const handleTransferToManual = async () => {
+    if (!selectedConversation || !user) return;
+    
+    await updateConversation.mutateAsync({
+      id: selectedConversation.id,
+      is_bot_active: false,
+      assigned_to: user.id,
+      status: selectedConversation.status === 'new' ? 'in_progress' : selectedConversation.status,
+    });
+    
+    toast({
+      title: "Conversa transferida",
+      description: "A conversa foi transferida para atendimento manual",
+    });
+  };
+
+  const handleTransferToBot = async () => {
+    if (!selectedConversation) return;
+    
+    await updateConversation.mutateAsync({
+      id: selectedConversation.id,
+      is_bot_active: true,
+      assigned_to: null,
+    });
+    
+    toast({
+      title: "Conversa transferida",
+      description: "A conversa foi transferida para o Chatbot",
+    });
+  };
+
   const handleDeleteConversation = async () => {
     if (!selectedConversation) return;
     
@@ -1118,7 +1149,17 @@ export default function Atendimento() {
                       <Calendar className="w-4 h-4 mr-2" />
                       Agendar mensagem
                     </DropdownMenuItem>
-                    <DropdownMenuItem>Transferir</DropdownMenuItem>
+                    {selectedConversation.is_bot_active ? (
+                      <DropdownMenuItem onClick={handleTransferToManual} disabled={updateConversation.isPending}>
+                        <UserCheck className="w-4 h-4 mr-2" />
+                        Assumir atendimento
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onClick={handleTransferToBot} disabled={updateConversation.isPending}>
+                        <Bot className="w-4 h-4 mr-2" />
+                        Transferir para Bot
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem 
                       className="text-destructive"

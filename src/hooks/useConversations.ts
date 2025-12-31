@@ -293,6 +293,7 @@ export function useUpdateConversation() {
       status?: Conversation['status'];
       assigned_to?: string | null;
       queue_id?: string | null;
+      is_bot_active?: boolean;
     }) => {
       const { data, error } = await supabase
         .from('conversations')
