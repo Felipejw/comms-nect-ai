@@ -5,6 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
 import {
   Select,
   SelectContent,
@@ -13,6 +15,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useQueues } from "@/hooks/useQueues";
+import { useUsers } from "@/hooks/useUsers";
+import { useWhatsAppConnections } from "@/hooks/useWhatsAppConnections";
+import { useKanbanColumns } from "@/hooks/useKanbanColumns";
 import type { Node } from "@xyflow/react";
 
 interface NodeConfigPanelProps {
@@ -21,9 +26,21 @@ interface NodeConfigPanelProps {
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void;
 }
 
+const AI_MODELS = [
+  { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash (Recomendado)" },
+  { value: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
+  { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
+  { value: "openai/gpt-5", label: "GPT-5" },
+  { value: "openai/gpt-5-mini", label: "GPT-5 Mini" },
+  { value: "openai/gpt-5-nano", label: "GPT-5 Nano" },
+];
+
 export function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const { data: queues } = useQueues();
+  const { data: users } = useUsers();
+  const { connections } = useWhatsAppConnections();
+  const { data: kanbanColumns } = useKanbanColumns();
 
   useEffect(() => {
     if (node) {
@@ -275,7 +292,147 @@ export function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProp
           </>
         );
 
+      case "ai":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label>Nome do bloco</Label>
+              <Input
+                value={(formData.label as string) || ""}
+                onChange={(e) => handleChange("label", e.target.value)}
+                placeholder="IA"
+              />
+            </div>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+              <div className="space-y-0.5">
+                <Label>Ativar IA</Label>
+                <p className="text-xs text-muted-foreground">Responder automaticamente</p>
+              </div>
+              <Switch
+                checked={(formData.isEnabled as boolean) ?? true}
+                onCheckedChange={(v) => handleChange("isEnabled", v)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Modelo de IA</Label>
+              <Select
+                value={(formData.model as string) || "google/gemini-2.5-flash"}
+                onValueChange={(v) => handleChange("model", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {AI_MODELS.map((model) => (
+                    <SelectItem key={model.value} value={model.value}>
+                      {model.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>System Prompt</Label>
+              <Textarea
+                value={(formData.systemPrompt as string) || ""}
+                onChange={(e) => handleChange("systemPrompt", e.target.value)}
+                placeholder="Você é um assistente amigável que ajuda os clientes..."
+                rows={4}
+              />
+              <p className="text-xs text-muted-foreground">
+                Instruções para o comportamento da IA
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Label>Temperatura: {(formData.temperature as number) ?? 0.7}</Label>
+              </div>
+              <Slider
+                value={[(formData.temperature as number) ?? 0.7]}
+                onValueChange={(v) => handleChange("temperature", v[0])}
+                min={0}
+                max={2}
+                step={0.1}
+              />
+              <p className="text-xs text-muted-foreground">
+                Menor = mais preciso, Maior = mais criativo
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Max Tokens</Label>
+              <Input
+                type="number"
+                min={100}
+                max={4096}
+                value={(formData.maxTokens as number) || 1024}
+                onChange={(e) => handleChange("maxTokens", parseInt(e.target.value))}
+                placeholder="1024"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Base de conhecimento (opcional)</Label>
+              <Textarea
+                value={(formData.knowledgeBase as string) || ""}
+                onChange={(e) => handleChange("knowledgeBase", e.target.value)}
+                placeholder="Informações sobre produtos, preços, políticas..."
+                rows={4}
+              />
+              <p className="text-xs text-muted-foreground">
+                Contexto adicional para a IA consultar
+              </p>
+            </div>
+          </>
+        );
+
+      case "crm":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label>Nome do bloco</Label>
+              <Input
+                value={(formData.label as string) || ""}
+                onChange={(e) => handleChange("label", e.target.value)}
+                placeholder="CRM"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Etapa do Kanban</Label>
+              <Select
+                value={(formData.kanbanColumnId as string) || ""}
+                onValueChange={(v) => {
+                  const column = kanbanColumns?.find((c) => c.id === v);
+                  handleChange("kanbanColumnId", v);
+                  handleChange("kanbanColumnName", column?.name || "");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione a etapa..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {kanbanColumns?.map((column) => (
+                    <SelectItem key={column.id} value={column.id}>
+                      <div className="flex items-center gap-2">
+                        {column.color && (
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: column.color }}
+                          />
+                        )}
+                        {column.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                O contato será movido para esta etapa do CRM
+              </p>
+            </div>
+          </>
+        );
+
       case "transfer":
+        const transferType = (formData.transferType as string) || "queue";
         return (
           <>
             <div className="space-y-2">
@@ -287,27 +444,112 @@ export function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProp
               />
             </div>
             <div className="space-y-2">
-              <Label>Setor/Fila</Label>
+              <Label>Tipo de transferência</Label>
               <Select
-                value={(formData.queueId as string) || ""}
+                value={transferType}
                 onValueChange={(v) => {
-                  const queue = queues?.find((q) => q.id === v);
-                  handleChange("queueId", v);
-                  handleChange("queueName", queue?.name || "");
+                  handleChange("transferType", v);
+                  // Reset related fields
+                  handleChange("queueId", "");
+                  handleChange("queueName", "");
+                  handleChange("agentId", "");
+                  handleChange("agentName", "");
+                  handleChange("connectionId", "");
+                  handleChange("connectionName", "");
                 }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Selecione o setor..." />
+                  <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {queues?.map((queue) => (
-                    <SelectItem key={queue.id} value={queue.id}>
-                      {queue.name}
-                    </SelectItem>
-                  ))}
+                  <SelectItem value="queue">Setor/Fila</SelectItem>
+                  <SelectItem value="agent">Atendente específico</SelectItem>
+                  <SelectItem value="whatsapp">Número de WhatsApp</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {transferType === "queue" && (
+              <div className="space-y-2">
+                <Label>Setor/Fila</Label>
+                <Select
+                  value={(formData.queueId as string) || ""}
+                  onValueChange={(v) => {
+                    const queue = queues?.find((q) => q.id === v);
+                    handleChange("queueId", v);
+                    handleChange("queueName", queue?.name || "");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o setor..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {queues?.map((queue) => (
+                      <SelectItem key={queue.id} value={queue.id}>
+                        {queue.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {transferType === "agent" && (
+              <div className="space-y-2">
+                <Label>Atendente</Label>
+                <Select
+                  value={(formData.agentId as string) || ""}
+                  onValueChange={(v) => {
+                    const agent = users?.find((u) => u.id === v);
+                    handleChange("agentId", v);
+                    handleChange("agentName", agent?.name || "");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o atendente..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {users?.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${user.is_online ? "bg-success" : "bg-muted"}`} />
+                          {user.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {transferType === "whatsapp" && (
+              <div className="space-y-2">
+                <Label>Número de WhatsApp</Label>
+                <Select
+                  value={(formData.connectionId as string) || ""}
+                  onValueChange={(v) => {
+                    const connection = connections?.find((c) => c.id === v);
+                    handleChange("connectionId", v);
+                    handleChange("connectionName", connection?.name || connection?.phone_number || "");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o número..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {connections?.map((conn) => (
+                      <SelectItem key={conn.id} value={conn.id}>
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${conn.status === "connected" ? "bg-success" : "bg-muted"}`} />
+                          {conn.name} {conn.phone_number && `(${conn.phone_number})`}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
             <div className="space-y-2">
               <Label>Mensagem de transferência</Label>
               <Textarea
@@ -355,6 +597,8 @@ export function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProp
       condition: "Configurar Condição",
       delay: "Configurar Aguardar",
       menu: "Configurar Menu",
+      ai: "Configurar IA",
+      crm: "Configurar CRM",
       transfer: "Configurar Transferência",
       end: "Configurar Encerramento",
     };

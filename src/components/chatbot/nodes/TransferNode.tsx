@@ -1,17 +1,45 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
-import { UserPlus } from "lucide-react";
+import { UserPlus, Users, Phone } from "lucide-react";
 
 interface TransferNodeData {
   label?: string;
+  transferType?: "queue" | "agent" | "whatsapp";
   queueId?: string;
   queueName?: string;
+  agentId?: string;
+  agentName?: string;
+  connectionId?: string;
+  connectionName?: string;
   message?: string;
   [key: string]: unknown;
 }
 
 function TransferNode({ data, selected }: NodeProps) {
   const nodeData = data as TransferNodeData;
+  
+  const getTransferInfo = () => {
+    switch (nodeData.transferType) {
+      case "agent":
+        return nodeData.agentName || "Selecione o atendente";
+      case "whatsapp":
+        return nodeData.connectionName || "Selecione o número";
+      case "queue":
+      default:
+        return nodeData.queueName || "Selecione o setor";
+    }
+  };
+
+  const getIcon = () => {
+    switch (nodeData.transferType) {
+      case "agent":
+        return <Users className="w-4 h-4 text-destructive-foreground" />;
+      case "whatsapp":
+        return <Phone className="w-4 h-4 text-destructive-foreground" />;
+      default:
+        return <UserPlus className="w-4 h-4 text-destructive-foreground" />;
+    }
+  };
   
   return (
     <div
@@ -26,12 +54,12 @@ function TransferNode({ data, selected }: NodeProps) {
       />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-destructive">
-          <UserPlus className="w-4 h-4 text-destructive-foreground" />
+          {getIcon()}
         </div>
         <div className="flex-1">
           <p className="font-medium text-sm">{nodeData.label || "Transferir"}</p>
           <p className="text-xs text-muted-foreground">
-            {nodeData.queueName || "Clique para configurar"}
+            {getTransferInfo()}
           </p>
         </div>
       </div>

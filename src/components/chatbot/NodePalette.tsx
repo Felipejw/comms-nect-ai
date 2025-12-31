@@ -1,4 +1,4 @@
-import { Zap, MessageSquare, GitBranch, Clock, List, UserPlus, XCircle } from "lucide-react";
+import { Zap, MessageSquare, GitBranch, Clock, List, UserPlus, XCircle, Brain, LayoutList } from "lucide-react";
 
 const nodeTypes = [
   { type: "trigger", icon: Zap, label: "Gatilho", color: "bg-primary" },
@@ -6,6 +6,8 @@ const nodeTypes = [
   { type: "condition", icon: GitBranch, label: "Condição", color: "bg-warning" },
   { type: "delay", icon: Clock, label: "Aguardar", color: "bg-info" },
   { type: "menu", icon: List, label: "Menu", color: "bg-orange-500" },
+  { type: "ai", icon: Brain, label: "IA", color: "bg-violet-500" },
+  { type: "crm", icon: LayoutList, label: "CRM", color: "bg-sky-500" },
   { type: "transfer", icon: UserPlus, label: "Transferir", color: "bg-destructive" },
   { type: "end", icon: XCircle, label: "Encerrar", color: "bg-pink-500" },
 ];
