@@ -179,15 +179,50 @@ serve(async (req) => {
           throw dbError;
         }
 
-        // Wait for Evolution API to initialize the WhatsApp connection
-        console.log("[Evolution Instance] Waiting 3s for WhatsApp initialization...");
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        // Wait for Evolution API to initialize the WhatsApp connection and database
+        console.log("[Evolution Instance] Waiting 5s for Evolution API database initialization...");
+        await new Promise(resolve => setTimeout(resolve, 5000));
+
+        // Verify instance was actually created in Evolution API before trying to connect
+        let instanceReady = false;
+        for (let verifyAttempt = 0; verifyAttempt < 3; verifyAttempt++) {
+          console.log(`[Evolution Instance] Verifying instance creation (attempt ${verifyAttempt + 1}/3)...`);
+          try {
+            const verifyResponse = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
+              method: "GET",
+              headers: evolutionHeaders,
+            });
+            
+            if (verifyResponse.ok) {
+              const allInstances = await verifyResponse.json();
+              const ourInstance = Array.isArray(allInstances) 
+                ? allInstances.find((i: { instance?: { instanceName?: string } }) => 
+                    i.instance?.instanceName === cleanInstanceName)
+                : null;
+              
+              if (ourInstance) {
+                console.log("[Evolution Instance] Instance verified in Evolution API database");
+                instanceReady = true;
+                break;
+              } else {
+                console.log("[Evolution Instance] Instance not yet in database, waiting...");
+              }
+            }
+          } catch (e) {
+            console.log(`[Evolution Instance] Verify attempt failed: ${e}`);
+          }
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+
+        if (!instanceReady) {
+          console.log("[Evolution Instance] WARNING: Could not verify instance creation, proceeding anyway...");
+        }
 
         // Now fetch QR code using the connect endpoint - this forces QR generation
         let qrCodeBase64 = null;
         
-        for (let attempt = 0; attempt < 8; attempt++) {
-          console.log(`[Evolution Instance] Fetch QR attempt ${attempt + 1}/8...`);
+        for (let attempt = 0; attempt < 6; attempt++) {
+          console.log(`[Evolution Instance] Fetch QR attempt ${attempt + 1}/6...`);
           
           try {
             const qrResponse = await fetch(`${EVOLUTION_API_URL}/instance/connect/${cleanInstanceName}`, {
@@ -197,6 +232,12 @@ serve(async (req) => {
 
             const qrData = await qrResponse.json();
             console.log(`[Evolution Instance] Connect response (attempt ${attempt + 1}):`, JSON.stringify(qrData));
+
+            // Check for error indicating instance doesn't exist
+            if (qrData.error || qrData.message?.includes("not found")) {
+              console.log("[Evolution Instance] Instance not found error, skipping...");
+              break;
+            }
 
             // Check for base64 QR directly
             if (qrData.base64) {
@@ -226,6 +267,21 @@ serve(async (req) => {
               }
             }
             
+            // Check for pairingCode as fallback
+            if (qrData.pairingCode) {
+              console.log(`[Evolution Instance] Got pairing code: ${qrData.pairingCode}`);
+              // Store pairing code in session_data for UI to display
+              await supabaseClient
+                .from("connections")
+                .update({ 
+                  session_data: { 
+                    instanceName: cleanInstanceName,
+                    pairingCode: qrData.pairingCode 
+                  }
+                })
+                .eq("id", connection.id);
+            }
+            
             // If count is 0 and no QR, wait longer
             if (qrData.count === 0) {
               console.log("[Evolution Instance] QR count is 0, waiting for WhatsApp to generate...");
@@ -234,8 +290,8 @@ serve(async (req) => {
             console.error(`[Evolution Instance] Connect attempt ${attempt + 1} failed:`, e);
           }
           
-          // Wait 2.5 seconds before next retry (longer wait to give WhatsApp time)
-          await new Promise(resolve => setTimeout(resolve, 2500));
+          // Wait 3 seconds before next retry (longer wait for database sync)
+          await new Promise(resolve => setTimeout(resolve, 3000));
         }
         
         // Update database with QR if found
