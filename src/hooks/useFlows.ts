@@ -90,11 +90,14 @@ export function useCreateFlow() {
 
   return useMutation({
     mutationFn: async (data: { name: string; description?: string }) => {
+      const { data: { user } } = await supabase.auth.getUser();
+      
       const { data: flow, error } = await supabase
         .from("chatbot_flows" as any)
         .insert({
           name: data.name,
           description: data.description || null,
+          created_by: user?.id || null,
         })
         .select()
         .single();
