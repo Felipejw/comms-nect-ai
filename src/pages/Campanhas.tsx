@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, Image, X, Tag } from "lucide-react";
+import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, Image, X, Tag, LayoutGrid, List } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +48,7 @@ import { useCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign, 
 import { useContacts } from "@/hooks/useContacts";
 import { useTags } from "@/hooks/useTags";
 import { format } from "date-fns";
+import { CampaignMetricsDashboard } from "@/components/campanhas/CampaignMetricsDashboard";
 import { ptBR } from "date-fns/locale";
 
 const statusConfig = {
@@ -63,6 +64,7 @@ export default function Campanhas() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isContactsDialogOpen, setIsContactsDialogOpen] = useState(false);
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
+  const [activeTab, setActiveTab] = useState<"campaigns" | "metrics">("campaigns");
   
   // Form state
   const [name, setName] = useState("");
@@ -208,151 +210,173 @@ export default function Campanhas() {
         </Button>
       </div>
 
-      <div className="flex items-center gap-4">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar disparos..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "campaigns" | "metrics")} className="space-y-6">
+        <div className="flex items-center justify-between">
+          <TabsList>
+            <TabsTrigger value="campaigns" className="gap-2">
+              <List className="w-4 h-4" />
+              Campanhas
+            </TabsTrigger>
+            <TabsTrigger value="metrics" className="gap-2">
+              <BarChart3 className="w-4 h-4" />
+              Dashboard
+            </TabsTrigger>
+          </TabsList>
+          
+          {activeTab === "campaigns" && (
+            <div className="flex items-center gap-4">
+              <div className="relative max-w-md">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar disparos..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9 w-[300px]"
+                />
+              </div>
+              <Button variant="outline" className="gap-2">
+                <Filter className="w-4 h-4" />
+                Filtrar
+              </Button>
+            </div>
+          )}
         </div>
-        <Button variant="outline" className="gap-2">
-          <Filter className="w-4 h-4" />
-          Filtrar
-        </Button>
-      </div>
 
-      {filteredCampaigns.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-12 text-center">
-          <Send className="w-12 h-12 text-muted-foreground/30 mb-4" />
-          <h3 className="text-lg font-medium mb-2">Nenhum disparo encontrado</h3>
-          <p className="text-muted-foreground mb-4">Crie seu primeiro disparo em massa para começar</p>
-          <Button onClick={() => setIsDialogOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Criar Disparo
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {filteredCampaigns.map((campaign) => {
-            const totalContacts = (campaign.sent_count || 0) + (campaign.delivered_count || 0);
-            const deliveryRate = campaign.sent_count && campaign.sent_count > 0 
-              ? Math.round(((campaign.delivered_count || 0) / campaign.sent_count) * 100) 
-              : 0;
-            const openRate = campaign.delivered_count && campaign.delivered_count > 0 
-              ? Math.round(((campaign.read_count || 0) / campaign.delivered_count) * 100) 
-              : 0;
+        <TabsContent value="metrics" className="mt-6">
+          <CampaignMetricsDashboard />
+        </TabsContent>
 
-            return (
-              <Card key={campaign.id} className="animate-fade-in">
-                <CardHeader className="pb-3">
-                  <div className="flex items-start justify-between">
-                    <div className="space-y-1">
-                      <CardTitle className="text-lg">{campaign.name}</CardTitle>
-                      <CardDescription>{campaign.description || "Sem descrição"}</CardDescription>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge className={statusConfig[campaign.status].className}>
-                        {statusConfig[campaign.status].label}
-                      </Badge>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openContactsDialog(campaign)}>
-                            <Users className="w-4 h-4 mr-2" />
-                            Adicionar contatos
-                          </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <BarChart3 className="w-4 h-4 mr-2" />
-                            Ver estatísticas
-                          </DropdownMenuItem>
-                          {campaign.status === "active" ? (
-                            <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "paused")}>
-                              <Pause className="w-4 h-4 mr-2" />
-                              Pausar
-                            </DropdownMenuItem>
-                          ) : campaign.status === "paused" || campaign.status === "draft" ? (
-                            <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "active")}>
-                              <Play className="w-4 h-4 mr-2" />
-                              {campaign.status === "draft" ? "Iniciar" : "Retomar"}
-                            </DropdownMenuItem>
-                          ) : null}
-                          <DropdownMenuItem 
-                            className="text-destructive"
-                            onClick={() => openDeleteDialog(campaign)}
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            Excluir
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-3 gap-4 text-center">
-                    <div>
-                      <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
-                        <Send className="w-4 h-4" />
-                        <span className="text-xs">Enviadas</span>
-                      </div>
-                      <p className="font-semibold">{(campaign.sent_count || 0).toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
-                        <Users className="w-4 h-4" />
-                        <span className="text-xs">Entregues</span>
-                      </div>
-                      <p className="font-semibold">{(campaign.delivered_count || 0).toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
-                        <BarChart3 className="w-4 h-4" />
-                        <span className="text-xs">Lidas</span>
-                      </div>
-                      <p className="font-semibold">{(campaign.read_count || 0).toLocaleString()}</p>
-                    </div>
-                  </div>
+        <TabsContent value="campaigns" className="mt-6">
+          {filteredCampaigns.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <Send className="w-12 h-12 text-muted-foreground/30 mb-4" />
+              <h3 className="text-lg font-medium mb-2">Nenhum disparo encontrado</h3>
+              <p className="text-muted-foreground mb-4">Crie seu primeiro disparo em massa para começar</p>
+              <Button onClick={() => setIsDialogOpen(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Criar Disparo
+              </Button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {filteredCampaigns.map((campaign) => {
+                const deliveryRate = campaign.sent_count && campaign.sent_count > 0 
+                  ? Math.round(((campaign.delivered_count || 0) / campaign.sent_count) * 100) 
+                  : 0;
+                const openRate = campaign.delivered_count && campaign.delivered_count > 0 
+                  ? Math.round(((campaign.read_count || 0) / campaign.delivered_count) * 100) 
+                  : 0;
 
-                  {campaign.status !== "draft" && campaign.sent_count && campaign.sent_count > 0 && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Taxa de entrega</span>
-                        <span className="font-medium">{deliveryRate}%</span>
+                return (
+                  <Card key={campaign.id} className="animate-fade-in">
+                    <CardHeader className="pb-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <CardTitle className="text-lg">{campaign.name}</CardTitle>
+                          <CardDescription>{campaign.description || "Sem descrição"}</CardDescription>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge className={statusConfig[campaign.status].className}>
+                            {statusConfig[campaign.status].label}
+                          </Badge>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="icon">
+                                <MoreHorizontal className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openContactsDialog(campaign)}>
+                                <Users className="w-4 h-4 mr-2" />
+                                Adicionar contatos
+                              </DropdownMenuItem>
+                              <DropdownMenuItem>
+                                <BarChart3 className="w-4 h-4 mr-2" />
+                                Ver estatísticas
+                              </DropdownMenuItem>
+                              {campaign.status === "active" ? (
+                                <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "paused")}>
+                                  <Pause className="w-4 h-4 mr-2" />
+                                  Pausar
+                                </DropdownMenuItem>
+                              ) : campaign.status === "paused" || campaign.status === "draft" ? (
+                                <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "active")}>
+                                  <Play className="w-4 h-4 mr-2" />
+                                  {campaign.status === "draft" ? "Iniciar" : "Retomar"}
+                                </DropdownMenuItem>
+                              ) : null}
+                              <DropdownMenuItem 
+                                className="text-destructive"
+                                onClick={() => openDeleteDialog(campaign)}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Excluir
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
                       </div>
-                      <Progress value={deliveryRate} className="h-2" />
-                    </div>
-                  )}
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="grid grid-cols-3 gap-4 text-center">
+                        <div>
+                          <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
+                            <Send className="w-4 h-4" />
+                            <span className="text-xs">Enviadas</span>
+                          </div>
+                          <p className="font-semibold">{(campaign.sent_count || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
+                            <Users className="w-4 h-4" />
+                            <span className="text-xs">Entregues</span>
+                          </div>
+                          <p className="font-semibold">{(campaign.delivered_count || 0).toLocaleString()}</p>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-center gap-1 text-muted-foreground mb-1">
+                            <BarChart3 className="w-4 h-4" />
+                            <span className="text-xs">Lidas</span>
+                          </div>
+                          <p className="font-semibold">{(campaign.read_count || 0).toLocaleString()}</p>
+                        </div>
+                      </div>
 
-                  <div className="flex items-center justify-between pt-2 border-t border-border text-sm">
-                    <span className="text-muted-foreground">
-                      {campaign.scheduled_at ? (
-                        <span className="flex items-center gap-1">
-                          <Calendar className="w-4 h-4" />
-                          Agendada para {format(new Date(campaign.scheduled_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
-                        </span>
-                      ) : (
-                        `Criada em ${format(new Date(campaign.created_at), "dd/MM/yyyy", { locale: ptBR })}`
+                      {campaign.status !== "draft" && campaign.sent_count && campaign.sent_count > 0 && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-muted-foreground">Taxa de entrega</span>
+                            <span className="font-medium">{deliveryRate}%</span>
+                          </div>
+                          <Progress value={deliveryRate} className="h-2" />
+                        </div>
                       )}
-                    </span>
-                    {campaign.status !== "draft" && campaign.delivered_count && campaign.delivered_count > 0 && (
-                      <span className="text-muted-foreground">
-                        Taxa de leitura: <strong className="text-foreground">{openRate}%</strong>
-                      </span>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      )}
+
+                      <div className="flex items-center justify-between pt-2 border-t border-border text-sm">
+                        <span className="text-muted-foreground">
+                          {campaign.scheduled_at ? (
+                            <span className="flex items-center gap-1">
+                              <Calendar className="w-4 h-4" />
+                              Agendada para {format(new Date(campaign.scheduled_at), "dd/MM/yyyy HH:mm", { locale: ptBR })}
+                            </span>
+                          ) : (
+                            `Criada em ${format(new Date(campaign.created_at), "dd/MM/yyyy", { locale: ptBR })}`
+                          )}
+                        </span>
+                        {campaign.status !== "draft" && campaign.delivered_count && campaign.delivered_count > 0 && (
+                          <span className="text-muted-foreground">
+                            Taxa de leitura: <strong className="text-foreground">{openRate}%</strong>
+                          </span>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </TabsContent>
+      </Tabs>
 
       {/* Create Campaign Dialog */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
