@@ -1,15 +1,21 @@
-import { useState, useEffect, useRef } from "react";
-import { Search, Send, Smile, Paperclip, Loader2 } from "lucide-react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useUsers } from "@/hooks/useUsers";
-import { useChatMessages, useSendChatMessage, useMarkMessagesAsRead, useUnreadMessageCounts } from "@/hooks/useChatInterno";
+import { useChatMessages, useSendChatMessage, useMarkMessagesAsRead, useUnreadMessageCounts, useReadReceipts, useChatPresence } from "@/hooks/useChatInterno";
 import { useAuth } from "@/contexts/AuthContext";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface TeamMember {
   id: string;
@@ -20,7 +26,7 @@ interface TeamMember {
 }
 
 export default function ChatInterno() {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const { data: users = [], isLoading: usersLoading } = useUsers();
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [messageText, setMessageText] = useState("");
@@ -34,6 +40,16 @@ export default function ChatInterno() {
   const sendMessage = useSendChatMessage();
   const markAsRead = useMarkMessagesAsRead();
   const { data: unreadCounts = {} } = useUnreadMessageCounts(user?.id || "");
+  
+  // Real-time presence
+  const { onlineUsers } = useChatPresence(user?.id || "", profile?.name || "");
+  
+  // Get message IDs for read receipts
+  const myMessageIds = useMemo(() => 
+    messages.filter(m => m.sender_id === user?.id).map(m => m.id),
+    [messages, user?.id]
+  );
+  const { data: readReceipts = {} } = useReadReceipts(myMessageIds);
 
   // Transform users to team members (excluding current user)
   const teamMembers: TeamMember[] = users
@@ -42,7 +58,7 @@ export default function ChatInterno() {
       id: u.id,
       name: u.name,
       role: u.role === "admin" ? "Administrador" : u.role === "manager" ? "Gestor" : "Operador",
-      online: u.is_online || false,
+      online: u.is_online || onlineUsers.has(u.id),
       avatar_url: u.avatar_url,
     }));
 
@@ -85,9 +101,11 @@ export default function ChatInterno() {
     return format(new Date(dateString), "HH:mm", { locale: ptBR });
   };
 
-  const getLastMessage = (memberId: string) => {
-    // This would need a separate query for last messages
-    return "";
+  // Get read status for a message
+  const getReadStatus = (messageId: string, senderId: string) => {
+    if (senderId !== user?.id) return null; // Only show for my messages
+    const receipt = readReceipts[messageId];
+    return receipt?.isRead || false;
   };
 
   if (usersLoading) {
@@ -203,27 +221,62 @@ export default function ChatInterno() {
                 Nenhuma mensagem ainda. Comece a conversa!
               </div>
             ) : (
-              messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={cn(
-                    "flex",
-                    message.sender_id === user?.id ? "justify-end" : "justify-start"
-                  )}
-                >
-                  <div
-                    className={cn(
-                      "max-w-[70%]",
-                      message.sender_id === user?.id ? "chat-bubble-outgoing" : "chat-bubble-incoming"
-                    )}
-                  >
-                    <p className="text-sm">{message.content}</p>
-                    <p className="text-[10px] text-muted-foreground mt-1 text-right">
-                      {formatMessageTime(message.created_at)}
-                    </p>
-                  </div>
-                </div>
-              ))
+              <TooltipProvider>
+                {messages.map((message) => {
+                  const isMyMessage = message.sender_id === user?.id;
+                  const isRead = isMyMessage ? getReadStatus(message.id, message.sender_id) : null;
+                  
+                  return (
+                    <div
+                      key={message.id}
+                      className={cn(
+                        "flex",
+                        isMyMessage ? "justify-end" : "justify-start"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "max-w-[70%]",
+                          isMyMessage ? "chat-bubble-outgoing" : "chat-bubble-incoming"
+                        )}
+                      >
+                        <p className="text-sm">{message.content}</p>
+                        <div className="flex items-center justify-end gap-1 mt-1">
+                          <span className="text-[10px] text-muted-foreground">
+                            {formatMessageTime(message.created_at)}
+                          </span>
+                          {isMyMessage && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="flex items-center">
+                                  {isRead ? (
+                                    <CheckCheck className="w-3.5 h-3.5 text-blue-500" />
+                                  ) : (
+                                    <Check className="w-3.5 h-3.5 text-muted-foreground" />
+                                  )}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="left" className="text-xs">
+                                {isRead ? (
+                                  <div className="flex items-center gap-1">
+                                    <CheckCheck className="w-3 h-3 text-blue-500" />
+                                    <span>Lido por {selectedMember?.name}</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    <Check className="w-3 h-3" />
+                                    <span>Enviado</span>
+                                  </div>
+                                )}
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </TooltipProvider>
             )}
             <div ref={messagesEndRef} />
           </div>
