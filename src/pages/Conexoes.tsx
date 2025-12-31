@@ -68,6 +68,14 @@ export default function Conexoes() {
         return;
       }
 
+      // If connecting but no QR code, fetch it automatically
+      if (connection.status === "connecting" && !connection.qr_code) {
+        console.log("[Polling] No QR code, fetching...");
+        await getQrCode.mutateAsync(pollingConnection).catch((e) => {
+          console.error("[Polling] Failed to fetch QR:", e);
+        });
+      }
+
       // Check status
       await checkStatus.mutateAsync(pollingConnection).catch(() => {});
       
@@ -76,7 +84,7 @@ export default function Conexoes() {
     }, 3000); // Reduced to 3 seconds for faster QR updates
 
     return () => clearInterval(interval);
-  }, [pollingConnection, connections, checkStatus, refetch]);
+  }, [pollingConnection, connections, checkStatus, getQrCode, refetch]);
 
   const handleCreateConnection = async () => {
     if (!newInstanceName.trim()) return;
@@ -92,9 +100,15 @@ export default function Conexoes() {
         setSelectedConnection(result.connection);
         setPollingConnection(result.connection.id);
         
-        // If QR code was returned, update local state immediately
-        if (result.qrCode) {
-          console.log("QR Code received from create:", result.qrCode ? "Yes" : "No");
+        console.log("QR Code received from create:", result.qrCode ? "Yes" : "No");
+        
+        // If no QR code came with create, fetch it immediately
+        if (!result.qrCode) {
+          console.log("[Create] No QR code in response, fetching...");
+          await getQrCode.mutateAsync(result.connection.id).catch((e) => {
+            console.error("[Create] Failed to fetch QR:", e);
+          });
+          await refetch();
         }
       }
     } catch (error) {
