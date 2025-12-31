@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -92,6 +93,9 @@ export function FlowSidebar({ selectedFlowId, onSelectFlow }: FlowSidebarProps) 
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Novo Fluxo</DialogTitle>
+                <DialogDescription>
+                  Crie um novo fluxo de automação para seu chatbot.
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4">
                 <div className="space-y-2">

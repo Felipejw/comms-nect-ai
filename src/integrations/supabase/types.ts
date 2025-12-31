@@ -251,6 +251,42 @@ export type Database = {
         }
         Relationships: []
       }
+      chatbot_flows: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          trigger_type: string | null
+          trigger_value: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          trigger_type?: string | null
+          trigger_value?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          trigger_type?: string | null
+          trigger_value?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       chatbot_rules: {
         Row: {
           created_at: string
@@ -551,6 +587,13 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "flow_edges_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "chatbot_flows"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "flow_edges_source_id_fkey"
             columns: ["source_id"]
             isOneToOne: false
@@ -594,7 +637,15 @@ export type Database = {
           position_y?: number | null
           type?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "flow_nodes_flow_id_fkey"
+            columns: ["flow_id"]
+            isOneToOne: false
+            referencedRelation: "chatbot_flows"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       integrations: {
         Row: {
