@@ -22,10 +22,12 @@ serve(async (req) => {
 
     const { action, instanceName, connectionId } = await req.json();
 
-    console.log(`Evolution API action: ${action}, instance: ${instanceName}, connectionId: ${connectionId}`);
+    console.log(`[Evolution Instance] Action: ${action}, instanceName: ${instanceName}, connectionId: ${connectionId}`);
+    console.log(`[Evolution Instance] API URL: ${EVOLUTION_API_URL}`);
 
     if (!EVOLUTION_API_URL || !EVOLUTION_API_KEY) {
-      throw new Error("Evolution API credentials not configured");
+      console.error("[Evolution Instance] Missing credentials - URL:", !!EVOLUTION_API_URL, "KEY:", !!EVOLUTION_API_KEY);
+      throw new Error("Evolution API credentials not configured. Please set EVOLUTION_API_URL and EVOLUTION_API_KEY secrets.");
     }
 
     const evolutionHeaders = {
@@ -47,10 +49,12 @@ serve(async (req) => {
         });
 
         const createData = await createResponse.json();
-        console.log("Create instance response:", JSON.stringify(createData));
+        console.log("[Evolution Instance] Create response status:", createResponse.status);
+        console.log("[Evolution Instance] Create response:", JSON.stringify(createData));
 
         if (!createResponse.ok) {
-          throw new Error(createData.message || "Failed to create instance");
+          console.error("[Evolution Instance] Create failed:", createData);
+          throw new Error(createData.message || createData.error || "Failed to create instance");
         }
 
         // Save connection to database

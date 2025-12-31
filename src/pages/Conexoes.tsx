@@ -384,7 +384,7 @@ export default function Conexoes() {
         </CardHeader>
         <CardContent>
           <div className="p-4 rounded-lg bg-muted font-mono text-sm break-all">
-            https://qfmeqvkwkbafnuybbuma.supabase.co/functions/v1/evolution-webhook
+            https://qducanwbpleoceynmend.supabase.co/functions/v1/evolution-webhook
           </div>
           <p className="text-sm text-muted-foreground mt-2">
             Configure este endpoint na sua Evolution API para receber eventos de mensagens e status de conexão.
