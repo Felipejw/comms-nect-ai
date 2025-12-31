@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { useEffect } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 
 export interface ChatMessage {
   id: string;
@@ -10,6 +10,7 @@ export interface ChatMessage {
   content: string;
   is_read: boolean;
   created_at: string;
+  read_at?: string | null;
   sender?: {
     id: string;
     name: string;
@@ -28,22 +29,32 @@ export function useChatMessages(userId: string, otherUserId: string) {
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
           table: 'chat_messages',
         },
         (payload) => {
-          const newMessage = payload.new as ChatMessage;
-          // Only update if this message is part of this conversation
-          if (
-            (newMessage.sender_id === userId && newMessage.receiver_id === otherUserId) ||
-            (newMessage.sender_id === otherUserId && newMessage.receiver_id === userId)
-          ) {
+          if (payload.eventType === 'INSERT') {
+            const newMessage = payload.new as ChatMessage;
+            if (
+              (newMessage.sender_id === userId && newMessage.receiver_id === otherUserId) ||
+              (newMessage.sender_id === otherUserId && newMessage.receiver_id === userId)
+            ) {
+              queryClient.setQueryData(
+                ['chat-messages', userId, otherUserId],
+                (old: ChatMessage[] | undefined) => {
+                  if (!old) return [newMessage];
+                  return [...old, newMessage];
+                }
+              );
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const updatedMessage = payload.new as ChatMessage;
             queryClient.setQueryData(
               ['chat-messages', userId, otherUserId],
               (old: ChatMessage[] | undefined) => {
-                if (!old) return [newMessage];
-                return [...old, newMessage];
+                if (!old) return old;
+                return old.map(msg => msg.id === updatedMessage.id ? { ...msg, ...updatedMessage } : msg);
               }
             );
           }
@@ -67,7 +78,6 @@ export function useChatMessages(userId: string, otherUserId: string) {
 
       if (error) throw error;
       
-      // Fetch sender profiles separately
       const senderIds = [...new Set((data || []).map(m => m.sender_id))];
       
       let profileMap = new Map();
@@ -160,7 +170,6 @@ export function useUnreadMessageCounts(userId: string) {
 
       if (error) throw error;
 
-      // Count unread messages per sender
       const counts = new Map<string, number>();
       data?.forEach(msg => {
         counts.set(msg.sender_id, (counts.get(msg.sender_id) || 0) + 1);
@@ -169,6 +178,78 @@ export function useUnreadMessageCounts(userId: string) {
       return counts;
     },
     enabled: !!userId,
-    refetchInterval: 10000, // Refetch every 10 seconds
+    refetchInterval: 10000,
   });
+}
+
+// Hook for read receipts - track when messages are read
+export function useReadReceipts(messageIds: string[]) {
+  return useQuery({
+    queryKey: ['read-receipts', messageIds],
+    queryFn: async () => {
+      if (messageIds.length === 0) return {};
+      
+      const { data, error } = await supabase
+        .from('chat_messages')
+        .select('id, is_read, receiver_id')
+        .in('id', messageIds);
+
+      if (error) throw error;
+
+      const receipts: Record<string, { isRead: boolean; receiverId: string }> = {};
+      data?.forEach(msg => {
+        receipts[msg.id] = {
+          isRead: msg.is_read || false,
+          receiverId: msg.receiver_id,
+        };
+      });
+
+      return receipts;
+    },
+    enabled: messageIds.length > 0,
+    refetchInterval: 5000,
+  });
+}
+
+// Hook for real-time presence in chat
+export function useChatPresence(userId: string, userName: string) {
+  const [onlineUsers, setOnlineUsers] = useState<Map<string, { name: string; lastSeen: string }>>(new Map());
+
+  useEffect(() => {
+    if (!userId) return;
+
+    const channel = supabase.channel('chat-presence')
+      .on('presence', { event: 'sync' }, () => {
+        const state = channel.presenceState();
+        const users = new Map<string, { name: string; lastSeen: string }>();
+        
+        Object.values(state).forEach((presences: any) => {
+          presences.forEach((presence: any) => {
+            if (presence.user_id !== userId) {
+              users.set(presence.user_id, {
+                name: presence.user_name,
+                lastSeen: new Date().toISOString(),
+              });
+            }
+          });
+        });
+        
+        setOnlineUsers(users);
+      })
+      .subscribe(async (status) => {
+        if (status === 'SUBSCRIBED') {
+          await channel.track({
+            user_id: userId,
+            user_name: userName,
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [userId, userName]);
+
+  return { onlineUsers };
 }

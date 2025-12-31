@@ -27,33 +27,41 @@ serve(async (req) => {
     }
 
     const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
-    const { contactId } = await req.json();
+    const body = await req.json();
+    const { contactId, phone, includeStatus = false } = body;
 
-    if (!contactId) {
+    let cleanPhone: string;
+    
+    if (phone) {
+      // Direct phone number provided
+      cleanPhone = phone.replace(/\D/g, "");
+    } else if (contactId) {
+      // Get contact from database
+      const { data: contact, error: contactError } = await supabaseClient
+        .from("contacts")
+        .select("id, phone, avatar_url")
+        .eq("id", contactId)
+        .single();
+
+      if (contactError || !contact) {
+        console.error("Contact not found:", contactError);
+        return new Response(
+          JSON.stringify({ success: false, error: "Contato não encontrado" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (!contact.phone) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Contato sem telefone" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      cleanPhone = contact.phone.replace(/\D/g, "");
+    } else {
       return new Response(
-        JSON.stringify({ success: false, error: "contactId é obrigatório" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Get contact
-    const { data: contact, error: contactError } = await supabaseClient
-      .from("contacts")
-      .select("id, phone, avatar_url")
-      .eq("id", contactId)
-      .single();
-
-    if (contactError || !contact) {
-      console.error("Contact not found:", contactError);
-      return new Response(
-        JSON.stringify({ success: false, error: "Contato não encontrado" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!contact.phone) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Contato sem telefone" }),
+        JSON.stringify({ success: false, error: "contactId ou phone é obrigatório" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -78,65 +86,83 @@ serve(async (req) => {
 
     const instanceName = (connection.session_data as any)?.instanceName || connection.name;
     
-    // Clean phone number (remove non-digits)
-    const cleanPhone = contact.phone.replace(/\D/g, "");
-    
-    console.log(`Fetching profile picture for ${cleanPhone} via instance ${instanceName}`);
+    console.log(`Fetching WhatsApp profile for ${cleanPhone} via instance ${instanceName}`);
 
-    // Call Evolution API to get profile picture
-    const profileResponse = await fetch(
-      `${evolutionApiUrl}/chat/fetchProfilePictureUrl/${instanceName}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          apikey: evolutionApiKey,
-        },
-        body: JSON.stringify({
-          number: cleanPhone,
-        }),
+    const result: any = { success: true };
+
+    // Fetch profile picture
+    try {
+      const profileResponse = await fetch(
+        `${evolutionApiUrl}/chat/fetchProfilePictureUrl/${instanceName}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: evolutionApiKey,
+          },
+          body: JSON.stringify({
+            number: cleanPhone,
+          }),
+        }
+      );
+
+      if (profileResponse.ok) {
+        const profileData = await profileResponse.json();
+        result.avatarUrl = profileData?.profilePictureUrl || profileData?.picture || null;
+        
+        // Update contact avatar if contactId was provided
+        if (contactId && result.avatarUrl) {
+          await supabaseClient
+            .from("contacts")
+            .update({ avatar_url: result.avatarUrl })
+            .eq("id", contactId);
+        }
       }
-    );
-
-    if (!profileResponse.ok) {
-      const errorText = await profileResponse.text();
-      console.error("Evolution API error:", profileResponse.status, errorText);
-      return new Response(
-        JSON.stringify({ success: false, error: "Erro ao buscar foto do WhatsApp" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    } catch (e) {
+      console.error("Error fetching profile picture:", e);
     }
 
-    const profileData = await profileResponse.json();
-    console.log("Profile picture response:", profileData);
-
-    const avatarUrl = profileData?.profilePictureUrl || profileData?.picture || null;
-
-    if (!avatarUrl) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Foto de perfil não disponível" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    // Fetch online status (presence) if requested or by default for status check
+    try {
+      // Try to get presence/status
+      const presenceResponse = await fetch(
+        `${evolutionApiUrl}/chat/fetchPresence/${instanceName}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            apikey: evolutionApiKey,
+          },
+          body: JSON.stringify({
+            number: cleanPhone,
+          }),
+        }
       );
+
+      if (presenceResponse.ok) {
+        const presenceData = await presenceResponse.json();
+        console.log("Presence response:", presenceData);
+        
+        // Evolution API presence response format
+        result.status = presenceData?.presence === 'available' || presenceData?.presence === 'composing' 
+          ? 'online' 
+          : 'offline';
+        result.lastSeen = presenceData?.lastSeen || presenceData?.last_seen || null;
+      } else {
+        // Default to offline if can't fetch presence
+        result.status = 'offline';
+        result.lastSeen = null;
+      }
+    } catch (e) {
+      console.error("Error fetching presence:", e);
+      result.status = 'offline';
+      result.lastSeen = null;
     }
 
-    // Update contact with avatar URL
-    const { error: updateError } = await supabaseClient
-      .from("contacts")
-      .update({ avatar_url: avatarUrl })
-      .eq("id", contactId);
-
-    if (updateError) {
-      console.error("Failed to update contact:", updateError);
-      return new Response(
-        JSON.stringify({ success: false, error: "Erro ao salvar foto" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log(`Successfully updated avatar for contact ${contactId}`);
+    console.log(`Profile fetch complete for ${cleanPhone}:`, result);
 
     return new Response(
-      JSON.stringify({ success: true, avatarUrl }),
+      JSON.stringify(result),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
@@ -144,7 +170,9 @@ serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: false, 
-        error: error instanceof Error ? error.message : "Erro interno" 
+        error: error instanceof Error ? error.message : "Erro interno",
+        status: 'offline',
+        lastSeen: null
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

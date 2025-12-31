@@ -53,6 +53,13 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useCreateSchedule } from "@/hooks/useSchedules";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
+import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 // Template variable replacement helper
 const replaceTemplateVariables = (
@@ -152,7 +159,11 @@ export default function Atendimento() {
     user?.id || '',
     profile?.name || 'Atendente'
   );
-
+  
+  // Contact online status (for WhatsApp contacts)
+  const { isOnline: contactIsOnline, lastSeen: contactLastSeen, isLoading: statusLoading } = useContactOnlineStatus(
+    selectedConversation?.channel === 'whatsapp' ? selectedConversation?.contact?.phone : null
+  );
   useEffect(() => {
     requestPermission();
   }, [requestPermission]);
@@ -910,14 +921,46 @@ export default function Atendimento() {
                 >
                   <X className="w-5 h-5" />
                 </Button>
-                <Avatar className="w-8 h-8 sm:w-10 sm:h-10 shrink-0">
-                  <AvatarImage src={selectedConversation.contact?.avatar_url || undefined} />
-                  <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                    {getInitials(selectedConversation.contact)}
-                  </AvatarFallback>
-                </Avatar>
+                <div className="relative">
+                  <Avatar className="w-8 h-8 sm:w-10 sm:h-10 shrink-0">
+                    <AvatarImage src={selectedConversation.contact?.avatar_url || undefined} />
+                    <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                      {getInitials(selectedConversation.contact)}
+                    </AvatarFallback>
+                  </Avatar>
+                  {selectedConversation.channel === "whatsapp" && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span
+                            className={cn(
+                              "absolute bottom-0 right-0 w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full border-2 border-card",
+                              contactIsOnline ? "bg-green-500" : "bg-muted-foreground/50"
+                            )}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="text-xs">
+                          {statusLoading ? (
+                            "Verificando..."
+                          ) : contactIsOnline ? (
+                            "Online agora"
+                          ) : contactLastSeen ? (
+                            `Visto por último: ${formatDistanceToNow(new Date(contactLastSeen), { addSuffix: true, locale: ptBR })}`
+                          ) : (
+                            "Offline"
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </div>
                 <div className="min-w-0">
-                  <p className="font-medium text-sm sm:text-base truncate">{getDisplayName(selectedConversation.contact)}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-medium text-sm sm:text-base truncate">{getDisplayName(selectedConversation.contact)}</p>
+                    {selectedConversation.channel === "whatsapp" && contactIsOnline && (
+                      <span className="text-[10px] text-green-500 font-medium hidden sm:inline">• online</span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     <p className="text-xs text-muted-foreground truncate">
                       {formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"}
