@@ -823,9 +823,27 @@ export default function Atendimento() {
                       {formatRelativeTime(conversation.last_message_at)}
                     </span>
                   </div>
-                  <p className="text-sm text-muted-foreground truncate">
+                  <p className="text-sm text-muted-foreground truncate mb-1">
                     {conversation.subject || "Sem assunto"}
                   </p>
+                  {conversation.tags && conversation.tags.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {conversation.tags.slice(0, 3).map(tag => (
+                        <Badge 
+                          key={tag.id}
+                          style={{ backgroundColor: tag.color }}
+                          className="text-white text-[9px] px-1.5 py-0 h-4"
+                        >
+                          {tag.name}
+                        </Badge>
+                      ))}
+                      {conversation.tags.length > 3 && (
+                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4">
+                          +{conversation.tags.length - 3}
+                        </Badge>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-col items-end gap-1 shrink-0">
                   <Badge className={cn("text-[10px] px-1.5 py-0.5", statusConfig[conversation.status].className)}>
