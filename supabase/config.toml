@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.evolution-webhook]
 verify_jwt = false
+
+[functions.fetch-whatsapp-profile]
+verify_jwt = false
