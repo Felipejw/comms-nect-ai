@@ -129,21 +129,74 @@ serve(async (req) => {
       }
 
       case "messages.upsert": {
-        // New message received
-        const message = data?.message;
-        if (!message || message.key?.fromMe) {
-          console.log("Ignoring own message or empty message");
+        // New message received or sent
+        const remoteJid = data?.key?.remoteJid;
+        const fromMe = data?.key?.fromMe || false;
+        
+        // Ignore group messages and broadcasts - only process direct messages
+        if (remoteJid?.includes('@g.us') || remoteJid?.includes('@broadcast')) {
+          console.log(`[Webhook] Ignoring group/broadcast message: ${remoteJid}`);
           break;
         }
 
-        const remoteJid = message.key?.remoteJid;
-        const phoneNumber = remoteJid?.split("@")[0];
-        const messageContent = message.message?.conversation || 
-                               message.message?.extendedTextMessage?.text ||
-                               message.message?.imageMessage?.caption ||
-                               "[Mídia]";
+        // Extract phone number from remoteJid
+        // Handle formats: 5511999999999@s.whatsapp.net, 64081549635686@lid, 64081549635686:25@lid
+        let phoneNumber = remoteJid
+          ?.replace('@s.whatsapp.net', '')
+          ?.replace('@lid', '')
+          ?.split(':')[0];
 
-        console.log(`Message from ${phoneNumber}: ${messageContent}`);
+        if (!phoneNumber) {
+          console.log("[Webhook] Could not extract phone number from remoteJid:", remoteJid);
+          break;
+        }
+
+        // Get message content - handle different message types
+        const message = data?.message || {};
+        let messageContent = 
+          message.conversation ||
+          message.extendedTextMessage?.text ||
+          message.imageMessage?.caption ||
+          message.videoMessage?.caption ||
+          message.documentMessage?.caption ||
+          message.audioMessage?.caption ||
+          null;
+        
+        // Determine message type
+        let messageType: "text" | "image" | "audio" | "document" = "text";
+        let mediaUrl: string | null = null;
+        
+        if (message.imageMessage) {
+          messageType = "image";
+          mediaUrl = message.imageMessage.url || null;
+          messageContent = messageContent || "[Imagem]";
+        } else if (message.audioMessage) {
+          messageType = "audio";
+          mediaUrl = message.audioMessage.url || null;
+          messageContent = messageContent || "[Áudio]";
+        } else if (message.documentMessage) {
+          messageType = "document";
+          mediaUrl = message.documentMessage.url || null;
+          messageContent = messageContent || `[Documento: ${message.documentMessage.fileName || 'arquivo'}]`;
+        } else if (message.videoMessage) {
+          messageType = "image"; // Using image type for video since it's not in the enum
+          mediaUrl = message.videoMessage.url || null;
+          messageContent = messageContent || "[Vídeo]";
+        } else if (message.stickerMessage) {
+          messageType = "image";
+          mediaUrl = message.stickerMessage.url || null;
+          messageContent = messageContent || "[Sticker]";
+        }
+
+        // If no content at all, use fallback
+        if (!messageContent) {
+          messageContent = "[Mídia]";
+        }
+
+        // Get contact name with fallback
+        const contactName = data?.pushName || phoneNumber || "Contato Desconhecido";
+
+        console.log(`[Webhook] Message ${fromMe ? 'SENT' : 'RECEIVED'} - Phone: ${phoneNumber}, Content: ${messageContent.substring(0, 50)}`);
 
         // Find or create contact
         let contact;
@@ -155,11 +208,20 @@ serve(async (req) => {
 
         if (existingContact) {
           contact = existingContact;
+          
+          // Update contact name if we have a better one (pushName) and current is just the phone
+          if (data?.pushName && existingContact.name === existingContact.phone) {
+            await supabaseClient
+              .from("contacts")
+              .update({ name: data.pushName })
+              .eq("id", existingContact.id);
+            console.log(`[Webhook] Updated contact name to: ${data.pushName}`);
+          }
         } else {
           const { data: newContact, error: contactError } = await supabaseClient
             .from("contacts")
             .insert({
-              name: message.pushName || phoneNumber,
+              name: contactName,
               phone: phoneNumber,
               status: "active",
             })
@@ -167,11 +229,11 @@ serve(async (req) => {
             .single();
 
           if (contactError) {
-            console.error("Error creating contact:", contactError);
+            console.error("[Webhook] Error creating contact:", contactError);
             throw contactError;
           }
           contact = newContact;
-          console.log(`New contact created: ${contact.id}`);
+          console.log(`[Webhook] New contact created: ${contact.id} (${contactName})`);
         }
 
         // Find or create conversation
@@ -187,6 +249,15 @@ serve(async (req) => {
 
         if (existingConversation) {
           conversation = existingConversation;
+          
+          // Update last_message_at
+          await supabaseClient
+            .from("conversations")
+            .update({ 
+              last_message_at: new Date().toISOString(),
+              unread_count: fromMe ? existingConversation.unread_count : (existingConversation.unread_count || 0) + 1
+            })
+            .eq("id", existingConversation.id);
         } else {
           const { data: newConversation, error: convError } = await supabaseClient
             .from("conversations")
@@ -195,53 +266,55 @@ serve(async (req) => {
               channel: "whatsapp",
               status: "new",
               subject: messageContent.substring(0, 50),
+              unread_count: fromMe ? 0 : 1,
             })
             .select()
             .single();
 
           if (convError) {
-            console.error("Error creating conversation:", convError);
+            console.error("[Webhook] Error creating conversation:", convError);
             throw convError;
           }
           conversation = newConversation;
-          console.log(`New conversation created: ${conversation.id}`);
+          console.log(`[Webhook] New conversation created: ${conversation.id}`);
         }
 
         // Create message
+        // sender_type: 'contact' for received, 'user' for sent by us
         const { error: msgError } = await supabaseClient
           .from("messages")
           .insert({
             conversation_id: conversation.id,
             content: messageContent,
-            sender_type: "contact",
-            message_type: message.message?.imageMessage ? "image" : "text",
-            media_url: message.message?.imageMessage?.url || null,
+            sender_type: fromMe ? "user" : "contact",
+            message_type: messageType,
+            media_url: mediaUrl,
           });
 
         if (msgError) {
-          console.error("Error creating message:", msgError);
+          console.error("[Webhook] Error creating message:", msgError);
           throw msgError;
         }
 
-        console.log(`Message saved for conversation ${conversation.id}`);
+        console.log(`[Webhook] Message saved for conversation ${conversation.id} (type: ${messageType}, fromMe: ${fromMe})`);
         break;
       }
 
       case "messages.update": {
         // Message status update (delivered, read, etc.)
-        console.log("Message status update:", data);
+        console.log("[Webhook] Message status update:", data);
         break;
       }
 
       default:
-        console.log(`Unhandled event: ${event}`);
+        console.log(`[Webhook] Unhandled event: ${event}`);
     }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: unknown) {
-    console.error("Webhook error:", error);
+    console.error("[Webhook] Error:", error);
     const errorMessage = error instanceof Error ? error.message : "Unknown error";
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
