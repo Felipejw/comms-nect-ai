@@ -141,6 +141,32 @@ export function useWhatsAppConnections() {
     },
   });
 
+  const recreateConnection = useMutation({
+    mutationFn: async (connectionId: string) => {
+      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+        body: { action: "recreate", connectionId },
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-connections"] });
+      toast({
+        title: "Reconectando",
+        description: "Nova instância criada, escaneie o QR Code",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao reconectar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   return {
     connections,
     isLoading,
@@ -150,5 +176,6 @@ export function useWhatsAppConnections() {
     checkStatus,
     disconnect,
     deleteConnection,
+    recreateConnection,
   };
 }

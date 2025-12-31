@@ -48,9 +48,12 @@ export default function Conexoes() {
     checkStatus,
     disconnect,
     deleteConnection,
+    recreateConnection,
   } = useWhatsAppConnections();
 
-  // Polling for QR code and status updates - faster interval for QR expiration
+  const [recreateAttempts, setRecreateAttempts] = useState<Record<string, number>>({});
+
+  // Polling for QR code and status updates
   useEffect(() => {
     if (!pollingConnection) return;
 
@@ -65,15 +68,24 @@ export default function Conexoes() {
       if (connection.status === "connected") {
         setPollingConnection(null);
         setSelectedConnection(null);
+        setRecreateAttempts({});
         return;
       }
 
-      // If connecting but no QR code, fetch it automatically
+      // If connecting but no QR code, try to recreate after 2 attempts
       if (connection.status === "connecting" && !connection.qr_code) {
-        console.log("[Polling] No QR code, fetching...");
-        await getQrCode.mutateAsync(pollingConnection).catch((e) => {
-          console.error("[Polling] Failed to fetch QR:", e);
-        });
+        const attempts = recreateAttempts[pollingConnection] || 0;
+        
+        if (attempts >= 2) {
+          console.log("[Polling] No QR after 2 attempts, recreating instance...");
+          setRecreateAttempts({});
+          await recreateConnection.mutateAsync(pollingConnection).catch((e) => {
+            console.error("[Polling] Failed to recreate:", e);
+          });
+        } else {
+          setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: attempts + 1 }));
+          console.log(`[Polling] No QR code, attempt ${attempts + 1}/2`);
+        }
       }
 
       // Check status
@@ -81,10 +93,10 @@ export default function Conexoes() {
       
       // Refresh connections
       refetch();
-    }, 3000); // Reduced to 3 seconds for faster QR updates
+    }, 3000);
 
     return () => clearInterval(interval);
-  }, [pollingConnection, connections, checkStatus, getQrCode, refetch]);
+  }, [pollingConnection, connections, checkStatus, recreateConnection, refetch, recreateAttempts]);
 
   const handleCreateConnection = async () => {
     if (!newInstanceName.trim()) return;
@@ -118,7 +130,9 @@ export default function Conexoes() {
 
   const handleRefreshQrCode = async (connection: WhatsAppConnection) => {
     try {
-      await getQrCode.mutateAsync(connection.id);
+      // Use recreate to get a fresh QR code
+      setRecreateAttempts({});
+      await recreateConnection.mutateAsync(connection.id);
       setPollingConnection(connection.id);
       refetch();
     } catch (error) {
@@ -246,10 +260,10 @@ export default function Conexoes() {
                   <Button 
                     variant="outline" 
                     onClick={() => handleRefreshQrCode(pendingConnection)}
-                    disabled={getQrCode.isPending}
+                    disabled={recreateConnection.isPending}
                     className="gap-2"
                   >
-                    {getQrCode.isPending ? (
+                    {recreateConnection.isPending ? (
                       <Loader2 className="w-4 h-4 animate-spin" />
                     ) : (
                       <RefreshCw className="w-4 h-4" />
@@ -362,9 +376,9 @@ export default function Conexoes() {
                           variant="ghost"
                           size="icon"
                           onClick={() => handleRefreshQrCode(connection)}
-                          disabled={getQrCode.isPending}
+                          disabled={recreateConnection.isPending}
                         >
-                          {getQrCode.isPending ? (
+                          {recreateConnection.isPending ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
                           ) : (
                             <RefreshCw className="w-4 h-4" />
