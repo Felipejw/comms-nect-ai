@@ -16,7 +16,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { NodePalette } from "./NodePalette";
+import { NodePaletteTopBar, NodePaletteSidebar } from "./NodePalette";
 import TriggerNode from "./nodes/TriggerNode";
 import MessageNode from "./nodes/MessageNode";
 import ConditionNode from "./nodes/ConditionNode";
@@ -235,7 +235,7 @@ function FlowCanvasInner({ flowId, onNodeSelect }: FlowCanvasProps) {
   return (
     <div className="flex-1 flex flex-col" ref={reactFlowWrapper}>
       <div className="p-3 border-b border-border flex items-center justify-between bg-background">
-        <NodePalette disabled={!flowId} />
+        <NodePaletteTopBar disabled={!flowId} />
         <Button
           onClick={handleSave}
           disabled={!hasChanges || isSaving}
@@ -249,42 +249,45 @@ function FlowCanvasInner({ flowId, onNodeSelect }: FlowCanvasProps) {
           {hasChanges ? "Salvar alterações" : "Salvo"}
         </Button>
       </div>
-      <div className="flex-1">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={handleNodesChange}
-          onEdgesChange={handleEdgesChange}
-          onConnect={onConnect}
-          onInit={setReactFlowInstance}
-          onDrop={onDrop}
-          onDragOver={onDragOver}
-          onNodeClick={onNodeClick}
-          onPaneClick={onPaneClick}
-          nodeTypes={nodeTypes}
-          fitView
-          proOptions={{ hideAttribution: true }}
-          className="bg-muted/20"
-        >
-          <Controls />
-          <MiniMap
-            nodeColor={(node) => {
-              const colors: Record<string, string> = {
-                trigger: "hsl(var(--primary))",
-                message: "hsl(var(--success))",
-                condition: "hsl(var(--warning))",
-                delay: "hsl(var(--info))",
-                menu: "#f97316",
-                transfer: "hsl(var(--destructive))",
-                end: "#ec4899",
-                ai: "#8b5cf6",
-                crm: "#0ea5e9",
-              };
-              return colors[node.type || ""] || "#6b7280";
-            }}
-          />
-          <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
-        </ReactFlow>
+      <div className="flex-1 flex">
+        <NodePaletteSidebar disabled={!flowId} />
+        <div className="flex-1">
+          <ReactFlow
+            nodes={nodes}
+            edges={edges}
+            onNodesChange={handleNodesChange}
+            onEdgesChange={handleEdgesChange}
+            onConnect={onConnect}
+            onInit={setReactFlowInstance}
+            onDrop={onDrop}
+            onDragOver={onDragOver}
+            onNodeClick={onNodeClick}
+            onPaneClick={onPaneClick}
+            nodeTypes={nodeTypes}
+            fitView
+            proOptions={{ hideAttribution: true }}
+            className="bg-muted/20"
+          >
+            <Controls />
+            <MiniMap
+              nodeColor={(node) => {
+                const colors: Record<string, string> = {
+                  trigger: "hsl(var(--primary))",
+                  message: "hsl(var(--success))",
+                  condition: "hsl(var(--warning))",
+                  delay: "hsl(var(--info))",
+                  menu: "#f97316",
+                  transfer: "hsl(var(--destructive))",
+                  end: "#ec4899",
+                  ai: "#8b5cf6",
+                  crm: "#0ea5e9",
+                };
+                return colors[node.type || ""] || "#6b7280";
+              }}
+            />
+            <Background variant={BackgroundVariant.Dots} gap={12} size={1} />
+          </ReactFlow>
+        </div>
       </div>
     </div>
   );

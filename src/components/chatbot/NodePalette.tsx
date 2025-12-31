@@ -1,31 +1,69 @@
 import { Zap, MessageSquare, GitBranch, Clock, List, UserPlus, XCircle, Brain, LayoutList } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
-const nodeTypes = [
+const sidebarNodeTypes = [
   { type: "trigger", icon: Zap, label: "Gatilho", color: "bg-primary" },
   { type: "message", icon: MessageSquare, label: "Mensagem", color: "bg-success" },
   { type: "condition", icon: GitBranch, label: "Condição", color: "bg-warning" },
   { type: "delay", icon: Clock, label: "Aguardar", color: "bg-info" },
   { type: "menu", icon: List, label: "Menu", color: "bg-orange-500" },
-  { type: "ai", icon: Brain, label: "IA", color: "bg-violet-500" },
   { type: "crm", icon: LayoutList, label: "CRM", color: "bg-sky-500" },
   { type: "transfer", icon: UserPlus, label: "Transferir", color: "bg-destructive" },
   { type: "end", icon: XCircle, label: "Encerrar", color: "bg-pink-500" },
+];
+
+const topBarNodeTypes = [
+  { type: "ai", icon: Brain, label: "IA", color: "bg-violet-500" },
 ];
 
 interface NodePaletteProps {
   disabled?: boolean;
 }
 
-export function NodePalette({ disabled }: NodePaletteProps) {
+export function NodePaletteSidebar({ disabled }: NodePaletteProps) {
   const onDragStart = (event: React.DragEvent, nodeType: string) => {
     event.dataTransfer.setData("application/reactflow", nodeType);
     event.dataTransfer.effectAllowed = "move";
   };
 
   return (
-    <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-xl border border-border">
-      <span className="text-sm font-medium text-muted-foreground mr-2">Blocos:</span>
-      {nodeTypes.map((node) => (
+    <div className="w-48 border-r border-border bg-card flex flex-col h-full">
+      <div className="p-3 border-b border-border">
+        <h3 className="font-semibold text-sm">Blocos</h3>
+        <p className="text-xs text-muted-foreground">Arraste para adicionar</p>
+      </div>
+      <ScrollArea className="flex-1 p-2">
+        <div className="space-y-2">
+          {sidebarNodeTypes.map((node) => (
+            <div
+              key={node.type}
+              draggable={!disabled}
+              onDragStart={(e) => onDragStart(e, node.type)}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg border border-border bg-background cursor-grab hover:shadow-md transition-all ${
+                disabled ? "opacity-50 cursor-not-allowed" : "hover:scale-[1.02] active:cursor-grabbing"
+              }`}
+            >
+              <div className={`p-1.5 rounded ${node.color}`}>
+                <node.icon className="w-3.5 h-3.5 text-white" />
+              </div>
+              <span className="text-sm font-medium">{node.label}</span>
+            </div>
+          ))}
+        </div>
+      </ScrollArea>
+    </div>
+  );
+}
+
+export function NodePaletteTopBar({ disabled }: NodePaletteProps) {
+  const onDragStart = (event: React.DragEvent, nodeType: string) => {
+    event.dataTransfer.setData("application/reactflow", nodeType);
+    event.dataTransfer.effectAllowed = "move";
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      {topBarNodeTypes.map((node) => (
         <div
           key={node.type}
           draggable={!disabled}
@@ -42,4 +80,9 @@ export function NodePalette({ disabled }: NodePaletteProps) {
       ))}
     </div>
   );
+}
+
+// Legacy export for backwards compatibility
+export function NodePalette({ disabled }: NodePaletteProps) {
+  return <NodePaletteTopBar disabled={disabled} />;
 }

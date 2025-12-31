@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { X, Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useQueues } from "@/hooks/useQueues";
 import { useUsers } from "@/hooks/useUsers";
 import { useWhatsAppConnections } from "@/hooks/useWhatsAppConnections";
@@ -22,6 +28,7 @@ import type { Node } from "@xyflow/react";
 
 interface NodeConfigPanelProps {
   node: Node | null;
+  open: boolean;
   onClose: () => void;
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void;
 }
@@ -35,7 +42,7 @@ const AI_MODELS = [
   { value: "openai/gpt-5-nano", label: "GPT-5 Nano" },
 ];
 
-export function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProps) {
+export function NodeConfigPanel({ node, open, onClose, onUpdate }: NodeConfigPanelProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const { data: queues } = useQueues();
   const { data: users } = useUsers();
@@ -606,16 +613,15 @@ export function NodeConfigPanel({ node, onClose, onUpdate }: NodeConfigPanelProp
   };
 
   return (
-    <div className="w-80 border-l border-border bg-card flex flex-col h-full">
-      <div className="p-4 border-b border-border flex items-center justify-between">
-        <h3 className="font-semibold">{getTitle()}</h3>
-        <Button variant="ghost" size="icon" onClick={onClose}>
-          <X className="w-4 h-4" />
-        </Button>
-      </div>
-      <ScrollArea className="flex-1 p-4">
-        <div className="space-y-4">{renderFields()}</div>
-      </ScrollArea>
-    </div>
+    <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
+      <DialogContent className="max-w-md max-h-[85vh]">
+        <DialogHeader>
+          <DialogTitle>{getTitle()}</DialogTitle>
+        </DialogHeader>
+        <ScrollArea className="max-h-[65vh] pr-4">
+          <div className="space-y-4">{renderFields()}</div>
+        </ScrollArea>
+      </DialogContent>
+    </Dialog>
   );
 }
