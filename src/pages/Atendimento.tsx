@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -31,6 +31,14 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { useConversations, useMessages, useSendMessage, useUpdateConversation, useDeleteConversation, useMarkConversationAsRead, Conversation, Message } from "@/hooks/useConversations";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
@@ -42,6 +50,7 @@ import { useQuickReplies, QuickReply } from "@/hooks/useQuickReplies";
 import { useTags } from "@/hooks/useTags";
 import { useConversationTags, useAddTagToConversation, useRemoveTagFromConversation } from "@/hooks/useConversationTags";
 import { useNotifications } from "@/hooks/useNotifications";
+import { useCreateSchedule } from "@/hooks/useSchedules";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 
 // Template variable replacement helper
@@ -96,6 +105,13 @@ export default function Atendimento() {
   // Tags state
   const [showTagPopover, setShowTagPopover] = useState(false);
   
+  // Schedule dialog state
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [scheduleTitle, setScheduleTitle] = useState("");
+  const [scheduleDescription, setScheduleDescription] = useState("");
+  const [scheduleDate, setScheduleDate] = useState("");
+  const [scheduleTime, setScheduleTime] = useState("");
+  
   // Emoji picker state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   
@@ -127,6 +143,7 @@ export default function Atendimento() {
   const addTagToConversation = useAddTagToConversation();
   const removeTagFromConversation = useRemoveTagFromConversation();
   const { requestPermission, showNotification, permission } = useNotifications();
+  const createSchedule = useCreateSchedule();
 
   // Request notification permission on mount
   useEffect(() => {
@@ -986,6 +1003,10 @@ export default function Atendimento() {
                       <Tag className="w-4 h-4 mr-2" />
                       Gerenciar tags
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowScheduleDialog(true)}>
+                      <Calendar className="w-4 h-4 mr-2" />
+                      Agendar mensagem
+                    </DropdownMenuItem>
                     <DropdownMenuItem>Transferir</DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem 
@@ -1292,6 +1313,85 @@ export default function Atendimento() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Schedule Message Dialog */}
+      <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Agendar Mensagem</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="p-3 rounded-lg bg-muted/50 border">
+              <p className="text-sm font-medium">Contato</p>
+              <p className="text-sm text-muted-foreground">
+                {selectedConversation?.contact?.name || "Sem nome"}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Título *</Label>
+              <Input 
+                placeholder="Ex: Follow-up do pedido" 
+                value={scheduleTitle}
+                onChange={(e) => setScheduleTitle(e.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Descrição</Label>
+              <Textarea 
+                placeholder="Detalhes do agendamento" 
+                value={scheduleDescription}
+                onChange={(e) => setScheduleDescription(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Data *</Label>
+                <Input 
+                  type="date" 
+                  value={scheduleDate}
+                  onChange={(e) => setScheduleDate(e.target.value)}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Horário *</Label>
+                <Input 
+                  type="time" 
+                  value={scheduleTime}
+                  onChange={(e) => setScheduleTime(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowScheduleDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={async () => {
+                if (!scheduleTitle.trim() || !scheduleDate || !scheduleTime || !user?.id || !selectedConversation) return;
+                const scheduledAt = new Date(`${scheduleDate}T${scheduleTime}`);
+                await createSchedule.mutateAsync({
+                  title: scheduleTitle.trim(),
+                  description: scheduleDescription.trim() || null,
+                  contact_id: selectedConversation.contact_id,
+                  user_id: user.id,
+                  scheduled_at: scheduledAt.toISOString(),
+                  reminder: true,
+                });
+                setScheduleTitle("");
+                setScheduleDescription("");
+                setScheduleDate("");
+                setScheduleTime("");
+                setShowScheduleDialog(false);
+              }}
+              disabled={createSchedule.isPending || !scheduleTitle.trim() || !scheduleDate || !scheduleTime}
+            >
+              {createSchedule.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Agendar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
