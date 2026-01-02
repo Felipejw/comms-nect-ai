@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -8,6 +10,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
+import { Loader2, RefreshCw, Users } from "lucide-react";
 
 interface SettingOptionProps {
   label: string;
@@ -48,9 +53,28 @@ function SettingOption({
 
 export function OptionsTab() {
   const { getSetting, updateSetting, isLoading } = useSystemSettings();
+  const [isSyncingContacts, setIsSyncingContacts] = useState(false);
 
   const handleChange = (key: string, value: string) => {
     updateSetting.mutate({ key, value });
+  };
+
+  const handleSyncContacts = async () => {
+    setIsSyncingContacts(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('sync-contacts');
+      
+      if (error) throw error;
+      
+      toast.success(
+        `Sincronização concluída! Atualizados: ${data.updated}, Ignorados: ${data.skipped}, Falhas: ${data.failed}`
+      );
+    } catch (error) {
+      console.error('Error syncing contacts:', error);
+      toast.error('Erro ao sincronizar contatos');
+    } finally {
+      setIsSyncingContacts(false);
+    }
   };
 
   if (isLoading) {
@@ -67,9 +91,36 @@ export function OptionsTab() {
   }
 
   return (
-    <div className="bg-card rounded-lg p-6">
-      <div className="grid gap-8 md:grid-cols-3">
-        {/* Coluna Esquerda */}
+    <div className="space-y-6">
+      {/* Ações de Manutenção */}
+      <div className="bg-card rounded-lg p-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Users className="w-5 h-5" />
+          Manutenção de Contatos
+        </h3>
+        <div className="flex flex-wrap gap-4">
+          <Button
+            variant="outline"
+            onClick={handleSyncContacts}
+            disabled={isSyncingContacts}
+          >
+            {isSyncingContacts ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4 mr-2" />
+            )}
+            Sincronizar Nomes dos Contatos
+          </Button>
+          <p className="text-sm text-muted-foreground self-center">
+            Busca e atualiza os nomes dos contatos via WhatsApp
+          </p>
+        </div>
+      </div>
+
+      {/* Configurações */}
+      <div className="bg-card rounded-lg p-6">
+        <div className="grid gap-8 md:grid-cols-3">
+          {/* Coluna Esquerda */}
         <div className="space-y-6">
           <SettingOption
             label="Enviar mensagem transferência de setor/atendente"
@@ -133,6 +184,7 @@ export function OptionsTab() {
             ]}
           />
         </div>
+      </div>
       </div>
     </div>
   );
