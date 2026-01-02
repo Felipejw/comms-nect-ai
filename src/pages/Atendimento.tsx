@@ -1599,8 +1599,9 @@ export default function Atendimento() {
 
       {/* Contact Profile Panel */}
       {showProfilePanel && selectedConversation?.contact?.id && (
-        <ContactProfilePanel
+      <ContactProfilePanel
           contactId={selectedConversation.contact.id}
+          conversationId={selectedConversation.id}
           onClose={() => setShowProfilePanel(false)}
         />
       )}
