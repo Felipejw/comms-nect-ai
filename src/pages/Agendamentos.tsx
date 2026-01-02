@@ -35,6 +35,7 @@ import { useConversations } from "@/hooks/useConversations";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, isSameDay, isAfter, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
 const statusConfig = {
   pending: { label: "Pendente", className: "bg-warning/10 text-warning" },
@@ -43,7 +44,9 @@ const statusConfig = {
 };
 
 export default function Agendamentos() {
-  const { user } = useAuth();
+  const { user, hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('agendamentos', 'edit');
+  
   const { data: schedules = [], isLoading } = useSchedules();
   const { data: contacts = [] } = useContacts();
   const { data: conversations = [] } = useConversations();
@@ -138,13 +141,16 @@ export default function Agendamentos() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Agendamentos</h2>
-          <p className="text-muted-foreground">Gerencie lembretes e compromissos</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Agendamentos</h2>
+            <p className="text-muted-foreground">Gerencie lembretes e compromissos</p>
+          </div>
+          {!canEdit && <ReadOnlyBadge />}
         </div>
         <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-2" disabled={!canEdit}>
               <Plus className="w-4 h-4" />
               Novo Agendamento
             </Button>
@@ -296,6 +302,7 @@ export default function Agendamentos() {
                     onComplete={handleMarkCompleted}
                     onCancel={handleCancel}
                     onDelete={handleDelete}
+                    canEdit={canEdit}
                   />
                 ))
               ) : (
@@ -319,6 +326,7 @@ export default function Agendamentos() {
                     onComplete={handleMarkCompleted}
                     onCancel={handleCancel}
                     onDelete={handleDelete}
+                    canEdit={canEdit}
                   />
                 ))
               ) : (
@@ -341,6 +349,7 @@ export default function Agendamentos() {
                     onComplete={handleMarkCompleted}
                     onCancel={handleCancel}
                     onDelete={handleDelete}
+                    canEdit={canEdit}
                   />
                 ))}
               </div>
@@ -365,9 +374,10 @@ interface ScheduleItemProps {
   onComplete: (id: string) => void;
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
+  canEdit: boolean;
 }
 
-function ScheduleItem({ schedule, onComplete, onCancel, onDelete }: ScheduleItemProps) {
+function ScheduleItem({ schedule, onComplete, onCancel, onDelete, canEdit }: ScheduleItemProps) {
   const date = new Date(schedule.scheduled_at);
   const time = format(date, "HH:mm", { locale: ptBR });
   const dateStr = format(date, "dd/MM/yyyy", { locale: ptBR });
@@ -408,7 +418,7 @@ function ScheduleItem({ schedule, onComplete, onCancel, onDelete }: ScheduleItem
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          {schedule.status === "pending" && (
+          {schedule.status === "pending" && canEdit && (
             <>
               <DropdownMenuItem onClick={() => onComplete(schedule.id)}>
                 <Check className="w-4 h-4 mr-2" />
@@ -420,7 +430,7 @@ function ScheduleItem({ schedule, onComplete, onCancel, onDelete }: ScheduleItem
               </DropdownMenuItem>
             </>
           )}
-          <DropdownMenuItem onClick={() => onDelete(schedule.id)} className="text-destructive">
+          <DropdownMenuItem onClick={() => onDelete(schedule.id)} className="text-destructive" disabled={!canEdit}>
             Excluir
           </DropdownMenuItem>
         </DropdownMenuContent>

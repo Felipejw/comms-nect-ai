@@ -44,6 +44,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { useAuth } from "@/contexts/AuthContext";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
 // Format phone number for display
 const formatPhoneDisplay = (phone: string | null | undefined) => {
@@ -87,6 +89,9 @@ const parseCSV = (content: string): { headers: string[]; rows: string[][] } => {
 };
 
 export default function Contatos() {
+  const { hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('contatos', 'edit');
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
@@ -276,20 +281,23 @@ export default function Contatos() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Contatos</h2>
-          <p className="text-muted-foreground">
-            {contacts?.length || 0} contatos cadastrados
-          </p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Contatos</h2>
+            <p className="text-muted-foreground">
+              {contacts?.length || 0} contatos cadastrados
+            </p>
+          </div>
+          {!canEdit && <ReadOnlyBadge />}
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" className="gap-2" onClick={() => setIsImportDialogOpen(true)}>
+          <Button variant="outline" className="gap-2" onClick={() => setIsImportDialogOpen(true)} disabled={!canEdit}>
             <Upload className="w-4 h-4" />
             Importar
           </Button>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
+              <Button className="gap-2" disabled={!canEdit}>
                 <Plus className="w-4 h-4" />
                 Novo Contato
               </Button>
@@ -458,7 +466,7 @@ export default function Contatos() {
                           <MessageSquare className="w-4 h-4 mr-2" />
                           Iniciar conversa
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => openEditDialog(contact)}>
+                        <DropdownMenuItem onClick={() => openEditDialog(contact)} disabled={!canEdit}>
                           <Edit className="w-4 h-4 mr-2" />
                           Editar
                         </DropdownMenuItem>
@@ -466,6 +474,7 @@ export default function Contatos() {
                         <DropdownMenuItem 
                           className="text-destructive"
                           onClick={() => openDeleteDialog(contact)}
+                          disabled={!canEdit}
                         >
                           <Trash2 className="w-4 h-4 mr-2" />
                           Excluir
