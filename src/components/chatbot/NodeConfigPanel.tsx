@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { Plus, Trash2, Save, Upload, Loader2, X } from "lucide-react";
+import { Plus, Trash2, Save, Upload, Loader2, X, CheckCircle2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -57,12 +57,66 @@ const GOOGLE_AI_MODELS = [
 export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSaveFlow, isSaving }: NodeConfigPanelProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const [isUploading, setIsUploading] = useState(false);
+  const [isValidatingApiKey, setIsValidatingApiKey] = useState(false);
+  const [apiKeyValidation, setApiKeyValidation] = useState<'idle' | 'valid' | 'invalid'>('idle');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: queues } = useQueues();
   const { data: users } = useUsers();
   const { connections } = useWhatsAppConnections();
   const { data: kanbanColumns } = useKanbanColumns();
   const { data: tags } = useTags();
+
+  // Função para validar API key do Google AI
+  const validateGoogleApiKey = async (apiKey: string) => {
+    if (!apiKey || apiKey.length < 10) {
+      setApiKeyValidation('invalid');
+      toast.error("API key inválida");
+      return false;
+    }
+
+    setIsValidatingApiKey(true);
+    setApiKeyValidation('idle');
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "Olá" }] }],
+            generationConfig: { maxOutputTokens: 10 },
+          }),
+        }
+      );
+
+      if (response.ok) {
+        setApiKeyValidation('valid');
+        toast.success("API key válida!");
+        return true;
+      } else {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("API key validation error:", errorData);
+        setApiKeyValidation('invalid');
+        toast.error("API key inválida ou sem permissão");
+        return false;
+      }
+    } catch (error) {
+      console.error("Error validating API key:", error);
+      setApiKeyValidation('invalid');
+      toast.error("Erro ao validar API key");
+      return false;
+    } finally {
+      setIsValidatingApiKey(false);
+    }
+  };
+
+  // Reset validation when API key changes
+  useEffect(() => {
+    if (formData.googleApiKey) {
+      setApiKeyValidation('idle');
+    }
+  }, [formData.googleApiKey]);
 
   useEffect(() => {
     if (node) {
@@ -456,14 +510,59 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
             
             {/* Campo de API Key - aparece quando useOwnApiKey é true */}
             {useOwnApiKey && (
-              <div className="space-y-2 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
+              <div className="space-y-3 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
                 <Label>Google AI API Key</Label>
-                <Input
-                  type="password"
-                  value={(formData.googleApiKey as string) || ""}
-                  onChange={(e) => handleChange("googleApiKey", e.target.value)}
-                  placeholder="AIza..."
-                />
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      type="password"
+                      value={(formData.googleApiKey as string) || ""}
+                      onChange={(e) => handleChange("googleApiKey", e.target.value)}
+                      placeholder="AIza..."
+                      className={
+                        apiKeyValidation === 'valid' 
+                          ? "pr-8 border-green-500 focus-visible:ring-green-500" 
+                          : apiKeyValidation === 'invalid' 
+                          ? "pr-8 border-destructive focus-visible:ring-destructive" 
+                          : ""
+                      }
+                    />
+                    {apiKeyValidation === 'valid' && (
+                      <CheckCircle2 className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-green-500" />
+                    )}
+                    {apiKeyValidation === 'invalid' && (
+                      <AlertCircle className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-destructive" />
+                    )}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => validateGoogleApiKey((formData.googleApiKey as string) || "")}
+                    disabled={isValidatingApiKey || !(formData.googleApiKey as string)}
+                    className="shrink-0"
+                  >
+                    {isValidatingApiKey ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                        Testando...
+                      </>
+                    ) : (
+                      "Testar"
+                    )}
+                  </Button>
+                </div>
+                {apiKeyValidation === 'valid' && (
+                  <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3 h-3" />
+                    API key verificada e funcionando
+                  </p>
+                )}
+                {apiKeyValidation === 'invalid' && (
+                  <p className="text-xs text-destructive flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    API key inválida. Verifique e tente novamente.
+                  </p>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Obtenha gratuitamente em{" "}
                   <a 
