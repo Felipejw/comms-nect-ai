@@ -969,22 +969,25 @@ serve(async (req) => {
     const contactId = conversation.contact_id;
     const contactName = conversation.contacts?.name || "";
     
-    // Determine the correct phone/LID to use for sending messages
-    // If contact has a whatsapp_lid, use that (with @lid suffix) for sending
-    // Otherwise use the regular phone number
+    // Determine the correct phone number to use for sending messages
+    // ALWAYS prioritize the real phone number over LID for sending
+    // Evolution API does NOT accept LID for sending messages - only real phone numbers work
     const whatsappLid = conversation.contacts?.whatsapp_lid;
-    let phone = contactPhone || conversation.contacts?.phone;
+    const contactRealPhone = conversation.contacts?.phone;
     
-    // If we have a LID, we need to format it properly for the Evolution API
-    // The API expects either a regular phone number OR the full remoteJid format
-    if (whatsappLid && phone === whatsappLid) {
-      // The phone stored is actually the LID, not a real number
-      // Try using the LID format for Evolution API
-      phone = `${whatsappLid}@lid`;
-      console.log(`[FlowExecutor] Using LID format for sending: ${phone}`);
+    // Use the real phone number if available and it's different from the LID
+    // Otherwise fall back to contactPhone from webhook
+    let phone = contactRealPhone && contactRealPhone !== whatsappLid 
+      ? contactRealPhone 
+      : contactPhone;
+    
+    // If we still don't have a valid phone (only have LID), log an error
+    if (!phone || phone === whatsappLid) {
+      console.error(`[FlowExecutor] Cannot send message: Contact has no real phone number. LID: ${whatsappLid}`);
+      // Cannot use LID for sending - Evolution API will reject it
     }
     
-    console.log(`[FlowExecutor] Contact: ${contactName}, Phone: ${phone}, LID: ${whatsappLid}`);
+    console.log(`[FlowExecutor] Contact: ${contactName}, Phone: ${phone}, LID: ${whatsappLid || 'N/A'}`);
 
     // Check if we're waiting for a menu response or AI response
     const flowState = conversation.flow_state as FlowState | null;
