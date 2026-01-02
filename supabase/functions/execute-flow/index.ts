@@ -23,6 +23,7 @@ interface FlowState {
   currentNodeId: string;
   awaitingMenuResponse: boolean;
   menuOptions?: Array<{ id: string; text: string }>;
+  menuTitle?: string;
   flowId: string;
 }
 
@@ -583,6 +584,7 @@ async function executeFlowFromNode(
           currentNodeId: currentNode.id,
           awaitingMenuResponse: true,
           menuOptions: options,
+          menuTitle: title,
           flowId: flowId,
         };
 
@@ -922,24 +924,106 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } else {
-        // Invalid option selected, ask again
-        console.log("[FlowExecutor] Invalid menu option selected");
+        // Invalid option - first check if this is a trigger for a new flow
+        console.log("[FlowExecutor] Invalid menu option, checking for trigger match...");
         
-        let menuText = "Opção inválida. Por favor, escolha uma das opções:\n\n";
-        flowState.menuOptions.forEach((opt, idx) => {
-          menuText += `${idx + 1}. ${opt.text}\n`;
-        });
+        // Get all active flows to check for triggers
+        const { data: allFlows } = await supabase
+          .from("chatbot_flows")
+          .select("*")
+          .eq("is_active", true);
 
-        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, menuText);
+        let foundTrigger = false;
         
-        await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          content: menuText,
-          sender_type: "bot",
-          message_type: "text",
-        });
+        if (allFlows) {
+          for (const flow of allFlows) {
+            const { data: nodeData } = await supabase
+              .from("flow_nodes")
+              .select("*")
+              .eq("flow_id", flow.id);
 
-        return new Response(JSON.stringify({ success: true, message: "Invalid option, asked again" }), {
+            if (!nodeData) continue;
+
+            const nodes: FlowNode[] = nodeData.map(n => ({
+              id: n.id,
+              type: n.type,
+              data: (n.data as Record<string, unknown>) || {},
+            }));
+
+            const { data: edgeData } = await supabase
+              .from("flow_edges")
+              .select("*")
+              .eq("flow_id", flow.id);
+
+            const edges: FlowEdge[] = (edgeData || []).map(e => ({
+              id: e.id,
+              source_id: e.source_id,
+              target_id: e.target_id,
+              label: e.label || undefined,
+            }));
+
+            const matchingTrigger = findMatchingTrigger(nodes, edges, messageContent, false, connectionId);
+            
+            if (matchingTrigger) {
+              console.log("[FlowExecutor] Found trigger match, restarting flow:", flow.id);
+              
+              // Clear flow state and set new active flow
+              await supabase
+                .from("conversations")
+                .update({ 
+                  flow_state: null, 
+                  active_flow_id: flow.id,
+                  is_bot_active: true 
+                })
+                .eq("id", conversationId);
+
+              // Execute the new flow
+              const startNode = getNextNode(nodes, edges, matchingTrigger.id);
+              if (startNode) {
+                await executeFlowFromNode(
+                  supabase,
+                  nodes,
+                  edges,
+                  startNode,
+                  conversationId,
+                  contactId,
+                  phone,
+                  messageContent,
+                  evolutionUrl,
+                  evolutionKey,
+                  instanceName,
+                  contactName,
+                  flow.id
+                );
+              }
+
+              foundTrigger = true;
+              break;
+            }
+          }
+        }
+
+        if (!foundTrigger) {
+          // No trigger found, show invalid option message with menu title
+          console.log("[FlowExecutor] No trigger match, showing invalid option message");
+          
+          const menuTitle = flowState.menuTitle || "Por favor, escolha uma das opções:";
+          let menuText = `Opção inválida. ${menuTitle}\n\n`;
+          flowState.menuOptions.forEach((opt, idx) => {
+            menuText += `${idx + 1}. ${opt.text}\n`;
+          });
+
+          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, menuText);
+          
+          await supabase.from("messages").insert({
+            conversation_id: conversationId,
+            content: menuText,
+            sender_type: "bot",
+            message_type: "text",
+          });
+        }
+
+        return new Response(JSON.stringify({ success: true, message: foundTrigger ? "Trigger matched, flow restarted" : "Invalid option, asked again" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
