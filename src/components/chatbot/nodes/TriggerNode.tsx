@@ -21,6 +21,11 @@ function TriggerNode({ data, selected }: NodeProps) {
       }`}
     >
       {validationError && <ValidationBadge message={validationError} />}
+      <Handle
+        type="target"
+        position={Position.Top}
+        className="!w-3 !h-3 !bg-primary !border-2 !border-background"
+      />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-primary">
           <Zap className="w-4 h-4 text-primary-foreground" />

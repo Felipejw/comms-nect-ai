@@ -146,10 +146,32 @@ function getNextNode(nodes: FlowNode[], edges: FlowEdge[], currentNodeId: string
 }
 
 // Find the trigger node that matches the message
-function findMatchingTrigger(nodes: FlowNode[], message: string, isNewConversation: boolean): FlowNode | null {
+// Now also checks if the trigger has a connected WhatsApp block that matches the connectionId
+function findMatchingTrigger(
+  nodes: FlowNode[], 
+  edges: FlowEdge[], 
+  message: string, 
+  isNewConversation: boolean,
+  connectionId?: string
+): FlowNode | null {
   const triggers = nodes.filter(n => n.type === "trigger");
   
   for (const trigger of triggers) {
+    // Check if this trigger has a WhatsApp block connected to it (as input)
+    const incomingEdge = edges.find(e => e.target_id === trigger.id);
+    if (incomingEdge) {
+      const sourceNode = nodes.find(n => n.id === incomingEdge.source_id);
+      if (sourceNode && sourceNode.type === "whatsapp") {
+        // If WhatsApp block is connected, check if connectionId matches
+        const whatsappConnectionId = sourceNode.data.connectionId as string;
+        if (connectionId && whatsappConnectionId && whatsappConnectionId !== connectionId) {
+          console.log(`[FlowExecutor] Trigger ${trigger.id} skipped - WhatsApp connection mismatch (expected: ${whatsappConnectionId}, got: ${connectionId})`);
+          continue; // Skip this trigger, it's for a different WhatsApp number
+        }
+        console.log(`[FlowExecutor] Trigger ${trigger.id} matched WhatsApp connection: ${connectionId}`);
+      }
+    }
+    
     const triggerType = trigger.data.triggerType as string;
     const triggerValue = (trigger.data.triggerValue as string || "").toLowerCase();
     const messageLower = message.toLowerCase();
@@ -186,7 +208,7 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const { conversationId, messageContent, contactPhone } = await req.json();
+    const { conversationId, messageContent, contactPhone, connectionId } = await req.json();
 
     console.log("[FlowExecutor] Processing message for conversation:", conversationId);
     console.log("[FlowExecutor] Message content:", messageContent);
@@ -272,7 +294,19 @@ serve(async (req) => {
           data: (n.data as Record<string, unknown>) || {},
         }));
 
-        const matchingTrigger = findMatchingTrigger(nodes, messageContent, isNewConversation);
+        const { data: flowEdgesForSearch } = await supabase
+          .from("flow_edges")
+          .select("*")
+          .eq("flow_id", flow.id);
+
+        const edgesForSearch: FlowEdge[] = (flowEdgesForSearch || []).map(e => ({
+          id: e.id,
+          source_id: e.source_id,
+          target_id: e.target_id,
+          label: e.label || undefined,
+        }));
+
+        const matchingTrigger = findMatchingTrigger(nodes, edgesForSearch, messageContent, isNewConversation, connectionId);
         
         if (matchingTrigger) {
           activeFlowId = flow.id;
@@ -328,7 +362,7 @@ serve(async (req) => {
     }));
 
     // Find the starting trigger node
-    const triggerNode = findMatchingTrigger(nodes, messageContent, conversation.status === "new");
+    const triggerNode = findMatchingTrigger(nodes, edges, messageContent, conversation.status === "new", connectionId);
     
     if (!triggerNode) {
       console.log("[FlowExecutor] No matching trigger in active flow");
