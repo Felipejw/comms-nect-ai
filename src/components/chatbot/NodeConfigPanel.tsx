@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -32,6 +32,8 @@ interface NodeConfigPanelProps {
   onClose: () => void;
   onUpdate: (nodeId: string, data: Record<string, unknown>) => void;
   onDelete?: (nodeId: string) => void;
+  onSaveFlow?: () => void;
+  isSaving?: boolean;
 }
 
 const AI_MODELS = [
@@ -43,7 +45,7 @@ const AI_MODELS = [
   { value: "openai/gpt-5-nano", label: "GPT-5 Nano" },
 ];
 
-export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete }: NodeConfigPanelProps) {
+export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSaveFlow, isSaving }: NodeConfigPanelProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
   const { data: queues } = useQueues();
   const { data: users } = useUsers();
@@ -629,8 +631,18 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete }: Nod
         <ScrollArea className="max-h-[65vh] pr-4">
           <div className="space-y-4">{renderFields()}</div>
         </ScrollArea>
-        {onDelete && (
-          <div className="pt-4 border-t border-border">
+        <div className="pt-4 border-t border-border space-y-2">
+          {onSaveFlow && (
+            <Button
+              className="w-full gap-2"
+              onClick={onSaveFlow}
+              disabled={isSaving}
+            >
+              <Save className="w-4 h-4" />
+              {isSaving ? "Salvando..." : "Salvar fluxo"}
+            </Button>
+          )}
+          {onDelete && (
             <Button
               variant="destructive"
               className="w-full gap-2"
@@ -639,8 +651,8 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete }: Nod
               <Trash2 className="w-4 h-4" />
               Excluir bloco
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );

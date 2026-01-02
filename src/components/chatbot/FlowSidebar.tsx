@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Trash2, Power, PowerOff } from "lucide-react";
+import { Plus, Search, Trash2, Power, PowerOff, ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -25,14 +25,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useFlows, useCreateFlow, useDeleteFlow, useUpdateFlow, type ChatbotFlow } from "@/hooks/useFlows";
+import { cn } from "@/lib/utils";
 
 interface FlowSidebarProps {
   selectedFlowId: string | null;
   onSelectFlow: (id: string | null) => void;
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export function FlowSidebar({ selectedFlowId, onSelectFlow }: FlowSidebarProps) {
+export function FlowSidebar({ selectedFlowId, onSelectFlow, collapsed = false, onToggleCollapse }: FlowSidebarProps) {
   const [search, setSearch] = useState("");
   const [newFlowName, setNewFlowName] = useState("");
   const [newFlowDesc, setNewFlowDesc] = useState("");
@@ -78,11 +82,89 @@ export function FlowSidebar({ selectedFlowId, onSelectFlow }: FlowSidebarProps) 
     });
   };
 
+  // When collapsed, show a minimal version
+  if (collapsed) {
+    return (
+      <div className="w-12 border-r border-border bg-card flex flex-col h-full items-center py-4">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onToggleCollapse}
+              className="mb-4"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">Expandir fluxos</TooltipContent>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button size="icon" variant="ghost">
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Novo Fluxo</DialogTitle>
+                  <DialogDescription>
+                    Crie um novo fluxo de automação para seu chatbot.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="name">Nome do fluxo</Label>
+                    <Input
+                      id="name"
+                      placeholder="Ex: Boas-vindas"
+                      value={newFlowName}
+                      onChange={(e) => setNewFlowName(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="desc">Descrição (opcional)</Label>
+                    <Textarea
+                      id="desc"
+                      placeholder="Descreva o objetivo deste fluxo..."
+                      value={newFlowDesc}
+                      onChange={(e) => setNewFlowDesc(e.target.value)}
+                    />
+                  </div>
+                  <Button
+                    className="w-full"
+                    onClick={handleCreateFlow}
+                    disabled={!newFlowName.trim() || createFlow.isPending}
+                  >
+                    Criar Fluxo
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+          </TooltipTrigger>
+          <TooltipContent side="right">Novo fluxo</TooltipContent>
+        </Tooltip>
+      </div>
+    );
+  }
+
   return (
     <div className="w-64 border-r border-border bg-card flex flex-col h-full">
       <div className="p-4 border-b border-border space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="font-semibold">Fluxos</h3>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={onToggleCollapse}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <h3 className="font-semibold">Fluxos</h3>
+          </div>
           <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
             <DialogTrigger asChild>
               <Button size="sm" className="gap-1">
