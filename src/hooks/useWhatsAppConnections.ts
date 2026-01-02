@@ -141,6 +141,34 @@ export function useWhatsAppConnections() {
     },
   });
 
+  const updateConnection = useMutation({
+    mutationFn: async ({ connectionId, name }: { connectionId: string; name: string }) => {
+      const { data, error } = await supabase
+        .from("connections")
+        .update({ name, updated_at: new Date().toISOString() })
+        .eq("id", connectionId)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["whatsapp-connections"] });
+      toast({
+        title: "Conexão atualizada",
+        description: "Nome da conexão alterado com sucesso",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Erro ao atualizar",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const recreateConnection = useMutation({
     mutationFn: async (connectionId: string) => {
       const { data, error } = await supabase.functions.invoke("evolution-instance", {
@@ -220,6 +248,7 @@ export function useWhatsAppConnections() {
     checkStatus,
     disconnect,
     deleteConnection,
+    updateConnection,
     recreateConnection,
     checkServerHealth,
     cleanupOrphaned,
