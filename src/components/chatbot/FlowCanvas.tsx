@@ -47,16 +47,29 @@ interface FlowCanvasProps {
   onDeleteNode?: (nodeId: string) => void;
   onRegisterDeleteFn?: (fn: (nodeId: string) => void) => void;
   onRegisterSaveFn?: (fn: () => Promise<void>) => void;
+  onRegisterUpdateFn?: (fn: (nodeId: string, data: Record<string, unknown>) => void) => void;
   onSavingChange?: (isSaving: boolean) => void;
 }
 
-function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterSaveFn, onSavingChange }: FlowCanvasProps) {
+function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterSaveFn, onRegisterUpdateFn, onSavingChange }: FlowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
   const [hasChanges, setHasChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Refs to hold current state for save function (avoid stale closure)
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
+
+  useEffect(() => {
+    edgesRef.current = edges;
+  }, [edges]);
 
   const { data: flowData, isLoading } = useFlow(flowId);
   const saveFlowData = useSaveFlowData();
@@ -173,20 +186,20 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
     [onEdgesChange]
   );
 
-  const handleSave = async () => {
+  const handleSave = useCallback(async () => {
     if (!flowId) return;
 
     setIsSaving(true);
     try {
       await saveFlowData.mutateAsync({
         flowId,
-        nodes: nodes.map((node) => ({
+        nodes: nodesRef.current.map((node) => ({
           id: node.id,
           type: node.type || "message",
           position: node.position,
           data: node.data as Record<string, unknown>,
         })),
-        edges: edges.map((edge) => ({
+        edges: edgesRef.current.map((edge) => ({
           id: edge.id,
           source: edge.source,
           target: edge.target,
@@ -200,7 +213,7 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
     } finally {
       setIsSaving(false);
     }
-  };
+  }, [flowId, saveFlowData]);
 
   const updateNodeData = useCallback(
     (nodeId: string, data: Record<string, unknown>) => {
@@ -229,6 +242,13 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
       onRegisterDeleteFn(deleteNode);
     }
   }, [onRegisterDeleteFn, deleteNode]);
+
+  // Register update function with parent
+  useEffect(() => {
+    if (onRegisterUpdateFn) {
+      onRegisterUpdateFn(updateNodeData);
+    }
+  }, [onRegisterUpdateFn, updateNodeData]);
 
   // Register save function with parent
   useEffect(() => {
