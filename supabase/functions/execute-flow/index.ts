@@ -81,8 +81,57 @@ async function sendWhatsAppMessage(
   }
 }
 
+// Call Google AI Studio API directly (for user's own API key)
+async function callGoogleAI(
+  apiKey: string,
+  systemPrompt: string,
+  userMessage: string,
+  model: string,
+  temperature: number,
+  maxTokens: number,
+  knowledgeBase?: string
+): Promise<string> {
+  const fullSystemPrompt = knowledgeBase 
+    ? `${systemPrompt}\n\n### Base de conhecimento:\n${knowledgeBase}`
+    : systemPrompt;
+
+  try {
+    console.log("[FlowExecutor] Calling Google AI Studio with model:", model);
+    
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            { role: "user", parts: [{ text: userMessage }] }
+          ],
+          systemInstruction: { parts: [{ text: fullSystemPrompt }] },
+          generationConfig: {
+            temperature: temperature || 0.7,
+            maxOutputTokens: maxTokens || 1024,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[FlowExecutor] Google AI error:", errorText);
+      return "Desculpe, ocorreu um erro ao processar sua mensagem.";
+    }
+
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "Não consegui gerar uma resposta.";
+  } catch (error) {
+    console.error("[FlowExecutor] Error calling Google AI:", error);
+    return "Desculpe, ocorreu um erro ao processar sua mensagem.";
+  }
+}
+
 // Call AI model via Lovable AI Gateway
-async function callAI(
+async function callLovableAI(
   systemPrompt: string,
   userMessage: string,
   model: string,
@@ -101,6 +150,8 @@ async function callAI(
     : systemPrompt;
 
   try {
+    console.log("[FlowExecutor] Calling Lovable AI with model:", model);
+    
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -129,6 +180,23 @@ async function callAI(
     console.error("[FlowExecutor] Error calling AI:", error);
     return "Desculpe, ocorreu um erro ao processar sua mensagem.";
   }
+}
+
+// Unified AI caller that routes to the appropriate API
+async function callAI(
+  systemPrompt: string,
+  userMessage: string,
+  model: string,
+  temperature: number,
+  maxTokens: number,
+  knowledgeBase?: string,
+  useOwnApiKey?: boolean,
+  googleApiKey?: string
+): Promise<string> {
+  if (useOwnApiKey && googleApiKey) {
+    return callGoogleAI(googleApiKey, systemPrompt, userMessage, model, temperature, maxTokens, knowledgeBase);
+  }
+  return callLovableAI(systemPrompt, userMessage, model, temperature, maxTokens, knowledgeBase);
 }
 
 // Get the next node following an edge
@@ -537,8 +605,19 @@ async function executeFlowFromNode(
           const temperature = (currentNode.data.temperature as number) ?? 0.7;
           const maxTokens = (currentNode.data.maxTokens as number) || 1024;
           const knowledgeBase = currentNode.data.knowledgeBase as string;
+          const useOwnApiKey = currentNode.data.useOwnApiKey as boolean;
+          const googleApiKey = currentNode.data.googleApiKey as string;
 
-          const aiResponse = await callAI(systemPrompt, messageContent, model, temperature, maxTokens, knowledgeBase);
+          const aiResponse = await callAI(
+            systemPrompt, 
+            messageContent, 
+            model, 
+            temperature, 
+            maxTokens, 
+            knowledgeBase,
+            useOwnApiKey,
+            googleApiKey
+          );
 
           await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, aiResponse);
           

@@ -39,13 +39,19 @@ interface NodeConfigPanelProps {
   isSaving?: boolean;
 }
 
-const AI_MODELS = [
+const LOVABLE_AI_MODELS = [
   { value: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash (Recomendado)" },
   { value: "google/gemini-2.5-flash-lite", label: "Gemini 2.5 Flash Lite" },
   { value: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
   { value: "openai/gpt-5", label: "GPT-5" },
   { value: "openai/gpt-5-mini", label: "GPT-5 Mini" },
   { value: "openai/gpt-5-nano", label: "GPT-5 Nano" },
+];
+
+const GOOGLE_AI_MODELS = [
+  { value: "gemini-2.0-flash", label: "Gemini 2.0 Flash (Mais Recente)" },
+  { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
+  { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
 ];
 
 export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSaveFlow, isSaving }: NodeConfigPanelProps) {
@@ -400,6 +406,10 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
         );
 
       case "ai":
+        const useOwnApiKey = (formData.useOwnApiKey as boolean) ?? false;
+        const aiModels = useOwnApiKey ? GOOGLE_AI_MODELS : LOVABLE_AI_MODELS;
+        const defaultModel = useOwnApiKey ? "gemini-2.0-flash" : "google/gemini-2.5-flash";
+        
         return (
           <>
             <div className="space-y-2">
@@ -420,17 +430,65 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                 onCheckedChange={(v) => handleChange("isEnabled", v)}
               />
             </div>
+            
+            {/* Toggle para API própria */}
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-primary/20">
+              <div className="space-y-0.5">
+                <Label className="flex items-center gap-2">
+                  Usar API key própria
+                  <span className="text-[10px] bg-green-500/20 text-green-600 dark:text-green-400 px-1.5 py-0.5 rounded font-medium">
+                    GRATUITO
+                  </span>
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Use sua chave do Google AI Studio
+                </p>
+              </div>
+              <Switch
+                checked={useOwnApiKey}
+                onCheckedChange={(v) => {
+                  handleChange("useOwnApiKey", v);
+                  // Reset model when switching
+                  handleChange("model", v ? "gemini-2.0-flash" : "google/gemini-2.5-flash");
+                }}
+              />
+            </div>
+            
+            {/* Campo de API Key - aparece quando useOwnApiKey é true */}
+            {useOwnApiKey && (
+              <div className="space-y-2 p-3 rounded-lg border border-dashed border-primary/30 bg-primary/5">
+                <Label>Google AI API Key</Label>
+                <Input
+                  type="password"
+                  value={(formData.googleApiKey as string) || ""}
+                  onChange={(e) => handleChange("googleApiKey", e.target.value)}
+                  placeholder="AIza..."
+                />
+                <p className="text-xs text-muted-foreground">
+                  Obtenha gratuitamente em{" "}
+                  <a 
+                    href="https://aistudio.google.com/apikey" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-primary underline hover:no-underline"
+                  >
+                    aistudio.google.com/apikey
+                  </a>
+                </p>
+              </div>
+            )}
+            
             <div className="space-y-2">
               <Label>Modelo de IA</Label>
               <Select
-                value={(formData.model as string) || "google/gemini-2.5-flash"}
+                value={(formData.model as string) || defaultModel}
                 onValueChange={(v) => handleChange("model", v)}
               >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {AI_MODELS.map((model) => (
+                  {aiModels.map((model) => (
                     <SelectItem key={model.value} value={model.value}>
                       {model.label}
                     </SelectItem>
