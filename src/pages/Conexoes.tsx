@@ -33,6 +33,7 @@ export default function Conexoes() {
     checkStatus,
     disconnect,
     deleteConnection,
+    updateConnection,
     recreateConnection,
   } = useWhatsAppConnections();
 
@@ -162,6 +163,14 @@ export default function Conexoes() {
     }
   };
 
+  const handleUpdateName = async (connectionId: string, name: string) => {
+    try {
+      await updateConnection.mutateAsync({ connectionId, name });
+    } catch (error) {
+      console.error("Error updating connection:", error);
+    }
+  };
+
   const currentQrConnection = connections.find(c => c.id === selectedConnection?.id);
 
   return (
@@ -262,9 +271,11 @@ export default function Conexoes() {
               onDelete={handleDelete}
               onRefreshQr={handleRefreshQrCode}
               onViewQr={handleViewQr}
+              onUpdateName={handleUpdateName}
               isDisconnecting={disconnect.isPending}
               isRecreating={recreateConnection.isPending}
               isDeleting={deleteConnection.isPending}
+              isUpdating={updateConnection.isPending}
             />
           ))}
         </div>
