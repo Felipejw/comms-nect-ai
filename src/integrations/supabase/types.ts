@@ -500,6 +500,7 @@ export type Database = {
           channel: string | null
           contact_id: string
           created_at: string
+          flow_state: Json | null
           id: string
           is_bot_active: boolean | null
           kanban_column_id: string | null
@@ -517,6 +518,7 @@ export type Database = {
           channel?: string | null
           contact_id: string
           created_at?: string
+          flow_state?: Json | null
           id?: string
           is_bot_active?: boolean | null
           kanban_column_id?: string | null
@@ -534,6 +536,7 @@ export type Database = {
           channel?: string | null
           contact_id?: string
           created_at?: string
+          flow_state?: Json | null
           id?: string
           is_bot_active?: boolean | null
           kanban_column_id?: string | null
