@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -60,7 +60,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useCreateSchedule } from "@/hooks/useSchedules";
 import { useFlows } from "@/hooks/useFlows";
 import { useQueues } from "@/hooks/useQueues";
-import { useBulkDeleteConversations, useBulkUpdateConversations } from "@/hooks/useBulkConversationActions";
+import { useBulkDeleteConversations, useBulkUpdateConversations, useBulkAddTagsToConversations, useBulkRemoveTagsFromConversations, useExportConversations } from "@/hooks/useBulkConversationActions";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
@@ -164,8 +164,13 @@ export default function Atendimento() {
   const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
   const [showBulkStatusDialog, setShowBulkStatusDialog] = useState(false);
   const [showBulkAssignDialog, setShowBulkAssignDialog] = useState(false);
+  const [showBulkTagDialog, setShowBulkTagDialog] = useState(false);
+  const [showExportDialog, setShowExportDialog] = useState(false);
   const [bulkStatusValue, setBulkStatusValue] = useState<string>("");
   const [bulkAssignValue, setBulkAssignValue] = useState<string>("");
+  const [bulkTagMode, setBulkTagMode] = useState<'add' | 'remove'>('add');
+  const [selectedBulkTags, setSelectedBulkTags] = useState<Set<string>>(new Set());
+  const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
@@ -196,6 +201,9 @@ export default function Atendimento() {
   const { data: users } = useUsers();
   const bulkDeleteConversations = useBulkDeleteConversations();
   const bulkUpdateConversations = useBulkUpdateConversations();
+  const bulkAddTags = useBulkAddTagsToConversations();
+  const bulkRemoveTags = useBulkRemoveTagsFromConversations();
+  const exportConversations = useExportConversations();
   
   // Active flows for bot transfer
   const activeFlows = useMemo(() => flows?.filter(f => f.is_active) || [], [flows]);
@@ -430,6 +438,31 @@ export default function Atendimento() {
     });
     setSelectedConversationIds(new Set());
     setBulkSelectionMode(false);
+  };
+
+  const handleBulkTagAction = async () => {
+    if (selectedBulkTags.size === 0) return;
+    const tagIds = Array.from(selectedBulkTags);
+    const conversationIds = Array.from(selectedConversationIds);
+    
+    if (bulkTagMode === 'add') {
+      await bulkAddTags.mutateAsync({ conversationIds, tagIds });
+    } else {
+      await bulkRemoveTags.mutateAsync({ conversationIds, tagIds });
+    }
+    
+    setSelectedBulkTags(new Set());
+    setShowBulkTagDialog(false);
+    setSelectedConversationIds(new Set());
+    setBulkSelectionMode(false);
+  };
+
+  const handleExport = async () => {
+    await exportConversations.mutateAsync({
+      conversationIds: Array.from(selectedConversationIds),
+      format: exportFormat
+    });
+    setShowExportDialog(false);
   };
 
   // Auto-scroll to bottom when new messages arrive
@@ -1209,6 +1242,15 @@ export default function Atendimento() {
                   <Archive className="w-4 h-4 mr-1" />
                   Arquivar
                 </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setShowExportDialog(true)}
+                  disabled={exportConversations.isPending}
+                >
+                  <Download className="w-4 h-4 mr-1" />
+                  Exportar
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="outline" size="sm">
@@ -1222,6 +1264,23 @@ export default function Atendimento() {
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setShowBulkAssignDialog(true)}>
                       Atribuir Agente
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => {
+                      setBulkTagMode('add');
+                      setSelectedBulkTags(new Set());
+                      setShowBulkTagDialog(true);
+                    }}>
+                      <Tag className="w-4 h-4 mr-2" />
+                      Adicionar Tags
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => {
+                      setBulkTagMode('remove');
+                      setSelectedBulkTags(new Set());
+                      setShowBulkTagDialog(true);
+                    }}>
+                      <Tag className="w-4 h-4 mr-2" />
+                      Remover Tags
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -2125,6 +2184,129 @@ export default function Atendimento() {
             >
               {bulkUpdateConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Atribuir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Tag Dialog */}
+      <Dialog open={showBulkTagDialog} onOpenChange={setShowBulkTagDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {bulkTagMode === 'add' ? 'Adicionar Tags em Massa' : 'Remover Tags em Massa'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="flex gap-2">
+              <Button 
+                variant={bulkTagMode === 'add' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setBulkTagMode('add')}
+              >
+                Adicionar Tags
+              </Button>
+              <Button 
+                variant={bulkTagMode === 'remove' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setBulkTagMode('remove')}
+              >
+                Remover Tags
+              </Button>
+            </div>
+            
+            <p className="text-sm text-muted-foreground">
+              {bulkTagMode === 'add' 
+                ? `Selecione as tags para adicionar a ${selectedConversationIds.size} conversa(s):`
+                : `Selecione as tags para remover de ${selectedConversationIds.size} conversa(s):`
+              }
+            </p>
+            
+            <div className="max-h-60 overflow-y-auto space-y-2">
+              {tags?.map(tag => (
+                <div key={tag.id} className="flex items-center gap-2 p-2 rounded hover:bg-muted/50">
+                  <Checkbox
+                    checked={selectedBulkTags.has(tag.id)}
+                    onCheckedChange={(checked) => {
+                      setSelectedBulkTags(prev => {
+                        const newSet = new Set(prev);
+                        if (checked) newSet.add(tag.id);
+                        else newSet.delete(tag.id);
+                        return newSet;
+                      });
+                    }}
+                  />
+                  <Badge style={{ backgroundColor: tag.color }} className="text-white">
+                    {tag.name}
+                  </Badge>
+                  {tag.description && (
+                    <span className="text-xs text-muted-foreground">{tag.description}</span>
+                  )}
+                </div>
+              ))}
+              {(!tags || tags.length === 0) && (
+                <p className="text-sm text-muted-foreground text-center py-4">
+                  Nenhuma tag disponível
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkTagDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleBulkTagAction}
+              disabled={selectedBulkTags.size === 0 || bulkAddTags.isPending || bulkRemoveTags.isPending}
+            >
+              {(bulkAddTags.isPending || bulkRemoveTags.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {bulkTagMode === 'add' ? 'Adicionar' : 'Remover'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Export Dialog */}
+      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Exportar Conversas</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Exportar {selectedConversationIds.size} conversa(s) com todas as mensagens
+            </p>
+            
+            <div className="space-y-2">
+              <Label>Formato</Label>
+              <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as 'csv' | 'pdf')}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="csv">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      CSV (Excel)
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="pdf">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4" />
+                      HTML (Relatório para PDF)
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowExportDialog(false)}>
+              Cancelar
+            </Button>
+            <Button onClick={handleExport} disabled={exportConversations.isPending}>
+              {exportConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Exportar
             </Button>
           </DialogFooter>
         </DialogContent>
