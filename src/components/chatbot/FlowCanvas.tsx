@@ -48,9 +48,11 @@ interface FlowCanvasProps {
   onNodeSelect: (node: Node | null) => void;
   onDeleteNode?: (nodeId: string) => void;
   onRegisterDeleteFn?: (fn: (nodeId: string) => void) => void;
+  onRegisterSaveFn?: (fn: () => Promise<void>) => void;
+  onSavingChange?: (isSaving: boolean) => void;
 }
 
-function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn }: FlowCanvasProps) {
+function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterSaveFn, onSavingChange }: FlowCanvasProps) {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -230,6 +232,20 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn }: FlowCanva
       onRegisterDeleteFn(deleteNode);
     }
   }, [onRegisterDeleteFn, deleteNode]);
+
+  // Register save function with parent
+  useEffect(() => {
+    if (onRegisterSaveFn) {
+      onRegisterSaveFn(handleSave);
+    }
+  }, [onRegisterSaveFn, handleSave]);
+
+  // Notify parent of saving state changes
+  useEffect(() => {
+    if (onSavingChange) {
+      onSavingChange(isSaving);
+    }
+  }, [isSaving, onSavingChange]);
 
   if (!flowId) {
     return (
