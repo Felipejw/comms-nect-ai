@@ -19,7 +19,7 @@ import Campanhas from "./pages/Campanhas";
 import Chatbot from "./pages/Chatbot";
 import Usuarios from "./pages/Usuarios";
 import FilasChatbot from "./pages/FilasChatbot";
-import TalkAI from "./pages/TalkAI";
+
 import Integracoes from "./pages/Integracoes";
 import Conexoes from "./pages/Conexoes";
 import Relatorios from "./pages/Relatorios";
@@ -56,7 +56,6 @@ const App = () => (
               <Route path="/chatbot" element={<Chatbot />} />
               <Route path="/usuarios" element={<Usuarios />} />
               <Route path="/filas-chatbot" element={<FilasChatbot />} />
-              <Route path="/talk-ai" element={<TalkAI />} />
               <Route path="/integracoes" element={<Integracoes />} />
               <Route path="/conexoes" element={<Conexoes />} />
               <Route path="/configuracoes" element={<Configuracoes />} />

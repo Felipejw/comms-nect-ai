@@ -914,6 +914,7 @@ export type Database = {
           created_at: string
           description: string | null
           id: string
+          message_content: string | null
           reminder: boolean | null
           reminder_sent: boolean | null
           scheduled_at: string
@@ -928,6 +929,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           id?: string
+          message_content?: string | null
           reminder?: boolean | null
           reminder_sent?: boolean | null
           scheduled_at: string
@@ -942,6 +944,7 @@ export type Database = {
           created_at?: string
           description?: string | null
           id?: string
+          message_content?: string | null
           reminder?: boolean | null
           reminder_sent?: boolean | null
           scheduled_at?: string

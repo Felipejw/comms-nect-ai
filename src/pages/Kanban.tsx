@@ -237,7 +237,7 @@ export default function Kanban() {
                       ref={provided.innerRef}
                       {...provided.droppableProps}
                       className={cn(
-                        "space-y-3 min-h-[100px] rounded-lg transition-colors",
+                        "space-y-3 min-h-[100px] max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg transition-colors pr-1 scrollbar-thin",
                         snapshot.isDraggingOver && "bg-muted/50"
                       )}
                     >
@@ -304,7 +304,7 @@ export default function Kanban() {
                       ref={provided.innerRef}
                       {...provided.droppableProps}
                       className={cn(
-                        "space-y-3 min-h-[100px] rounded-lg transition-colors",
+                        "space-y-3 min-h-[100px] max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg transition-colors pr-1 scrollbar-thin",
                         snapshot.isDraggingOver && "bg-primary/5 ring-2 ring-primary/20"
                       )}
                     >

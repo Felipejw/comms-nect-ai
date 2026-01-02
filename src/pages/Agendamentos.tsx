@@ -58,6 +58,7 @@ export default function Agendamentos() {
   // Form state
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [messageContent, setMessageContent] = useState("");
   const [contactId, setContactId] = useState("");
   const [conversationId, setConversationId] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
@@ -91,6 +92,7 @@ export default function Agendamentos() {
     await createSchedule.mutateAsync({
       title: title.trim(),
       description: description.trim() || undefined,
+      message_content: messageContent.trim() || undefined,
       contact_id: contactId && contactId !== 'none' ? contactId : undefined,
       conversation_id: conversationId && conversationId !== 'none' ? conversationId : undefined,
       user_id: user.id,
@@ -105,6 +107,7 @@ export default function Agendamentos() {
   const resetForm = () => {
     setTitle("");
     setDescription("");
+    setMessageContent("");
     setContactId("");
     setConversationId("");
     setScheduledDate("");
@@ -199,6 +202,19 @@ export default function Agendamentos() {
                   onChange={(e) => setDescription(e.target.value)}
                 />
               </div>
+              {conversationId && conversationId !== 'none' && (
+                <div className="space-y-2">
+                  <Label>Mensagem a enviar (opcional)</Label>
+                  <Textarea 
+                    placeholder="Mensagem que será enviada automaticamente no horário agendado" 
+                    value={messageContent}
+                    onChange={(e) => setMessageContent(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Se preenchida, esta mensagem será enviada automaticamente via WhatsApp no horário agendado.
+                  </p>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Data *</Label>
