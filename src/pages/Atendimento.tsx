@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -152,6 +152,9 @@ export default function Atendimento() {
   // Change queue dialog state
   const [showQueueDialog, setShowQueueDialog] = useState(false);
   const [selectedQueueId, setSelectedQueueId] = useState<string>("");
+  
+  // Signature toggle state
+  const [signatureEnabled, setSignatureEnabled] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
@@ -511,9 +514,18 @@ export default function Atendimento() {
         setIsUploading(false);
       }
 
+      // Format content with signature if enabled
+      let finalContent = messageText.trim() || (mediaPreview?.type === 'image' ? '📷 Imagem' : mediaPreview?.type === 'video' ? '🎬 Vídeo' : mediaPreview?.file.name || '');
+      
+      // Add signature if enabled and there's text content
+      if (signatureEnabled && messageText.trim() && isWhatsApp) {
+        const attendantName = profile?.name || 'Atendente';
+        finalContent = `*${attendantName}:* ${messageText.trim()}`;
+      }
+
       await sendMessage.mutateAsync({
         conversationId: selectedConversation.id,
-        content: messageText.trim() || (mediaPreview?.type === 'image' ? '📷 Imagem' : mediaPreview?.type === 'video' ? '🎬 Vídeo' : mediaPreview?.file.name || ''),
+        content: finalContent,
         senderId: user.id,
         senderType: "agent",
         sendViaWhatsApp: isWhatsApp,
@@ -1546,6 +1558,30 @@ export default function Atendimento() {
                   </div>
                 </PopoverContent>
               </Popover>
+              
+              {/* Signature Toggle - Only show for WhatsApp conversations */}
+              {selectedConversation?.channel === 'whatsapp' && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        className={cn(
+                          "shrink-0 transition-colors",
+                          signatureEnabled && "bg-accent/20 text-accent"
+                        )}
+                        onClick={() => setSignatureEnabled(!signatureEnabled)}
+                      >
+                        <PenLine className="w-5 h-5" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{signatureEnabled ? 'Desativar assinatura' : 'Ativar assinatura'}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
               
               {!isRecording ? (
                 <>
