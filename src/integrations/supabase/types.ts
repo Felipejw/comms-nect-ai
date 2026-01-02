@@ -492,6 +492,7 @@ export type Database = {
       }
       conversations: {
         Row: {
+          active_flow_id: string | null
           assigned_to: string | null
           channel: string | null
           contact_id: string
@@ -508,6 +509,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          active_flow_id?: string | null
           assigned_to?: string | null
           channel?: string | null
           contact_id: string
@@ -524,6 +526,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          active_flow_id?: string | null
           assigned_to?: string | null
           channel?: string | null
           contact_id?: string
@@ -540,6 +543,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "conversations_active_flow_id_fkey"
+            columns: ["active_flow_id"]
+            isOneToOne: false
+            referencedRelation: "chatbot_flows"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "conversations_contact_id_fkey"
             columns: ["contact_id"]
@@ -900,6 +910,7 @@ export type Database = {
       schedules: {
         Row: {
           contact_id: string | null
+          conversation_id: string | null
           created_at: string
           description: string | null
           id: string
@@ -913,6 +924,7 @@ export type Database = {
         }
         Insert: {
           contact_id?: string | null
+          conversation_id?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -926,6 +938,7 @@ export type Database = {
         }
         Update: {
           contact_id?: string | null
+          conversation_id?: string | null
           created_at?: string
           description?: string | null
           id?: string
@@ -943,6 +956,13 @@ export type Database = {
             columns: ["contact_id"]
             isOneToOne: false
             referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "schedules_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
             referencedColumns: ["id"]
           },
         ]

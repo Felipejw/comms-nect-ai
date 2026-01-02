@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -38,6 +38,13 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useConversations, useMessages, useSendMessage, useUpdateConversation, useDeleteConversation, useMarkConversationAsRead, Conversation, Message } from "@/hooks/useConversations";
 import { useAuth } from "@/contexts/AuthContext";
@@ -51,6 +58,8 @@ import { useTags } from "@/hooks/useTags";
 import { useConversationTags, useAddTagToConversation, useRemoveTagFromConversation } from "@/hooks/useConversationTags";
 import { useNotifications } from "@/hooks/useNotifications";
 import { useCreateSchedule } from "@/hooks/useSchedules";
+import { useFlows } from "@/hooks/useFlows";
+import { useQueues } from "@/hooks/useQueues";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
@@ -91,6 +100,11 @@ interface MediaPreview {
   previewUrl?: string;
 }
 
+// Helper to normalize phone for search
+const normalizePhone = (phone: string) => {
+  return phone.replace(/\D/g, '');
+};
+
 export default function Atendimento() {
   const [activeTab, setActiveTab] = useState<'attending' | 'completed' | 'chatbot'>('attending');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
@@ -128,7 +142,16 @@ export default function Atendimento() {
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
+  const [queueFilter, setQueueFilter] = useState<string>("");
   const [showFilterPopover, setShowFilterPopover] = useState(false);
+  
+  // Transfer to bot dialog state
+  const [showBotFlowDialog, setShowBotFlowDialog] = useState(false);
+  const [selectedFlowId, setSelectedFlowId] = useState<string>("");
+  
+  // Change queue dialog state
+  const [showQueueDialog, setShowQueueDialog] = useState(false);
+  const [selectedQueueId, setSelectedQueueId] = useState<string>("");
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
@@ -154,6 +177,11 @@ export default function Atendimento() {
   const removeTagFromConversation = useRemoveTagFromConversation();
   const { requestPermission, showNotification, permission } = useNotifications();
   const createSchedule = useCreateSchedule();
+  const { data: flows } = useFlows();
+  const { data: queues } = useQueues();
+  
+  // Active flows for bot transfer
+  const activeFlows = useMemo(() => flows?.filter(f => f.is_active) || [], [flows]);
   
   // Typing indicator
   const { typingUsers, handleTyping, stopTyping } = useTypingIndicator(
@@ -242,35 +270,40 @@ export default function Atendimento() {
   const filteredConversations = useMemo(() => {
     if (!conversations) return [];
     return conversations.filter((c) => {
-      // Search filter
+      // Search filter - includes phone number search
       const name = c.contact?.name?.toLowerCase() || "";
-      const phone = c.contact?.phone?.toLowerCase() || "";
+      const phone = c.contact?.phone || "";
+      const normalizedPhone = normalizePhone(phone);
       const query = searchQuery.toLowerCase();
-      const matchesSearch = name.includes(query) || phone.includes(query);
+      const normalizedQuery = normalizePhone(searchQuery);
+      
+      // Match by name or phone (both formatted and normalized)
+      const matchesSearch = name.includes(query) || 
+                           phone.toLowerCase().includes(query) ||
+                           normalizedPhone.includes(normalizedQuery);
       
       // Tab filter
       let matchesTab = false;
       if (activeTab === 'attending') {
-        // Atendendo: manual attendance (is_bot_active = false) AND status is new or in_progress
         matchesTab = !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress');
       } else if (activeTab === 'completed') {
-        // Concluído: status is resolved
         matchesTab = c.status === 'resolved';
       } else if (activeTab === 'chatbot') {
-        // Chatbot: is_bot_active = true AND status is not resolved/archived
         matchesTab = c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived';
       }
       
-      // Status filter (additional filter within tab)
+      // Status filter
       const matchesStatus = statusFilter.length === 0 || statusFilter.includes(c.status);
       
-      // Tag filter (we need to check conversation tags)
-      // For now, we'll include all if no tag filter, otherwise we need to check
+      // Tag filter
       const matchesTags = tagFilter.length === 0;
       
-      return matchesSearch && matchesTab && matchesStatus && matchesTags;
+      // Queue filter
+      const matchesQueue = !queueFilter || c.queue_id === queueFilter;
+      
+      return matchesSearch && matchesTab && matchesStatus && matchesTags && matchesQueue;
     });
-  }, [conversations, searchQuery, activeTab, statusFilter, tagFilter]);
+  }, [conversations, searchQuery, activeTab, statusFilter, tagFilter, queueFilter]);
 
   // Tab counts
   const tabCounts = useMemo(() => {
@@ -282,11 +315,12 @@ export default function Atendimento() {
     };
   }, [conversations]);
 
-  const activeFiltersCount = statusFilter.length + tagFilter.length;
+  const activeFiltersCount = statusFilter.length + tagFilter.length + (queueFilter ? 1 : 0);
 
   const clearFilters = () => {
     setStatusFilter([]);
     setTagFilter([]);
+    setQueueFilter("");
   };
 
   const toggleStatusFilter = (status: string) => {
@@ -489,7 +523,7 @@ export default function Atendimento() {
 
       setMessageText("");
       clearMediaPreview();
-      stopTyping(); // Stop typing indicator when message is sent
+      stopTyping();
 
       if (selectedConversation.status === "new") {
         await updateConversation.mutateAsync({
@@ -531,6 +565,14 @@ export default function Atendimento() {
   const handleTransferToBot = async () => {
     if (!selectedConversation) return;
     
+    // If there are active flows, show selection dialog
+    if (activeFlows.length > 0) {
+      setSelectedFlowId(activeFlows[0].id);
+      setShowBotFlowDialog(true);
+      return;
+    }
+    
+    // No flows available, transfer without flow
     await updateConversation.mutateAsync({
       id: selectedConversation.id,
       is_bot_active: true,
@@ -540,6 +582,53 @@ export default function Atendimento() {
     toast({
       title: "Conversa transferida",
       description: "A conversa foi transferida para o Chatbot",
+    });
+  };
+
+  const confirmTransferToBot = async () => {
+    if (!selectedConversation) return;
+    
+    await updateConversation.mutateAsync({
+      id: selectedConversation.id,
+      is_bot_active: true,
+      assigned_to: null,
+      active_flow_id: selectedFlowId || null,
+    });
+    
+    setShowBotFlowDialog(false);
+    setSelectedFlowId("");
+    
+    const selectedFlow = activeFlows.find(f => f.id === selectedFlowId);
+    toast({
+      title: "Conversa transferida",
+      description: selectedFlow 
+        ? `A conversa foi transferida para o fluxo "${selectedFlow.name}"` 
+        : "A conversa foi transferida para o Chatbot",
+    });
+  };
+
+  const handleChangeQueue = async () => {
+    if (!selectedConversation) return;
+    setSelectedQueueId(selectedConversation.queue_id || "");
+    setShowQueueDialog(true);
+  };
+
+  const confirmChangeQueue = async () => {
+    if (!selectedConversation) return;
+    
+    await updateConversation.mutateAsync({
+      id: selectedConversation.id,
+      queue_id: selectedQueueId || null,
+    });
+    
+    setShowQueueDialog(false);
+    
+    const selectedQueue = queues?.find(q => q.id === selectedQueueId);
+    toast({
+      title: "Setor alterado",
+      description: selectedQueue 
+        ? `A conversa foi movida para "${selectedQueue.name}"` 
+        : "A conversa foi removida do setor",
     });
   };
 
@@ -560,7 +649,6 @@ export default function Atendimento() {
   const handleTextChange = (value: string) => {
     setMessageText(value);
     
-    // Trigger typing indicator
     if (value.length > 0) {
       handleTyping();
     }
@@ -777,45 +865,19 @@ export default function Atendimento() {
         "w-full md:w-80 lg:w-96 border-r border-border flex flex-col",
         showMobileChat && "hidden md:flex"
       )}>
-        {/* Category Tabs */}
-        <div className="p-2 border-b border-border">
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'attending' | 'completed' | 'chatbot')} className="w-full">
-            <TabsList className="grid w-full grid-cols-3 h-9">
-              <TabsTrigger value="attending" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <UserCheck className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Atendendo</span>
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
-                  {tabCounts.attending}
-                </Badge>
-              </TabsTrigger>
-              <TabsTrigger value="completed" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <CheckCircle className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Concluído</span>
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
-                  {tabCounts.completed}
-                </Badge>
-              </TabsTrigger>
-              <TabsTrigger value="chatbot" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
-                <Bot className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Chatbot</span>
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
-                  {tabCounts.chatbot}
-                </Badge>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
-        </div>
-        
         <div className="p-3 sm:p-4 border-b border-border space-y-3">
+          {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Buscar conversas..."
+              placeholder="Buscar por nome ou telefone..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 input-search"
             />
           </div>
+          
+          {/* Filter button */}
           <div className="flex items-center gap-2">
             <Popover open={showFilterPopover} onOpenChange={setShowFilterPopover}>
               <PopoverTrigger asChild>
@@ -854,6 +916,32 @@ export default function Atendimento() {
                       </label>
                     ))}
                   </div>
+                  
+                  {/* Queue/Sector filter */}
+                  {queues && queues.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground font-medium">Setor</p>
+                      <Select value={queueFilter} onValueChange={setQueueFilter}>
+                        <SelectTrigger className="h-8 text-xs">
+                          <SelectValue placeholder="Todos os setores" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">Todos os setores</SelectItem>
+                          {queues.map(queue => (
+                            <SelectItem key={queue.id} value={queue.id}>
+                              <div className="flex items-center gap-2">
+                                <div 
+                                  className="w-3 h-3 rounded-full" 
+                                  style={{ backgroundColor: queue.color }}
+                                />
+                                {queue.name}
+                              </div>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
                   
                   {tags && tags.length > 0 && (
                     <div className="space-y-2">
@@ -904,6 +992,16 @@ export default function Atendimento() {
                   <X className="w-3 h-3" />
                 </Badge>
               ))}
+              {queueFilter && (
+                <Badge 
+                  variant="secondary" 
+                  className="text-xs gap-1 cursor-pointer hover:bg-secondary/80"
+                  onClick={() => setQueueFilter("")}
+                >
+                  {queues?.find(q => q.id === queueFilter)?.name}
+                  <X className="w-3 h-3" />
+                </Badge>
+              )}
               {tagFilter.map(tagId => {
                 const tag = tags?.find(t => t.id === tagId);
                 return tag ? (
@@ -920,6 +1018,33 @@ export default function Atendimento() {
               })}
             </div>
           )}
+          
+          {/* Tabs - Moved below filter */}
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'attending' | 'completed' | 'chatbot')} className="w-full">
+            <TabsList className="grid w-full grid-cols-3 h-9">
+              <TabsTrigger value="attending" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <UserCheck className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Atendendo</span>
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.attending}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="completed" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <CheckCircle className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Concluído</span>
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.completed}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="chatbot" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+                <Bot className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Chatbot</span>
+                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.chatbot}
+                </Badge>
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
 
         <div className="flex-1 overflow-y-auto scrollbar-thin">
@@ -1164,6 +1289,10 @@ export default function Atendimento() {
                     <DropdownMenuItem onClick={() => setShowScheduleDialog(true)}>
                       <Calendar className="w-4 h-4 mr-2" />
                       Agendar mensagem
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleChangeQueue}>
+                      <Building className="w-4 h-4 mr-2" />
+                      Mudar setor
                     </DropdownMenuItem>
                     {selectedConversation.is_bot_active ? (
                       <DropdownMenuItem onClick={handleTransferToManual} disabled={updateConversation.isPending}>
@@ -1576,6 +1705,97 @@ export default function Atendimento() {
             >
               {createSchedule.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Agendar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Transfer to Bot Flow Dialog */}
+      <Dialog open={showBotFlowDialog} onOpenChange={setShowBotFlowDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Selecionar Fluxo do Chatbot</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Selecione o fluxo de chatbot para onde a conversa será transferida:
+            </p>
+            <Select value={selectedFlowId} onValueChange={setSelectedFlowId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione um fluxo" />
+              </SelectTrigger>
+              <SelectContent>
+                {activeFlows.map(flow => (
+                  <SelectItem key={flow.id} value={flow.id}>
+                    <div className="flex items-center gap-2">
+                      <Bot className="w-4 h-4 text-primary" />
+                      {flow.name}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {activeFlows.length === 0 && (
+              <p className="text-sm text-muted-foreground text-center py-2">
+                Nenhum fluxo ativo encontrado
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBotFlowDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={confirmTransferToBot}
+              disabled={updateConversation.isPending || !selectedFlowId}
+            >
+              {updateConversation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Transferir
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Change Queue Dialog */}
+      <Dialog open={showQueueDialog} onOpenChange={setShowQueueDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Mudar Setor</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Selecione o setor para onde a conversa será movida:
+            </p>
+            <Select value={selectedQueueId} onValueChange={setSelectedQueueId}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione um setor" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">Sem setor</SelectItem>
+                {queues?.map(queue => (
+                  <SelectItem key={queue.id} value={queue.id}>
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="w-3 h-3 rounded-full" 
+                        style={{ backgroundColor: queue.color }}
+                      />
+                      {queue.name}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowQueueDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={confirmChangeQueue}
+              disabled={updateConversation.isPending}
+            >
+              {updateConversation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Confirmar
             </Button>
           </DialogFooter>
         </DialogContent>
