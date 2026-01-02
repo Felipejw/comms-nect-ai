@@ -24,6 +24,7 @@ import { useQueues } from "@/hooks/useQueues";
 import { useUsers } from "@/hooks/useUsers";
 import { useWhatsAppConnections } from "@/hooks/useWhatsAppConnections";
 import { useKanbanColumns } from "@/hooks/useKanbanColumns";
+import { useTags } from "@/hooks/useTags";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import type { Node } from "@xyflow/react";
@@ -55,6 +56,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
   const { data: users } = useUsers();
   const { connections } = useWhatsAppConnections();
   const { data: kanbanColumns } = useKanbanColumns();
+  const { data: tags } = useTags();
 
   useEffect(() => {
     if (node) {
@@ -489,6 +491,171 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
           </>
         );
 
+      case "condition":
+        const conditionType = (formData.conditionType as string) || "message";
+        return (
+          <>
+            <div className="space-y-2">
+              <Label>Nome do bloco</Label>
+              <Input
+                value={(formData.label as string) || ""}
+                onChange={(e) => handleChange("label", e.target.value)}
+                placeholder="Condição"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Tipo de condição</Label>
+              <Select
+                value={conditionType}
+                onValueChange={(v) => {
+                  handleChange("conditionType", v);
+                  // Reset related fields
+                  handleChange("field", "");
+                  handleChange("operator", "");
+                  handleChange("value", "");
+                  handleChange("tagId", "");
+                  handleChange("tagName", "");
+                  handleChange("kanbanColumnId", "");
+                  handleChange("kanbanColumnName", "");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent position="popper" sideOffset={5}>
+                  <SelectItem value="message">Conteúdo da mensagem</SelectItem>
+                  <SelectItem value="tag">Tag do contato</SelectItem>
+                  <SelectItem value="kanban">Etapa do CRM</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {conditionType === "message" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Campo</Label>
+                  <Select
+                    value={(formData.field as string) || "message"}
+                    onValueChange={(v) => handleChange("field", v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper" sideOffset={5}>
+                      <SelectItem value="message">Mensagem do usuário</SelectItem>
+                      <SelectItem value="contact_name">Nome do contato</SelectItem>
+                      <SelectItem value="contact_phone">Telefone do contato</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Operador</Label>
+                  <Select
+                    value={(formData.operator as string) || "contains"}
+                    onValueChange={(v) => handleChange("operator", v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper" sideOffset={5}>
+                      <SelectItem value="contains">Contém</SelectItem>
+                      <SelectItem value="equals">Igual a</SelectItem>
+                      <SelectItem value="not_equals">Diferente de</SelectItem>
+                      <SelectItem value="starts_with">Começa com</SelectItem>
+                      <SelectItem value="ends_with">Termina com</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Valor</Label>
+                  <Input
+                    value={(formData.value as string) || ""}
+                    onChange={(e) => handleChange("value", e.target.value)}
+                    placeholder="Texto para comparar..."
+                  />
+                </div>
+              </>
+            )}
+
+            {conditionType === "tag" && (
+              <div className="space-y-2">
+                <Label>Tag</Label>
+                <Select
+                  value={(formData.tagId as string) || ""}
+                  onValueChange={(v) => {
+                    const tag = tags?.find((t) => t.id === v);
+                    handleChange("tagId", v);
+                    handleChange("tagName", tag?.name || "");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a tag..." />
+                  </SelectTrigger>
+                  <SelectContent position="popper" sideOffset={5}>
+                    {tags?.map((tag) => (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: tag.color }}
+                          />
+                          {tag.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Verifica se o contato possui esta tag
+                </p>
+              </div>
+            )}
+
+            {conditionType === "kanban" && (
+              <div className="space-y-2">
+                <Label>Etapa do CRM</Label>
+                <Select
+                  value={(formData.kanbanColumnId as string) || ""}
+                  onValueChange={(v) => {
+                    const column = kanbanColumns?.find((c) => c.id === v);
+                    handleChange("kanbanColumnId", v);
+                    handleChange("kanbanColumnName", column?.name || "");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione a etapa..." />
+                  </SelectTrigger>
+                  <SelectContent position="popper" sideOffset={5}>
+                    {kanbanColumns?.map((column) => (
+                      <SelectItem key={column.id} value={column.id}>
+                        <div className="flex items-center gap-2">
+                          {column.color && (
+                            <div
+                              className="w-3 h-3 rounded-full"
+                              style={{ backgroundColor: column.color }}
+                            />
+                          )}
+                          {column.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Verifica se a conversa está nesta etapa do CRM
+                </p>
+              </div>
+            )}
+
+            <div className="mt-4 p-3 rounded-lg bg-muted/50">
+              <p className="text-xs text-muted-foreground">
+                <strong>Sim:</strong> Condição verdadeira → segue pela saída verde<br />
+                <strong>Não:</strong> Condição falsa → segue pela saída vermelha
+              </p>
+            </div>
+          </>
+        );
+
       case "crm":
         return (
           <>
@@ -756,6 +923,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
       delay: "Configurar Aguardar",
       menu: "Configurar Menu",
       ai: "Configurar IA",
+      condition: "Configurar Condição",
       crm: "Configurar CRM",
       transfer: "Configurar Transferência",
       end: "Configurar Encerramento",
