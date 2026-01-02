@@ -174,11 +174,11 @@ export default function Usuarios() {
               Novo Atendente
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle>Adicionar Atendente</DialogTitle>
             </DialogHeader>
-            <div className="space-y-4 py-4">
+            <div className="space-y-4 py-4 flex-1 overflow-y-auto">
               <div className="space-y-2">
                 <Label>Nome</Label>
                 <Input 
