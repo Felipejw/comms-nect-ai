@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Zap } from "lucide-react";
+import { ValidationBadge, validateTriggerNode } from "./ValidationBadge";
 
 interface TriggerNodeData {
   label?: string;
@@ -11,13 +12,15 @@ interface TriggerNodeData {
 
 function TriggerNode({ data, selected }: NodeProps) {
   const nodeData = data as TriggerNodeData;
+  const validationError = validateTriggerNode(nodeData);
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-primary ring-2 ring-primary/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-primary">
           <Zap className="w-4 h-4 text-primary-foreground" />

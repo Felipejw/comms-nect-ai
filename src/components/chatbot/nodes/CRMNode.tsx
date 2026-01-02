@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { LayoutList } from "lucide-react";
+import { ValidationBadge, validateCRMNode } from "./ValidationBadge";
 
 interface CRMNodeData {
   label?: string;
@@ -11,13 +12,15 @@ interface CRMNodeData {
 
 function CRMNode({ data, selected }: NodeProps) {
   const nodeData = data as CRMNodeData;
+  const validationError = validateCRMNode(nodeData);
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-sky-500 ring-2 ring-sky-500/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}

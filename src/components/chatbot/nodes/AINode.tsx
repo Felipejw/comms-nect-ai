@@ -1,23 +1,33 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Brain } from "lucide-react";
+import { ValidationBadge, validateAINode } from "./ValidationBadge";
 
 interface AINodeData {
   label?: string;
   model?: string;
   isEnabled?: boolean;
+  systemPrompt?: string;
   [key: string]: unknown;
 }
 
 function AINode({ data, selected }: NodeProps) {
   const nodeData = data as AINodeData;
+  const validationError = validateAINode(nodeData);
+  
+  const getModelDisplay = () => {
+    if (!nodeData.model) return "Gemini 2.5 Flash";
+    const modelParts = nodeData.model.split("/");
+    return modelParts[modelParts.length - 1].replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+  };
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-violet-500 ring-2 ring-violet-500/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}
@@ -30,9 +40,9 @@ function AINode({ data, selected }: NodeProps) {
         <div className="flex-1">
           <p className="font-medium text-sm">{nodeData.label || "IA"}</p>
           <p className="text-xs text-muted-foreground">
-            {nodeData.isEnabled 
-              ? nodeData.model || "Gemini 2.5 Flash"
-              : "Clique para configurar"}
+            {nodeData.isEnabled !== false
+              ? getModelDisplay()
+              : "Desativado"}
           </p>
         </div>
       </div>

@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { Clock } from "lucide-react";
+import { ValidationBadge, validateDelayNode } from "./ValidationBadge";
 
 interface DelayNodeData {
   label?: string;
@@ -11,14 +12,16 @@ interface DelayNodeData {
 
 function DelayNode({ data, selected }: NodeProps) {
   const nodeData = data as DelayNodeData;
+  const validationError = validateDelayNode(nodeData);
   const unitLabel = nodeData.unit === "minutes" ? "min" : nodeData.unit === "hours" ? "h" : "s";
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-info ring-2 ring-info/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}

@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { MessageCircle } from "lucide-react";
+import { ValidationBadge, validateWhatsAppNode } from "./ValidationBadge";
 
 interface WhatsAppNodeData {
   label?: string;
@@ -12,6 +13,7 @@ interface WhatsAppNodeData {
 
 function WhatsAppNode({ data, selected }: NodeProps) {
   const nodeData = data as WhatsAppNodeData;
+  const validationError = validateWhatsAppNode(nodeData);
   
   const getConnectionInfo = () => {
     if (nodeData.connectionName) {
@@ -24,10 +26,11 @@ function WhatsAppNode({ data, selected }: NodeProps) {
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-green-500 ring-2 ring-green-500/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}
