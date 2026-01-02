@@ -419,17 +419,65 @@ serve(async (req) => {
           // Prepare updates for existing contact
           const updates: Record<string, string | null> = {};
           
+          // Check if current name is a placeholder that needs updating
+          const badNames = ['Chatbot Whats', 'Contato Desconhecido'];
+          const currentNameIsPlaceholder = 
+            badNames.includes(contact.name) ||
+            contact.name === contact.phone || 
+            contact.name?.match(/^\d{15,}$/);
+          
           // Update name if:
           // 1. This is an INCOMING message (fromMe: false) - so pushName is the client's name
           // 2. We have a valid pushName
           // 3. Current name is just phone/LID or a placeholder
-          const currentNameIsPlaceholder = 
-            contact.name === contact.phone || 
-            contact.name?.match(/^\d{15,}$/) ||
-            contact.name === "Contato Desconhecido";
-          
           if (!fromMe && data?.pushName && currentNameIsPlaceholder) {
             updates.name = data.pushName;
+          }
+          
+          // If no pushName but contact has bad name, try to fetch from Evolution API
+          if (currentNameIsPlaceholder && !updates.name && (whatsappLid || contact.phone)) {
+            try {
+              const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
+              const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
+              
+              if (evolutionUrl && evolutionKey) {
+                console.log(`[Webhook] Fetching contact name for ${contact.name} from Evolution API...`);
+                
+                const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instance}`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': evolutionKey,
+                  },
+                  body: JSON.stringify({ where: {} }),
+                });
+                
+                if (contactResponse.ok) {
+                  const allContacts = await contactResponse.json();
+                  const contactsArray = Array.isArray(allContacts) ? allContacts : [];
+                  
+                  // Try to find contact by LID or phone
+                  let waContact = null;
+                  
+                  if (whatsappLid) {
+                    const lidRemoteJid = `${whatsappLid}@lid`;
+                    waContact = contactsArray.find((c: any) => c.remoteJid === lidRemoteJid);
+                  }
+                  
+                  if (!waContact && contact.phone && contact.phone.length <= 15) {
+                    const phoneRemoteJid = `${contact.phone}@s.whatsapp.net`;
+                    waContact = contactsArray.find((c: any) => c.remoteJid === phoneRemoteJid);
+                  }
+                  
+                  if (waContact?.pushName && !badNames.includes(waContact.pushName)) {
+                    updates.name = waContact.pushName;
+                    console.log(`[Webhook] Found real name from Evolution: ${waContact.pushName}`);
+                  }
+                }
+              }
+            } catch (syncError) {
+              console.error(`[Webhook] Error syncing contact name:`, syncError);
+            }
           }
           
           // Update avatar if available and contact doesn't have one
