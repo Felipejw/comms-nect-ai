@@ -1,17 +1,53 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Tag, Columns, MessageSquare } from "lucide-react";
 
 interface ConditionNodeData {
   label?: string;
+  conditionType?: string;
   field?: string;
   operator?: string;
   value?: string;
+  tagId?: string;
+  tagName?: string;
+  kanbanColumnId?: string;
+  kanbanColumnName?: string;
   [key: string]: unknown;
 }
 
+const CONDITION_ICONS: Record<string, React.ReactNode> = {
+  tag: <Tag className="w-4 h-4 text-warning-foreground" />,
+  kanban: <Columns className="w-4 h-4 text-warning-foreground" />,
+  message: <MessageSquare className="w-4 h-4 text-warning-foreground" />,
+  default: <GitBranch className="w-4 h-4 text-warning-foreground" />,
+};
+
 function ConditionNode({ data, selected }: NodeProps) {
   const nodeData = data as ConditionNodeData;
+  const conditionType = nodeData.conditionType || "message";
+  
+  const getConditionDescription = () => {
+    switch (conditionType) {
+      case "tag":
+        return nodeData.tagName ? `Tem tag "${nodeData.tagName}"` : "Verificar tag";
+      case "kanban":
+        return nodeData.kanbanColumnName ? `Etapa CRM "${nodeData.kanbanColumnName}"` : "Verificar etapa CRM";
+      case "message":
+        if (nodeData.field && nodeData.operator && nodeData.value) {
+          const opLabels: Record<string, string> = {
+            contains: "contém",
+            equals: "=",
+            not_equals: "≠",
+            starts_with: "começa com",
+            ends_with: "termina com",
+          };
+          return `${nodeData.field} ${opLabels[nodeData.operator] || nodeData.operator} "${nodeData.value}"`;
+        }
+        return "Verificar mensagem";
+      default:
+        return "Clique para configurar";
+    }
+  };
   
   return (
     <div
@@ -22,16 +58,17 @@ function ConditionNode({ data, selected }: NodeProps) {
       <Handle
         type="target"
         position={Position.Top}
+        id="target"
         className="!w-3 !h-3 !bg-warning !border-2 !border-background"
       />
       <div className="flex items-center gap-3">
         <div className="p-2 rounded-lg bg-warning">
-          <GitBranch className="w-4 h-4 text-warning-foreground" />
+          {CONDITION_ICONS[conditionType] || CONDITION_ICONS.default}
         </div>
         <div className="flex-1">
           <p className="font-medium text-sm">{nodeData.label || "Condição"}</p>
-          <p className="text-xs text-muted-foreground">
-            {nodeData.field ? `${nodeData.field} ${nodeData.operator} ${nodeData.value}` : "Clique para configurar"}
+          <p className="text-xs text-muted-foreground truncate max-w-[140px]">
+            {getConditionDescription()}
           </p>
         </div>
       </div>

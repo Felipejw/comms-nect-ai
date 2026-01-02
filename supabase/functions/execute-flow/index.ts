@@ -135,7 +135,7 @@ async function callAI(
 function getNextNode(nodes: FlowNode[], edges: FlowEdge[], currentNodeId: string, optionId?: string): FlowNode | null {
   const edge = edges.find(e => {
     if (optionId) {
-      // For menu nodes, match by label (option id)
+      // For menu and condition nodes, match by label (option id)
       return e.source_id === currentNodeId && e.label === optionId;
     }
     return e.source_id === currentNodeId;
@@ -143,6 +143,118 @@ function getNextNode(nodes: FlowNode[], edges: FlowEdge[], currentNodeId: string
 
   if (!edge) return null;
   return nodes.find(n => n.id === edge.target_id) || null;
+}
+
+// Evaluate condition based on contact/conversation data
+async function evaluateCondition(
+  supabase: any,
+  nodeData: Record<string, unknown>,
+  conversationId: string,
+  contactId: string,
+  messageContent: string,
+  contactName: string,
+  contactPhone: string
+): Promise<boolean> {
+  const conditionType = nodeData.conditionType as string || "message";
+  
+  console.log("[FlowExecutor] Evaluating condition:", conditionType, nodeData);
+
+  switch (conditionType) {
+    case "tag": {
+      const tagId = nodeData.tagId as string;
+      if (!tagId) {
+        console.log("[FlowExecutor] No tag ID configured for condition");
+        return false;
+      }
+      
+      // Check if contact has this tag
+      const { data: contactTag, error } = await supabase
+        .from("contact_tags")
+        .select("id")
+        .eq("contact_id", contactId)
+        .eq("tag_id", tagId)
+        .maybeSingle();
+      
+      if (error) {
+        console.error("[FlowExecutor] Error checking tag:", error);
+        return false;
+      }
+      
+      const hasTag = !!contactTag;
+      console.log("[FlowExecutor] Contact has tag:", hasTag);
+      return hasTag;
+    }
+    
+    case "kanban": {
+      const kanbanColumnId = nodeData.kanbanColumnId as string;
+      if (!kanbanColumnId) {
+        console.log("[FlowExecutor] No kanban column ID configured for condition");
+        return false;
+      }
+      
+      // Check conversation's kanban column
+      const { data: conversation, error } = await supabase
+        .from("conversations")
+        .select("kanban_column_id")
+        .eq("id", conversationId)
+        .single();
+      
+      if (error) {
+        console.error("[FlowExecutor] Error checking kanban column:", error);
+        return false;
+      }
+      
+      const isInColumn = conversation?.kanban_column_id === kanbanColumnId;
+      console.log("[FlowExecutor] Conversation in column:", isInColumn, conversation?.kanban_column_id, "vs", kanbanColumnId);
+      return isInColumn;
+    }
+    
+    case "message":
+    default: {
+      const field = nodeData.field as string || "message";
+      const operator = nodeData.operator as string || "contains";
+      const value = (nodeData.value as string || "").toLowerCase();
+      
+      let fieldValue = "";
+      switch (field) {
+        case "message":
+          fieldValue = messageContent.toLowerCase();
+          break;
+        case "contact_name":
+          fieldValue = (contactName || "").toLowerCase();
+          break;
+        case "contact_phone":
+          fieldValue = (contactPhone || "").toLowerCase();
+          break;
+        default:
+          fieldValue = messageContent.toLowerCase();
+      }
+      
+      let result = false;
+      switch (operator) {
+        case "contains":
+          result = fieldValue.includes(value);
+          break;
+        case "equals":
+          result = fieldValue === value;
+          break;
+        case "not_equals":
+          result = fieldValue !== value;
+          break;
+        case "starts_with":
+          result = fieldValue.startsWith(value);
+          break;
+        case "ends_with":
+          result = fieldValue.endsWith(value);
+          break;
+        default:
+          result = fieldValue.includes(value);
+      }
+      
+      console.log("[FlowExecutor] Message condition result:", result, `"${fieldValue}" ${operator} "${value}"`);
+      return result;
+    }
+  }
 }
 
 // Find the trigger node that matches the message
@@ -230,6 +342,7 @@ async function executeFlowFromNode(
   edges: FlowEdge[],
   startNode: FlowNode | null,
   conversationId: string,
+  contactId: string,
   phone: string,
   messageContent: string,
   evolutionUrl: string,
@@ -446,6 +559,26 @@ async function executeFlowFromNode(
         break;
       }
 
+      case "condition": {
+        // Evaluate the condition
+        const conditionResult = await evaluateCondition(
+          supabase,
+          currentNode.data,
+          conversationId,
+          contactId,
+          messageContent,
+          contactName,
+          phone
+        );
+        
+        // Follow the appropriate path based on condition result
+        const nextNodeId = conditionResult ? "yes" : "no";
+        console.log("[FlowExecutor] Condition result:", conditionResult, "-> following", nextNodeId);
+        
+        currentNode = getNextNode(nodes, edges, currentNode.id, nextNodeId);
+        break;
+      }
+
       default:
         console.log("[FlowExecutor] Unknown node type:", currentNode.type);
         currentNode = getNextNode(nodes, edges, currentNode.id);
@@ -515,6 +648,7 @@ serve(async (req) => {
     const instanceName = (connection.session_data as Record<string, unknown>)?.instanceName as string || connection.name;
     const phone = contactPhone || conversation.contacts?.phone;
     const contactName = conversation.contacts?.name || "";
+    const contactId = conversation.contact_id;
 
     // Check if we're waiting for a menu response
     const flowState = conversation.flow_state as FlowState | null;
@@ -569,6 +703,7 @@ serve(async (req) => {
               edges,
               nextNode,
               conversationId,
+              contactId,
               phone,
               messageContent,
               evolutionUrl,
@@ -691,6 +826,7 @@ serve(async (req) => {
       flowEdges,
       startNode,
       conversationId,
+      contactId,
       phone,
       messageContent,
       evolutionUrl,
