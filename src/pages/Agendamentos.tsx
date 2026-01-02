@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/select";
 import { useSchedules, useCreateSchedule, useUpdateSchedule, useDeleteSchedule } from "@/hooks/useSchedules";
 import { useContacts } from "@/hooks/useContacts";
+import { useConversations } from "@/hooks/useConversations";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, isSameDay, isAfter, startOfDay } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -45,6 +46,7 @@ export default function Agendamentos() {
   const { user } = useAuth();
   const { data: schedules = [], isLoading } = useSchedules();
   const { data: contacts = [] } = useContacts();
+  const { data: conversations = [] } = useConversations();
   const createSchedule = useCreateSchedule();
   const updateSchedule = useUpdateSchedule();
   const deleteSchedule = useDeleteSchedule();
@@ -57,6 +59,7 @@ export default function Agendamentos() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [contactId, setContactId] = useState("");
+  const [conversationId, setConversationId] = useState("");
   const [scheduledDate, setScheduledDate] = useState("");
   const [scheduledTime, setScheduledTime] = useState("");
   const [reminder, setReminder] = useState(true);
@@ -88,7 +91,8 @@ export default function Agendamentos() {
     await createSchedule.mutateAsync({
       title: title.trim(),
       description: description.trim() || undefined,
-      contact_id: contactId || undefined,
+      contact_id: contactId && contactId !== 'none' ? contactId : undefined,
+      conversation_id: conversationId && conversationId !== 'none' ? conversationId : undefined,
       user_id: user.id,
       scheduled_at: scheduledAt.toISOString(),
       reminder,
@@ -102,6 +106,7 @@ export default function Agendamentos() {
     setTitle("");
     setDescription("");
     setContactId("");
+    setConversationId("");
     setScheduledDate("");
     setScheduledTime("");
     setReminder(true);
@@ -157,6 +162,22 @@ export default function Agendamentos() {
                     {contacts.map((contact) => (
                       <SelectItem key={contact.id} value={contact.id}>
                         {contact.name} {contact.phone ? `(${contact.phone})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Conversa (opcional)</Label>
+                <Select value={conversationId} onValueChange={setConversationId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione uma conversa" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhuma conversa</SelectItem>
+                    {conversations.filter(c => c.status !== 'archived').map((conv) => (
+                      <SelectItem key={conv.id} value={conv.id}>
+                        {conv.contact?.name || 'Sem nome'} - {conv.status === 'in_progress' ? 'Em atendimento' : conv.status === 'new' ? 'Nova' : 'Resolvida'}
                       </SelectItem>
                     ))}
                   </SelectContent>

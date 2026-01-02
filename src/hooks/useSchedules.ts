@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 export interface Schedule {
   id: string;
   contact_id: string | null;
+  conversation_id: string | null;
   user_id: string;
   title: string;
   description: string | null;
@@ -19,6 +20,12 @@ export interface Schedule {
     name: string;
     phone: string | null;
   };
+  conversation?: {
+    id: string;
+    contact?: {
+      name: string;
+    };
+  };
 }
 
 export function useSchedules() {
@@ -29,7 +36,8 @@ export function useSchedules() {
         .from('schedules')
         .select(`
           *,
-          contact:contacts (id, name, phone)
+          contact:contacts (id, name, phone),
+          conversation:conversations (id, contact:contacts (name))
         `)
         .order('scheduled_at', { ascending: true });
 
@@ -45,6 +53,7 @@ export function useCreateSchedule() {
   return useMutation({
     mutationFn: async (input: {
       contact_id?: string;
+      conversation_id?: string;
       user_id: string;
       title: string;
       description?: string;

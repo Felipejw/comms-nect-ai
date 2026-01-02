@@ -9,6 +9,7 @@ export interface ContactConversationHistory {
   created_at: string;
   last_message_at: string;
   subject: string | null;
+  kanban_column_id: string | null;
 }
 
 export function useContactProfile(contactId: string) {
@@ -44,7 +45,7 @@ export function useContactConversationHistory(contactId: string) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('conversations')
-        .select('id, status, created_at, last_message_at, subject')
+        .select('id, status, created_at, last_message_at, subject, kanban_column_id')
         .eq('contact_id', contactId)
         .order('last_message_at', { ascending: false })
         .limit(10);

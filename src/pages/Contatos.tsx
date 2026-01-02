@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText } from "lucide-react";
+import { useState, useRef } from "react";
+import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -25,6 +25,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -39,9 +40,51 @@ import {
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useContacts, useCreateContact, useDeleteContact, useUpdateContact, Contact } from "@/hooks/useContacts";
+import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
+
+// Format phone number for display
+const formatPhoneDisplay = (phone: string | null | undefined) => {
+  if (!phone) return "-";
+  const cleaned = phone.replace(/\D/g, '');
+  if (cleaned.length === 13) {
+    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9)}`;
+  } else if (cleaned.length === 12) {
+    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
+  } else if (cleaned.length === 11) {
+    return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2, 7)}-${cleaned.slice(7)}`;
+  } else if (cleaned.length === 10) {
+    return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2, 6)}-${cleaned.slice(6)}`;
+  }
+  return phone;
+};
+
+// Parse CSV content
+const parseCSV = (content: string): { headers: string[]; rows: string[][] } => {
+  const lines = content.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = lines.slice(1).map(line => {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+    return values;
+  });
+  return { headers, rows };
+};
 
 export default function Contatos() {
   const [searchQuery, setSearchQuery] = useState("");
@@ -49,9 +92,16 @@ export default function Contatos() {
   const [isViewDialogOpen, setIsViewDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [newContact, setNewContact] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
   const [editContact, setEditContact] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
+  
+  // Import state
+  const [csvData, setCsvData] = useState<{ headers: string[]; rows: string[][] } | null>(null);
+  const [columnMapping, setColumnMapping] = useState<{ name: number; email: number; phone: number; company: number }>({ name: -1, email: -1, phone: -1, company: -1 });
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const { data: contacts, isLoading } = useContacts();
   const createContact = useCreateContact();
@@ -136,6 +186,85 @@ export default function Contatos() {
     return formatDistanceToNow(new Date(date), { addSuffix: true, locale: ptBR });
   };
 
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      const parsed = parseCSV(content);
+      setCsvData(parsed);
+      
+      // Auto-map columns if headers match common names
+      const nameIndex = parsed.headers.findIndex(h => 
+        h.toLowerCase().includes('nome') || h.toLowerCase().includes('name')
+      );
+      const emailIndex = parsed.headers.findIndex(h => 
+        h.toLowerCase().includes('email') || h.toLowerCase().includes('e-mail')
+      );
+      const phoneIndex = parsed.headers.findIndex(h => 
+        h.toLowerCase().includes('telefone') || h.toLowerCase().includes('phone') || h.toLowerCase().includes('celular')
+      );
+      const companyIndex = parsed.headers.findIndex(h => 
+        h.toLowerCase().includes('empresa') || h.toLowerCase().includes('company')
+      );
+      
+      setColumnMapping({
+        name: nameIndex,
+        email: emailIndex,
+        phone: phoneIndex,
+        company: companyIndex,
+      });
+    };
+    reader.readAsText(file);
+  };
+
+  const handleImportContacts = async () => {
+    if (!csvData || columnMapping.name === -1) {
+      toast.error("Selecione a coluna de Nome");
+      return;
+    }
+
+    setIsImporting(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const row of csvData.rows) {
+      const name = row[columnMapping.name]?.trim();
+      if (!name) continue;
+
+      try {
+        const { error } = await supabase.from('contacts').insert({
+          name,
+          email: columnMapping.email >= 0 ? row[columnMapping.email]?.trim() || null : null,
+          phone: columnMapping.phone >= 0 ? row[columnMapping.phone]?.trim() || null : null,
+          company: columnMapping.company >= 0 ? row[columnMapping.company]?.trim() || null : null,
+        });
+
+        if (error) {
+          errorCount++;
+        } else {
+          successCount++;
+        }
+      } catch {
+        errorCount++;
+      }
+    }
+
+    setIsImporting(false);
+    setIsImportDialogOpen(false);
+    setCsvData(null);
+    setColumnMapping({ name: -1, email: -1, phone: -1, company: -1 });
+    
+    if (successCount > 0) {
+      toast.success(`${successCount} contatos importados com sucesso!`);
+    }
+    if (errorCount > 0) {
+      toast.error(`${errorCount} contatos falharam ao importar`);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -153,13 +282,18 @@ export default function Contatos() {
             {contacts?.length || 0} contatos cadastrados
           </p>
         </div>
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="gap-2">
-              <Plus className="w-4 h-4" />
-              Novo Contato
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => setIsImportDialogOpen(true)}>
+            <Upload className="w-4 h-4" />
+            Importar
+          </Button>
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <Plus className="w-4 h-4" />
+                Novo Contato
+              </Button>
+            </DialogTrigger>
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Adicionar Contato</DialogTitle>
@@ -223,6 +357,7 @@ export default function Contatos() {
             </div>
           </DialogContent>
         </Dialog>
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
@@ -277,7 +412,7 @@ export default function Contatos() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>{contact.phone || "-"}</TableCell>
+                  <TableCell>{formatPhoneDisplay(contact.phone)}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       {contact.tags?.map((tag) => (
@@ -535,6 +670,130 @@ export default function Contatos() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Import Dialog */}
+      <Dialog open={isImportDialogOpen} onOpenChange={(open) => {
+        setIsImportDialogOpen(open);
+        if (!open) {
+          setCsvData(null);
+          setColumnMapping({ name: -1, email: -1, phone: -1, company: -1 });
+        }
+      }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="w-5 h-5" />
+              Importar Contatos
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {!csvData ? (
+              <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+                <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                <p className="text-muted-foreground mb-4">
+                  Selecione um arquivo CSV para importar contatos
+                </p>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileUpload}
+                  className="hidden"
+                />
+                <Button onClick={() => fileInputRef.current?.click()}>
+                  Selecionar Arquivo
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Coluna do Nome *</Label>
+                    <select
+                      value={columnMapping.name}
+                      onChange={(e) => setColumnMapping(prev => ({ ...prev, name: parseInt(e.target.value) }))}
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value={-1}>Selecione...</option>
+                      {csvData.headers.map((header, index) => (
+                        <option key={index} value={index}>{header}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Coluna do E-mail</Label>
+                    <select
+                      value={columnMapping.email}
+                      onChange={(e) => setColumnMapping(prev => ({ ...prev, email: parseInt(e.target.value) }))}
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value={-1}>Nenhuma</option>
+                      {csvData.headers.map((header, index) => (
+                        <option key={index} value={index}>{header}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Coluna do Telefone</Label>
+                    <select
+                      value={columnMapping.phone}
+                      onChange={(e) => setColumnMapping(prev => ({ ...prev, phone: parseInt(e.target.value) }))}
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value={-1}>Nenhuma</option>
+                      {csvData.headers.map((header, index) => (
+                        <option key={index} value={index}>{header}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Coluna da Empresa</Label>
+                    <select
+                      value={columnMapping.company}
+                      onChange={(e) => setColumnMapping(prev => ({ ...prev, company: parseInt(e.target.value) }))}
+                      className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                    >
+                      <option value={-1}>Nenhuma</option>
+                      {csvData.headers.map((header, index) => (
+                        <option key={index} value={index}>{header}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="border rounded-lg p-4 bg-muted/50">
+                  <p className="text-sm font-medium mb-2">Preview ({csvData.rows.length} linhas)</p>
+                  <div className="max-h-40 overflow-auto text-sm">
+                    {csvData.rows.slice(0, 5).map((row, i) => (
+                      <div key={i} className="py-1 border-b border-border last:border-0">
+                        {columnMapping.name >= 0 && <span className="font-medium">{row[columnMapping.name]}</span>}
+                        {columnMapping.email >= 0 && row[columnMapping.email] && <span className="text-muted-foreground"> - {row[columnMapping.email]}</span>}
+                        {columnMapping.phone >= 0 && row[columnMapping.phone] && <span className="text-muted-foreground"> - {row[columnMapping.phone]}</span>}
+                      </div>
+                    ))}
+                    {csvData.rows.length > 5 && (
+                      <p className="text-muted-foreground pt-2">... e mais {csvData.rows.length - 5} contatos</p>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          {csvData && (
+            <DialogFooter>
+              <Button variant="outline" onClick={() => {
+                setCsvData(null);
+                setColumnMapping({ name: -1, email: -1, phone: -1, company: -1 });
+              }}>
+                Voltar
+              </Button>
+              <Button onClick={handleImportContacts} disabled={isImporting || columnMapping.name === -1}>
+                {isImporting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Importar {csvData.rows.length} Contatos
+              </Button>
+            </DialogFooter>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
