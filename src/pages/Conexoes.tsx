@@ -1,14 +1,6 @@
 import { useState, useEffect } from "react";
-import { QrCode, Smartphone, RefreshCw, Wifi, WifiOff, Plus, Trash2, Power, Loader2, AlertTriangle } from "lucide-react";
+import { QrCode, Plus, Loader2, AlertTriangle, RefreshCw, Smartphone } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -18,27 +10,18 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useWhatsAppConnections, WhatsAppConnection } from "@/hooks/useWhatsAppConnections";
 import { useToast } from "@/hooks/use-toast";
+import { ConnectionCard } from "@/components/conexoes/ConnectionCard";
 
 export default function Conexoes() {
   const [newInstanceName, setNewInstanceName] = useState("");
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState<WhatsAppConnection | null>(null);
   const [pollingConnection, setPollingConnection] = useState<string | null>(null);
+  const [isQrModalOpen, setIsQrModalOpen] = useState(false);
   const { toast } = useToast();
 
   const {
@@ -51,8 +34,6 @@ export default function Conexoes() {
     disconnect,
     deleteConnection,
     recreateConnection,
-    checkServerHealth,
-    cleanupOrphaned,
   } = useWhatsAppConnections();
 
   const [recreateAttempts, setRecreateAttempts] = useState<Record<string, number>>({});
@@ -77,6 +58,7 @@ export default function Conexoes() {
       if (connection.status === "connected") {
         setPollingConnection(null);
         setSelectedConnection(null);
+        setIsQrModalOpen(false);
         setRecreateAttempts({});
         setPollCount(0);
         setQrError(null);
@@ -87,12 +69,11 @@ export default function Conexoes() {
         return;
       }
 
-      // If connecting but no QR code, track attempts but DON'T auto-recreate
+      // If connecting but no QR code, track attempts
       if (connection.status === "connecting" && !connection.qr_code) {
         const attempts = recreateAttempts[pollingConnection] || 0;
         
         if (attempts >= 5) {
-          // Stop polling and show error - let user manually retry
           console.log("[Polling] No QR after 5 attempts, stopping and showing error");
           setQrError("O servidor não conseguiu gerar o QR Code. Clique em 'Tentar Novamente' para recriar a instância.");
           setPollingConnection(null);
@@ -104,10 +85,7 @@ export default function Conexoes() {
         }
       }
 
-      // Check status
       await checkStatus.mutateAsync(pollingConnection).catch(() => {});
-      
-      // Refresh connections
       refetch();
     }, 5000);
 
@@ -122,17 +100,13 @@ export default function Conexoes() {
       setIsCreateDialogOpen(false);
       setNewInstanceName("");
       
-      // Find the new connection and start polling
       await refetch();
       if (result.connection) {
         setSelectedConnection(result.connection);
         setPollingConnection(result.connection.id);
+        setIsQrModalOpen(true);
         
-        console.log("QR Code received from create:", result.qrCode ? "Yes" : "No");
-        
-        // If no QR code came with create, fetch it immediately
         if (!result.qrCode) {
-          console.log("[Create] No QR code in response, fetching...");
           await getQrCode.mutateAsync(result.connection.id).catch((e) => {
             console.error("[Create] Failed to fetch QR:", e);
           });
@@ -146,16 +120,25 @@ export default function Conexoes() {
 
   const handleRefreshQrCode = async (connection: WhatsAppConnection) => {
     try {
-      // Clear error state and recreate instance
       setQrError(null);
       setRecreateAttempts({});
       setPollCount(0);
+      setSelectedConnection(connection);
+      setIsQrModalOpen(true);
       await recreateConnection.mutateAsync(connection.id);
       setPollingConnection(connection.id);
       refetch();
     } catch (error) {
       console.error("Error refreshing QR code:", error);
       setQrError("Erro ao recriar instância. Verifique se o servidor Evolution API está acessível.");
+    }
+  };
+
+  const handleViewQr = (connection: WhatsAppConnection) => {
+    setSelectedConnection(connection);
+    setIsQrModalOpen(true);
+    if (connection.status === "connecting") {
+      setPollingConnection(connection.id);
     }
   };
 
@@ -179,32 +162,11 @@ export default function Conexoes() {
     }
   };
 
-
-  const handleCleanupOrphaned = async () => {
-    try {
-      await cleanupOrphaned.mutateAsync();
-    } catch (error) {
-      console.error("Error cleaning up:", error);
-    }
-  };
-
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "connected":
-        return <Badge className="bg-green-500/20 text-green-400 border-green-500/30">Online</Badge>;
-      case "connecting":
-        return <Badge className="bg-yellow-500/20 text-yellow-400 border-yellow-500/30">Aguardando QR</Badge>;
-      case "error":
-        return <Badge variant="destructive">Erro</Badge>;
-      default:
-        return <Badge variant="secondary">Desconectado</Badge>;
-    }
-  };
-
-  const pendingConnection = connections.find(c => c.status === "connecting");
+  const currentQrConnection = connections.find(c => c.id === selectedConnection?.id);
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div>
           <h2 className="text-2xl font-bold flex items-center gap-2">
@@ -214,11 +176,15 @@ export default function Conexoes() {
           <p className="text-muted-foreground">Gerencie suas conexões de WhatsApp</p>
         </div>
         <div className="flex gap-2">
+          <Button variant="outline" onClick={() => refetch()} className="gap-2">
+            <RefreshCw className="w-4 h-4" />
+            Atualizar
+          </Button>
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2">
+              <Button className="gap-2 bg-emerald-500 hover:bg-emerald-600 text-white">
                 <Plus className="w-4 h-4" />
-                Nova Conexão
+                ADICIONAR WHATSAPP
               </Button>
             </DialogTrigger>
             <DialogContent>
@@ -246,6 +212,7 @@ export default function Conexoes() {
                 <Button 
                   onClick={handleCreateConnection} 
                   disabled={!newInstanceName.trim() || createConnection.isPending}
+                  className="bg-emerald-500 hover:bg-emerald-600 text-white"
                 >
                   {createConnection.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Criar Instância
@@ -256,227 +223,125 @@ export default function Conexoes() {
         </div>
       </div>
 
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* QR Code Card */}
-        <Card className="border-dashed">
-          <CardContent className="flex flex-col items-center justify-center py-12">
-            {pendingConnection || qrError ? (
-              <>
-                <div className="w-64 h-64 rounded-2xl bg-white flex items-center justify-center mb-6 p-2 relative">
-                  {qrError ? (
-                    <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
-                      <AlertTriangle className="w-12 h-12" />
-                      <span className="text-sm font-medium">Erro ao gerar QR Code</span>
-                      <span className="text-xs text-muted-foreground">
-                        {qrError}
-                      </span>
-                    </div>
-                  ) : pendingConnection?.qr_code ? (
-                    <img 
-                      src={pendingConnection.qr_code} 
-                      alt="QR Code" 
-                      className="w-full h-full object-contain"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 text-muted-foreground">
-                      <Loader2 className="w-12 h-12 animate-spin" />
-                      <span className="text-sm">Gerando QR Code...</span>
-                      <span className="text-xs text-center mt-2">
-                        Aguardando resposta do servidor...
-                      </span>
-                      {pollCount > 0 && (
-                        <span className="text-xs text-yellow-500">
-                          Verificação #{pollCount}/5 em andamento
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <h3 className="text-lg font-semibold mb-2">{pendingConnection?.name || "Conexão"}</h3>
-                <p className="text-muted-foreground text-center text-sm mb-4">
-                  {qrError 
-                    ? "Não foi possível gerar o QR Code. Tente novamente ou verifique o servidor."
-                    : "Escaneie o QR Code com seu WhatsApp para conectar"
-                  }
-                </p>
-                {!qrError && (
-                  <p className="text-xs text-yellow-500 mb-4">
-                    ⚠️ O QR Code expira em ~40 segundos. Clique em "Reconectar" para gerar um novo.
-                  </p>
-                )}
-                <div className="flex gap-2">
-                  {pendingConnection && (
-                    <Button 
-                      variant={qrError ? "default" : "outline"}
-                      onClick={() => handleRefreshQrCode(pendingConnection)}
-                      disabled={recreateConnection.isPending}
-                      className="gap-2"
-                    >
-                      {recreateConnection.isPending ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="w-4 h-4" />
-                      )}
-                      {qrError ? "Tentar Novamente" : "Reconectar"}
-                    </Button>
-                  )}
-                  {pendingConnection && (
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="destructive" size="icon">
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>Excluir conexão?</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Esta ação não pode ser desfeita. A conexão será removida permanentemente.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction onClick={() => handleDelete(pendingConnection.id)}>
-                            Excluir
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  )}
-                  {qrError && !pendingConnection && (
-                    <Button 
-                      variant="outline"
-                      onClick={() => setQrError(null)}
-                      className="gap-2"
-                    >
-                      Fechar
-                    </Button>
-                  )}
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="w-48 h-48 rounded-2xl bg-muted flex items-center justify-center mb-6">
-                  <QrCode className="w-24 h-24 text-muted-foreground" />
-                </div>
-                <h3 className="text-lg font-semibold mb-2">Conectar WhatsApp</h3>
-                <p className="text-muted-foreground text-center text-sm mb-4">
-                  Clique em "Nova Conexão" para gerar um QR Code
-                </p>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Connected Devices Card */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Smartphone className="w-5 h-5" />
-              Dispositivos Conectados
-            </CardTitle>
-            <CardDescription>Gerencie seus dispositivos vinculados</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-              </div>
-            ) : connections.length === 0 ? (
-              <div className="text-center py-8">
-                <WifiOff className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                <p className="text-muted-foreground">Nenhum dispositivo conectado</p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  Crie uma nova conexão para começar
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {connections.map((connection) => (
-                  <div
-                    key={connection.id}
-                    className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                        connection.status === "connected" 
-                          ? "bg-green-500/20 text-green-400" 
-                          : "bg-muted text-muted-foreground"
-                      }`}>
-                        {connection.status === "connected" ? (
-                          <Wifi className="w-5 h-5" />
-                        ) : (
-                          <WifiOff className="w-5 h-5" />
-                        )}
-                      </div>
-                      <div>
-                        <p className="font-medium">{connection.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {connection.phone_number || "Aguardando conexão"}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {getStatusBadge(connection.status)}
-                      {connection.status === "connected" && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDisconnect(connection.id)}
-                          disabled={disconnect.isPending}
-                        >
-                          {disconnect.isPending ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Power className="w-4 h-4" />
-                          )}
-                        </Button>
-                      )}
-                      {connection.status === "disconnected" && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleRefreshQrCode(connection)}
-                          disabled={recreateConnection.isPending}
-                        >
-                          {recreateConnection.isPending ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <RefreshCw className="w-4 h-4" />
-                          )}
-                        </Button>
-                      )}
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive">
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle>Excluir conexão?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Esta ação não pode ser desfeita. A conexão "{connection.name}" será removida permanentemente.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                            <AlertDialogAction onClick={() => handleDelete(connection.id)}>
-                              Excluir
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      {/* Connection Count */}
+      <div className="flex items-center gap-2 text-muted-foreground">
+        <Smartphone className="w-4 h-4" />
+        <span>Todos os WhatsApp's · {connections.length} conexões</span>
       </div>
 
+      {/* Connections Grid */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        </div>
+      ) : connections.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-4">
+            <QrCode className="w-10 h-10 text-muted-foreground" />
+          </div>
+          <h3 className="text-lg font-semibold mb-2">Nenhuma conexão</h3>
+          <p className="text-muted-foreground mb-4">
+            Clique em "Adicionar WhatsApp" para criar sua primeira conexão
+          </p>
+          <Button 
+            onClick={() => setIsCreateDialogOpen(true)}
+            className="bg-emerald-500 hover:bg-emerald-600 text-white"
+          >
+            <Plus className="w-4 h-4 mr-2" />
+            Adicionar WhatsApp
+          </Button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {connections.map((connection) => (
+            <ConnectionCard
+              key={connection.id}
+              connection={connection}
+              isPolling={pollingConnection === connection.id}
+              onDisconnect={handleDisconnect}
+              onDelete={handleDelete}
+              onRefreshQr={handleRefreshQrCode}
+              onViewQr={handleViewQr}
+              isDisconnecting={disconnect.isPending}
+              isRecreating={recreateConnection.isPending}
+              isDeleting={deleteConnection.isPending}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* QR Code Modal */}
+      <Dialog open={isQrModalOpen} onOpenChange={setIsQrModalOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-center">
+              {currentQrConnection?.name || "Conexão"}
+            </DialogTitle>
+            <DialogDescription className="text-center">
+              Escaneie o QR Code com seu WhatsApp para conectar
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex flex-col items-center py-4">
+            <div className="w-64 h-64 rounded-xl bg-white flex items-center justify-center p-2">
+              {qrError ? (
+                <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
+                  <AlertTriangle className="w-12 h-12" />
+                  <span className="text-sm font-medium">Erro ao gerar QR Code</span>
+                  <span className="text-xs text-muted-foreground">{qrError}</span>
+                </div>
+              ) : currentQrConnection?.qr_code ? (
+                <img 
+                  src={currentQrConnection.qr_code} 
+                  alt="QR Code" 
+                  className="w-full h-full object-contain"
+                />
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-12 h-12 animate-spin" />
+                  <span className="text-sm">Gerando QR Code...</span>
+                  {pollCount > 0 && (
+                    <span className="text-xs text-amber-500">
+                      Verificação #{pollCount}/5
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {!qrError && currentQrConnection?.qr_code && (
+              <p className="text-xs text-amber-500 mt-4 text-center">
+                ⚠️ O QR Code expira em ~40 segundos. Clique em "Atualizar" para gerar um novo.
+              </p>
+            )}
+          </div>
+
+          <DialogFooter className="flex-col sm:flex-row gap-2">
+            {currentQrConnection && (
+              <Button 
+                variant="outline"
+                onClick={() => handleRefreshQrCode(currentQrConnection)}
+                disabled={recreateConnection.isPending}
+                className="w-full sm:w-auto"
+              >
+                {recreateConnection.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                )}
+                {qrError ? "Tentar Novamente" : "Atualizar QR"}
+              </Button>
+            )}
+            <Button 
+              variant="secondary" 
+              onClick={() => setIsQrModalOpen(false)}
+              className="w-full sm:w-auto"
+            >
+              Fechar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
