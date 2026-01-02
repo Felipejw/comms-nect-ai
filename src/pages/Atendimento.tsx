@@ -142,7 +142,7 @@ export default function Atendimento() {
   // Filter state
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string[]>([]);
-  const [queueFilter, setQueueFilter] = useState<string>("");
+  const [queueFilter, setQueueFilter] = useState<string>("all");
   const [showFilterPopover, setShowFilterPopover] = useState(false);
   
   // Transfer to bot dialog state
@@ -299,7 +299,7 @@ export default function Atendimento() {
       const matchesTags = tagFilter.length === 0;
       
       // Queue filter
-      const matchesQueue = !queueFilter || c.queue_id === queueFilter;
+      const matchesQueue = queueFilter === 'all' || c.queue_id === queueFilter;
       
       return matchesSearch && matchesTab && matchesStatus && matchesTags && matchesQueue;
     });
@@ -315,12 +315,12 @@ export default function Atendimento() {
     };
   }, [conversations]);
 
-  const activeFiltersCount = statusFilter.length + tagFilter.length + (queueFilter ? 1 : 0);
+  const activeFiltersCount = statusFilter.length + tagFilter.length + (queueFilter !== 'all' ? 1 : 0);
 
   const clearFilters = () => {
     setStatusFilter([]);
     setTagFilter([]);
-    setQueueFilter("");
+    setQueueFilter("all");
   };
 
   const toggleStatusFilter = (status: string) => {
@@ -928,7 +928,7 @@ export default function Atendimento() {
                           <SelectValue placeholder="Todos os setores" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">Todos os setores</SelectItem>
+                          <SelectItem value="all">Todos os setores</SelectItem>
                           {queues.map(queue => (
                             <SelectItem key={queue.id} value={queue.id}>
                               <div className="flex items-center gap-2">
@@ -994,11 +994,11 @@ export default function Atendimento() {
                   <X className="w-3 h-3" />
                 </Badge>
               ))}
-              {queueFilter && (
+              {queueFilter !== 'all' && (
                 <Badge 
                   variant="secondary" 
                   className="text-xs gap-1 cursor-pointer hover:bg-secondary/80"
-                  onClick={() => setQueueFilter("")}
+                  onClick={() => setQueueFilter("all")}
                 >
                   {queues?.find(q => q.id === queueFilter)?.name}
                   <X className="w-3 h-3" />
