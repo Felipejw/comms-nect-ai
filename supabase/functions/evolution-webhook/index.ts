@@ -384,6 +384,7 @@ serve(async (req) => {
               status: "new",
               subject: messageContent.substring(0, 50),
               unread_count: fromMe ? 0 : 1,
+              is_bot_active: true,
             })
             .select()
             .single();
