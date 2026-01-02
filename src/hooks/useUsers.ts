@@ -13,7 +13,7 @@ export interface UserProfile {
   last_seen: string;
   created_at: string;
   updated_at: string;
-  role?: 'admin' | 'manager' | 'operator';
+  role?: 'admin' | 'atendente';
 }
 
 export function useUsers() {
@@ -39,7 +39,7 @@ export function useUsers() {
       
       return (profiles || []).map(profile => ({
         ...profile,
-        role: roleMap.get(profile.user_id) || 'operator',
+        role: roleMap.get(profile.user_id) || 'atendente',
       })) as UserProfile[];
     },
   });
@@ -66,7 +66,7 @@ export function useUser(userId: string) {
 
       return {
         ...profile,
-        role: roleData?.role || 'operator',
+        role: roleData?.role || 'atendente',
       } as UserProfile;
     },
     enabled: !!userId,
@@ -115,18 +115,13 @@ export function useUpdateUserRole() {
       role,
     }: {
       userId: string;
-      role: 'admin' | 'manager' | 'operator';
+      role: 'admin' | 'atendente';
     }) => {
-      // First delete existing role
-      await supabase
-        .from('user_roles')
-        .delete()
-        .eq('user_id', userId);
-
-      // Then insert new role
+      // Update existing role - use type assertion since DB enum was updated
       const { error } = await supabase
         .from('user_roles')
-        .insert({ user_id: userId, role });
+        .update({ role: role as unknown as 'admin' | 'manager' | 'operator' })
+        .eq('user_id', userId);
 
       if (error) throw error;
     },
