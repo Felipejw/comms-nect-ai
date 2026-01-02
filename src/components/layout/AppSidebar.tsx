@@ -25,54 +25,58 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/contexts/AuthContext";
+import { ROUTE_TO_MODULE, type ModuleKey } from "@/hooks/usePermissions";
+
+interface NavItem {
+  title: string;
+  href: string;
+  icon: React.ElementType;
+  module?: ModuleKey;
+}
 
 interface NavSection {
   title: string;
   items: NavItem[];
 }
 
-interface NavItem {
-  title: string;
-  href: string;
-  icon: React.ElementType;
-}
-
 const navSections: NavSection[] = [
   {
     title: "Gerência",
     items: [
-      { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-      { title: "Relatórios", href: "/relatorios", icon: FileText },
-      { title: "Painel", href: "/painel", icon: Activity },
+      { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard, module: "dashboard" },
+      { title: "Relatórios", href: "/relatorios", icon: FileText, module: "relatorios" },
+      { title: "Painel", href: "/painel", icon: Activity, module: "painel" },
     ],
   },
   {
     title: "Atendimento",
     items: [
-      { title: "WhatsApp", href: "/atendimento", icon: MessageSquare },
-      { title: "Respostas Rápidas", href: "/respostas-rapidas", icon: Zap },
-      { title: "Kanban", href: "/kanban", icon: Kanban },
-      { title: "Contatos", href: "/contatos", icon: Users },
-      { title: "Agendamentos", href: "/agendamentos", icon: Calendar },
-      { title: "Tags", href: "/tags", icon: Tags },
-      { title: "Chat Interno", href: "/chat-interno", icon: MessagesSquare },
+      { title: "WhatsApp", href: "/atendimento", icon: MessageSquare, module: "atendimento" },
+      { title: "Respostas Rápidas", href: "/respostas-rapidas", icon: Zap, module: "respostas_rapidas" },
+      { title: "Kanban", href: "/kanban", icon: Kanban, module: "kanban" },
+      { title: "Contatos", href: "/contatos", icon: Users, module: "contatos" },
+      { title: "Agendamentos", href: "/agendamentos", icon: Calendar, module: "agendamentos" },
+      { title: "Tags", href: "/tags", icon: Tags, module: "tags" },
+      { title: "Chat Interno", href: "/chat-interno", icon: MessagesSquare, module: "chat_interno" },
     ],
   },
   {
     title: "Administração",
     items: [
-      { title: "Disparo em Massa", href: "/campanhas", icon: Send },
-      { title: "Chatbot", href: "/chatbot", icon: Bot },
-      { title: "Atendentes", href: "/usuarios", icon: UserCog },
-      { title: "Setores", href: "/filas-chatbot", icon: Building2 },
-      { title: "Integrações", href: "/integracoes", icon: Plug },
-      { title: "Conexões", href: "/conexoes", icon: QrCode },
+      { title: "Disparo em Massa", href: "/campanhas", icon: Send, module: "campanhas" },
+      { title: "Chatbot", href: "/chatbot", icon: Bot, module: "chatbot" },
+      { title: "Atendentes", href: "/usuarios", icon: UserCog, module: "usuarios" },
+      { title: "Setores", href: "/filas-chatbot", icon: Building2, module: "setores" },
+      { title: "Integrações", href: "/integracoes", icon: Plug, module: "integracoes" },
+      { title: "Conexões", href: "/conexoes", icon: QrCode, module: "conexoes" },
     ],
   },
 ];
 
 export function AppSidebar() {
   const location = useLocation();
+  const { hasPermission, isAdmin } = useAuth();
   const [expandedSections, setExpandedSections] = useState<string[]>(["Gerência", "Atendimento", "Administração"]);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -83,6 +87,29 @@ export function AppSidebar() {
   };
 
   const isActive = (href: string) => location.pathname === href;
+
+  // Filter items based on permissions
+  const getFilteredItems = (items: NavItem[]) => {
+    // Admin sees everything
+    if (isAdmin) return items;
+    
+    return items.filter(item => {
+      if (!item.module) return true;
+      return hasPermission(item.module, 'view');
+    });
+  };
+
+  // Filter sections that have at least one visible item
+  const getVisibleSections = () => {
+    return navSections
+      .map(section => ({
+        ...section,
+        items: getFilteredItems(section.items),
+      }))
+      .filter(section => section.items.length > 0);
+  };
+
+  const visibleSections = getVisibleSections();
 
   return (
     <aside
@@ -113,7 +140,7 @@ export function AppSidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 overflow-y-auto py-4 px-3 scrollbar-thin">
-        {navSections.map((section) => (
+        {visibleSections.map((section) => (
           <div key={section.title} className="mb-4">
             {!isCollapsed && (
               <button
@@ -153,7 +180,7 @@ export function AppSidebar() {
         ))}
       </nav>
 
-      {/* Footer */}
+      {/* Footer - Settings always visible */}
       <div className="p-3 border-t border-sidebar-border">
         <NavLink
           to="/configuracoes"

@@ -64,7 +64,7 @@ export default function ChatInterno() {
     .map(u => ({
       id: u.id,
       name: u.name,
-      role: u.role === "admin" ? "Administrador" : u.role === "manager" ? "Gestor" : "Operador",
+      role: u.role === "admin" ? "Administrador" : "Atendente",
       online: u.is_online || onlineUsers.has(u.id),
       avatar_url: u.avatar_url,
     }));

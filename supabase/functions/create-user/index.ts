@@ -13,9 +13,9 @@ serve(async (req) => {
   }
 
   try {
-    const { email, password } = await req.json();
+    const { email, password, name, role = 'atendente' } = await req.json();
 
-    console.log(`Creating user with email: ${email}`);
+    console.log(`Creating user with email: ${email}, role: ${role}`);
 
     // Create Supabase admin client
     const supabaseAdmin = createClient(
@@ -34,6 +34,9 @@ serve(async (req) => {
       email,
       password,
       email_confirm: true, // Auto-confirm the email
+      user_metadata: {
+        name: name || email.split('@')[0],
+      },
     });
 
     if (error) {
@@ -48,6 +51,24 @@ serve(async (req) => {
     }
 
     console.log('User created successfully:', data.user?.id);
+
+    // If the user was created and role is not the default, update it
+    if (data.user && role === 'admin') {
+      // Wait a moment for the trigger to create the default role
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Update the role to admin
+      const { error: roleError } = await supabaseAdmin
+        .from('user_roles')
+        .update({ role: 'admin' })
+        .eq('user_id', data.user.id);
+      
+      if (roleError) {
+        console.error('Error updating role:', roleError.message);
+      } else {
+        console.log('Role updated to admin');
+      }
+    }
 
     return new Response(
       JSON.stringify({ 

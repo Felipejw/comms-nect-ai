@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Shield, Edit, Trash2, Key, Loader2 } from "lucide-react";
+import { Plus, Search, Filter, MoreHorizontal, Shield, Edit, Trash2, Key, Loader2, Lock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -39,11 +39,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
+import { PermissionsModal } from "@/components/usuarios/PermissionsModal";
 
 const roleConfig = {
   admin: { label: "Administrador", className: "bg-destructive/10 text-destructive" },
-  manager: { label: "Gestor", className: "bg-primary/10 text-primary" },
-  operator: { label: "Operador", className: "bg-success/10 text-success" },
+  atendente: { label: "Atendente", className: "bg-primary/10 text-primary" },
 };
 
 export default function Usuarios() {
@@ -54,11 +54,15 @@ export default function Usuarios() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   
+  // Permissions modal state
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<{ id: string; name: string } | null>(null);
+  
   // Form state
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [newRole, setNewRole] = useState<"admin" | "manager" | "operator">("operator");
+  const [newRole, setNewRole] = useState<"admin" | "atendente">("atendente");
 
   const filteredUsers = users.filter(
     (u) =>
@@ -90,7 +94,7 @@ export default function Usuarios() {
       setNewName("");
       setNewEmail("");
       setNewPassword("");
-      setNewRole("operator");
+      setNewRole("atendente");
       refetch();
     } catch (error) {
       toast.error("Erro ao criar atendente: " + (error as Error).message);
@@ -99,8 +103,13 @@ export default function Usuarios() {
     }
   };
 
-  const handleRoleChange = async (userId: string, newRole: "admin" | "manager" | "operator") => {
+  const handleRoleChange = async (userId: string, newRole: "admin" | "atendente") => {
     await updateRole.mutateAsync({ userId, role: newRole });
+  };
+
+  const handleOpenPermissions = (userId: string, userName: string) => {
+    setSelectedUser({ id: userId, name: userName });
+    setPermissionsOpen(true);
   };
 
   const formatDate = (dateString: string | null) => {
@@ -120,6 +129,12 @@ export default function Usuarios() {
     const diffHours = Math.floor(diffMins / 60);
     if (diffHours < 24) return `Há ${diffHours}h`;
     return format(date, "dd/MM HH:mm", { locale: ptBR });
+  };
+
+  // Normalize role for display (handle old 'manager' and 'operator' roles)
+  const getNormalizedRole = (role: string | undefined): "admin" | "atendente" => {
+    if (role === "admin") return "admin";
+    return "atendente";
   };
 
   if (isLoading) {
@@ -177,14 +192,13 @@ export default function Usuarios() {
               </div>
               <div className="space-y-2">
                 <Label>Nível</Label>
-                <Select value={newRole} onValueChange={(v) => setNewRole(v as typeof newRole)}>
+                <Select value={newRole} onValueChange={(v) => setNewRole(v as "admin" | "atendente")}>
                   <SelectTrigger>
-                    <SelectValue placeholder="Selecione o papel" />
+                    <SelectValue placeholder="Selecione o nível" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">Administrador</SelectItem>
-                    <SelectItem value="manager">Gestor</SelectItem>
-                    <SelectItem value="operator">Operador</SelectItem>
+                    <SelectItem value="atendente">Atendente</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -202,7 +216,7 @@ export default function Usuarios() {
         </Dialog>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="card-stats">
           <div className="flex items-center gap-3">
             <div className="p-2 rounded-lg bg-destructive/10">
@@ -220,19 +234,8 @@ export default function Usuarios() {
               <Shield className="w-5 h-5 text-primary" />
             </div>
             <div>
-              <p className="text-sm text-muted-foreground">Gestores</p>
-              <p className="text-2xl font-bold">{users.filter(u => u.role === "manager").length}</p>
-            </div>
-          </div>
-        </div>
-        <div className="card-stats">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-success/10">
-              <Shield className="w-5 h-5 text-success" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Operadores</p>
-              <p className="text-2xl font-bold">{users.filter(u => u.role === "operator").length}</p>
+              <p className="text-sm text-muted-foreground">Atendentes</p>
+              <p className="text-2xl font-bold">{users.filter(u => u.role !== "admin").length}</p>
             </div>
           </div>
         </div>
@@ -274,88 +277,106 @@ export default function Usuarios() {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredUsers.map((user) => (
-                <TableRow key={user.id}>
-                  <TableCell>
-                    <div className="flex items-center gap-3">
-                      <div className="relative">
-                        <Avatar className="w-10 h-10">
-                          <AvatarImage src={user.avatar_url || undefined} />
-                          <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                            {user.name.split(" ").map((n) => n[0]).join("")}
-                          </AvatarFallback>
-                        </Avatar>
-                        <span
-                          className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card ${
-                            user.is_online ? "bg-green-500" : "bg-muted"
-                          }`}
-                        />
+              filteredUsers.map((user) => {
+                const normalizedRole = getNormalizedRole(user.role);
+                return (
+                  <TableRow key={user.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-3">
+                        <div className="relative">
+                          <Avatar className="w-10 h-10">
+                            <AvatarImage src={user.avatar_url || undefined} />
+                            <AvatarFallback className="bg-primary/10 text-primary text-sm">
+                              {user.name.split(" ").map((n) => n[0]).join("")}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span
+                            className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card ${
+                              user.is_online ? "bg-green-500" : "bg-muted"
+                            }`}
+                          />
+                        </div>
+                        <div>
+                          <p className="font-medium">{user.name}</p>
+                          <p className="text-sm text-muted-foreground">{user.email}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">{user.name}</p>
-                        <p className="text-sm text-muted-foreground">{user.email}</p>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Select
-                      value={user.role || "operator"}
-                      onValueChange={(v) => handleRoleChange(user.id, v as "admin" | "manager" | "operator")}
-                    >
-                      <SelectTrigger className="w-[140px]">
-                        <Badge className={roleConfig[user.role as keyof typeof roleConfig]?.className || roleConfig.operator.className}>
-                          {roleConfig[user.role as keyof typeof roleConfig]?.label || "Operador"}
-                        </Badge>
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="admin">Administrador</SelectItem>
-                        <SelectItem value="manager">Gestor</SelectItem>
-                        <SelectItem value="operator">Operador</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      className={
-                        user.is_online
-                          ? "bg-success/10 text-success"
-                          : "bg-muted text-muted-foreground"
-                      }
-                    >
-                      {user.is_online ? "Online" : "Offline"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>{formatLastSeen(user.last_seen)}</TableCell>
-                  <TableCell>{formatDate(user.created_at)}</TableCell>
-                  <TableCell>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem>
-                          <Edit className="w-4 h-4 mr-2" />
-                          Editar
-                        </DropdownMenuItem>
-                        <DropdownMenuItem>
-                          <Key className="w-4 h-4 mr-2" />
-                          Redefinir senha
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Excluir
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </TableCell>
-                </TableRow>
-              ))
+                    </TableCell>
+                    <TableCell>
+                      <Select
+                        value={normalizedRole}
+                        onValueChange={(v) => handleRoleChange(user.id, v as "admin" | "atendente")}
+                      >
+                        <SelectTrigger className="w-[140px]">
+                          <Badge className={roleConfig[normalizedRole]?.className}>
+                            {roleConfig[normalizedRole]?.label}
+                          </Badge>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="admin">Administrador</SelectItem>
+                          <SelectItem value="atendente">Atendente</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        className={
+                          user.is_online
+                            ? "bg-success/10 text-success"
+                            : "bg-muted text-muted-foreground"
+                        }
+                      >
+                        {user.is_online ? "Online" : "Offline"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>{formatLastSeen(user.last_seen)}</TableCell>
+                    <TableCell>{formatDate(user.created_at)}</TableCell>
+                    <TableCell>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {normalizedRole === "atendente" && (
+                            <DropdownMenuItem onClick={() => handleOpenPermissions(user.id, user.name)}>
+                              <Lock className="w-4 h-4 mr-2" />
+                              Gerenciar Permissões
+                            </DropdownMenuItem>
+                          )}
+                          <DropdownMenuItem>
+                            <Edit className="w-4 h-4 mr-2" />
+                            Editar
+                          </DropdownMenuItem>
+                          <DropdownMenuItem>
+                            <Key className="w-4 h-4 mr-2" />
+                            Redefinir senha
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive">
+                            <Trash2 className="w-4 h-4 mr-2" />
+                            Excluir
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </TableCell>
+                  </TableRow>
+                );
+              })
             )}
           </TableBody>
         </Table>
       </div>
+
+      {/* Permissions Modal */}
+      {selectedUser && (
+        <PermissionsModal
+          open={permissionsOpen}
+          onOpenChange={setPermissionsOpen}
+          userId={selectedUser.id}
+          userName={selectedUser.name}
+        />
+      )}
     </div>
   );
 }
