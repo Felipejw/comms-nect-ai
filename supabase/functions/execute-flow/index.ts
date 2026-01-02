@@ -25,6 +25,17 @@ interface FlowState {
   menuOptions?: Array<{ id: string; text: string }>;
   menuTitle?: string;
   flowId: string;
+  // AI conversation mode
+  awaitingAIResponse?: boolean;
+  aiNodeData?: {
+    systemPrompt: string;
+    model: string;
+    temperature: number;
+    maxTokens: number;
+    knowledgeBase?: string;
+    useOwnApiKey?: boolean;
+    googleApiKey?: string;
+  };
 }
 
 // Send WhatsApp message through Evolution API
@@ -629,9 +640,43 @@ async function executeFlowFromNode(
             sender_type: "bot",
             message_type: "text",
           });
-        }
 
-        currentNode = getNextNode(nodes, edges, currentNode.id);
+          // Check if there's a next node
+          const nextNode = getNextNode(nodes, edges, currentNode.id);
+          
+          if (nextNode) {
+            // Continue to next node
+            currentNode = nextNode;
+          } else {
+            // No next node - enter continuous AI conversation mode
+            console.log("[FlowExecutor] AI conversation mode activated");
+            
+            const aiState: FlowState = {
+              currentNodeId: currentNode.id,
+              awaitingMenuResponse: false,
+              awaitingAIResponse: true,
+              aiNodeData: {
+                systemPrompt,
+                model,
+                temperature,
+                maxTokens,
+                knowledgeBase,
+                useOwnApiKey,
+                googleApiKey,
+              },
+              flowId: flowId,
+            };
+            
+            await supabase
+              .from("conversations")
+              .update({ flow_state: aiState })
+              .eq("id", conversationId);
+            
+            currentNode = null; // Stop execution, wait for next message
+          }
+        } else {
+          currentNode = getNextNode(nodes, edges, currentNode.id);
+        }
         break;
       }
 
@@ -853,8 +898,73 @@ serve(async (req) => {
     const contactName = conversation.contacts?.name || "";
     const contactId = conversation.contact_id;
 
-    // Check if we're waiting for a menu response
+    // Check if we're waiting for a menu response or AI response
     const flowState = conversation.flow_state as FlowState | null;
+    
+    // Check if in AI conversation mode
+    if (flowState?.awaitingAIResponse && flowState.aiNodeData) {
+      console.log("[FlowExecutor] Continuing AI conversation");
+      
+      const aiData = flowState.aiNodeData;
+      
+      // Check for exit keywords to leave AI mode
+      const exitKeywords = ["sair", "menu", "atendente", "humano", "voltar", "encerrar"];
+      const messageLower = messageContent.toLowerCase().trim();
+      
+      if (exitKeywords.some(kw => messageLower === kw || messageLower.includes(kw))) {
+        console.log("[FlowExecutor] User requested to exit AI mode");
+        
+        // Clear flow state and transfer to human
+        await supabase
+          .from("conversations")
+          .update({ 
+            flow_state: null, 
+            is_bot_active: false,
+            status: "in_progress"
+          })
+          .eq("id", conversationId);
+        
+        const exitMessage = "Entendido! Você será transferido para um atendente. Aguarde um momento.";
+        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, exitMessage);
+        
+        await supabase.from("messages").insert({
+          conversation_id: conversationId,
+          content: exitMessage,
+          sender_type: "bot",
+          message_type: "text",
+        });
+        
+        return new Response(JSON.stringify({ success: true, message: "Exited AI mode, transferred to human" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      // Continue AI conversation
+      const aiResponse = await callAI(
+        aiData.systemPrompt,
+        messageContent,
+        aiData.model,
+        aiData.temperature || 0.7,
+        aiData.maxTokens || 1024,
+        aiData.knowledgeBase,
+        aiData.useOwnApiKey,
+        aiData.googleApiKey
+      );
+      
+      await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, aiResponse);
+      
+      await supabase.from("messages").insert({
+        conversation_id: conversationId,
+        content: aiResponse,
+        sender_type: "bot",
+        message_type: "text",
+      });
+      
+      console.log("[FlowExecutor] AI response sent");
+      return new Response(JSON.stringify({ success: true, message: "AI conversation continued" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     
     if (flowState?.awaitingMenuResponse && flowState.menuOptions && flowState.currentNodeId) {
       console.log("[FlowExecutor] Processing menu response for node:", flowState.currentNodeId);
