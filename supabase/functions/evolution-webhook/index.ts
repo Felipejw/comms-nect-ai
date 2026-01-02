@@ -429,6 +429,7 @@ serve(async (req) => {
                 conversationId: conversation.id,
                 messageContent: messageContent,
                 contactPhone: phoneNumber,
+                connectionId: conn.id,
               }),
             });
 
