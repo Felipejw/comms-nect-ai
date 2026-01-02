@@ -208,6 +208,90 @@ async function evaluateCondition(
       console.log("[FlowExecutor] Conversation in column:", isInColumn, conversation?.kanban_column_id, "vs", kanbanColumnId);
       return isInColumn;
     }
+
+    case "business_hours": {
+      const startTime = nodeData.startTime as string || "09:00";
+      const endTime = nodeData.endTime as string || "18:00";
+      
+      // Get current time in Brazil timezone (most common for this system)
+      const now = new Date();
+      const brasilOffset = -3 * 60; // UTC-3
+      const localTime = new Date(now.getTime() + (brasilOffset + now.getTimezoneOffset()) * 60000);
+      
+      const currentHours = localTime.getHours();
+      const currentMinutes = localTime.getMinutes();
+      const currentTimeMinutes = currentHours * 60 + currentMinutes;
+      
+      const [startHours, startMinutes] = startTime.split(":").map(Number);
+      const [endHours, endMinutes] = endTime.split(":").map(Number);
+      
+      const startTimeMinutes = startHours * 60 + startMinutes;
+      const endTimeMinutes = endHours * 60 + endMinutes;
+      
+      const isWithinHours = currentTimeMinutes >= startTimeMinutes && currentTimeMinutes <= endTimeMinutes;
+      console.log("[FlowExecutor] Business hours check:", isWithinHours, `Current: ${currentHours}:${currentMinutes}, Range: ${startTime}-${endTime}`);
+      return isWithinHours;
+    }
+
+    case "day_of_week": {
+      const daysOfWeek = nodeData.daysOfWeek as string[] || [];
+      if (daysOfWeek.length === 0) {
+        console.log("[FlowExecutor] No days configured for condition");
+        return false;
+      }
+      
+      // Get current day in Brazil timezone
+      const now = new Date();
+      const brasilOffset = -3 * 60; // UTC-3
+      const localTime = new Date(now.getTime() + (brasilOffset + now.getTimezoneOffset()) * 60000);
+      
+      const currentDay = localTime.getDay().toString(); // 0 = Sunday, 6 = Saturday
+      const isSelectedDay = daysOfWeek.includes(currentDay);
+      console.log("[FlowExecutor] Day of week check:", isSelectedDay, `Current day: ${currentDay}, Selected: ${daysOfWeek.join(",")}`);
+      return isSelectedDay;
+    }
+
+    case "message_count": {
+      const messageCount = nodeData.messageCount as number || 0;
+      const messageOperator = nodeData.messageOperator as string || "greater";
+      
+      // Count messages in the conversation
+      const { count, error } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("conversation_id", conversationId);
+      
+      if (error) {
+        console.error("[FlowExecutor] Error counting messages:", error);
+        return false;
+      }
+      
+      const actualCount = count || 0;
+      let result = false;
+      
+      switch (messageOperator) {
+        case "greater":
+          result = actualCount > messageCount;
+          break;
+        case "less":
+          result = actualCount < messageCount;
+          break;
+        case "equals":
+          result = actualCount === messageCount;
+          break;
+        case "greater_equals":
+          result = actualCount >= messageCount;
+          break;
+        case "less_equals":
+          result = actualCount <= messageCount;
+          break;
+        default:
+          result = actualCount > messageCount;
+      }
+      
+      console.log("[FlowExecutor] Message count check:", result, `Actual: ${actualCount} ${messageOperator} ${messageCount}`);
+      return result;
+    }
     
     case "message":
     default: {
