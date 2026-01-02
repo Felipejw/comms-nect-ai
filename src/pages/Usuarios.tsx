@@ -176,7 +176,7 @@ export default function Usuarios() {
                 />
               </div>
               <div className="space-y-2">
-                <Label>Papel</Label>
+                <Label>Nível</Label>
                 <Select value={newRole} onValueChange={(v) => setNewRole(v as typeof newRole)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o papel" />
@@ -259,7 +259,7 @@ export default function Usuarios() {
           <TableHeader>
             <TableRow>
               <TableHead>Atendente</TableHead>
-              <TableHead>Papel</TableHead>
+              <TableHead>Nível</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Última Atividade</TableHead>
               <TableHead>Criado em</TableHead>

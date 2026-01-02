@@ -132,10 +132,10 @@ export function useUpdateUserRole() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['users'] });
-      toast.success('Papel do usuário atualizado!');
+      toast.success('Nível do usuário atualizado!');
     },
     onError: (error: Error) => {
-      toast.error('Erro ao atualizar papel: ' + error.message);
+      toast.error('Erro ao atualizar nível: ' + error.message);
     },
   });
 }
