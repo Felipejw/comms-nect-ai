@@ -106,7 +106,13 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
 
   const onConnect = useCallback(
     (params: Connection) => {
-      setEdges((eds) => addEdge(params, eds));
+      // When connecting from a menu or condition node, use sourceHandle as the edge label
+      // This is critical for routing menu option selections to the correct next node
+      const edgeWithLabel = {
+        ...params,
+        label: params.sourceHandle || undefined,
+      };
+      setEdges((eds) => addEdge(edgeWithLabel, eds));
       setHasChanges(true);
     },
     [setEdges]
