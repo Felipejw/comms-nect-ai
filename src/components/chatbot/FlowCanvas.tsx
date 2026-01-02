@@ -25,6 +25,7 @@ import TransferNode from "./nodes/TransferNode";
 import EndNode from "./nodes/EndNode";
 import AINode from "./nodes/AINode";
 import CRMNode from "./nodes/CRMNode";
+import WhatsAppNode from "./nodes/WhatsAppNode";
 import { useFlow, useSaveFlowData } from "@/hooks/useFlows";
 import { toast } from "sonner";
 import { Loader2, Save } from "lucide-react";
@@ -33,6 +34,7 @@ import { Button } from "@/components/ui/button";
 const nodeTypes: NodeTypes = {
   trigger: TriggerNode,
   message: MessageNode,
+  whatsapp: WhatsAppNode,
   delay: DelayNode,
   menu: MenuNode,
   transfer: TransferNode,
@@ -145,6 +147,7 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
     const labels: Record<string, string> = {
       trigger: "Gatilho",
       message: "Mensagem",
+      whatsapp: "WhatsApp",
       delay: "Aguardar",
       menu: "Menu",
       transfer: "Transferir",
@@ -325,6 +328,7 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
                 const colors: Record<string, string> = {
                   trigger: "hsl(var(--primary))",
                   message: "hsl(var(--success))",
+                  whatsapp: "#22c55e",
                   delay: "hsl(var(--info))",
                   menu: "#f97316",
                   transfer: "hsl(var(--destructive))",

@@ -536,6 +536,49 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
           </>
         );
 
+      case "whatsapp":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label>Nome do bloco</Label>
+              <Input
+                value={(formData.label as string) || ""}
+                onChange={(e) => handleChange("label", e.target.value)}
+                placeholder="WhatsApp"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Número de WhatsApp</Label>
+              <Select
+                value={(formData.connectionId as string) || ""}
+                onValueChange={(v) => {
+                  const connection = connections?.find((c) => c.id === v);
+                  handleChange("connectionId", v);
+                  handleChange("connectionName", connection?.name || "");
+                  handleChange("phoneNumber", connection?.phone_number || "");
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione o número..." />
+                </SelectTrigger>
+                <SelectContent position="popper" sideOffset={5}>
+                  {connections?.map((conn) => (
+                    <SelectItem key={conn.id} value={conn.id}>
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full ${conn.status === "connected" ? "bg-success" : "bg-muted"}`} />
+                        {conn.name} {conn.phone_number && `(${conn.phone_number})`}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Define qual número de WhatsApp será usado nesta parte do fluxo
+              </p>
+            </div>
+          </>
+        );
+
       case "transfer":
         const transferType = (formData.transferType as string) || "queue";
         return (
@@ -566,7 +609,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent position="popper" sideOffset={5}>
                   <SelectItem value="queue">Setor/Fila</SelectItem>
                   <SelectItem value="agent">Atendente específico</SelectItem>
                   <SelectItem value="whatsapp">Número de WhatsApp</SelectItem>
@@ -588,7 +631,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o setor..." />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" sideOffset={5}>
                     {queues?.map((queue) => (
                       <SelectItem key={queue.id} value={queue.id}>
                         {queue.name}
@@ -613,7 +656,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o atendente..." />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" sideOffset={5}>
                     {users?.map((user) => (
                       <SelectItem key={user.id} value={user.id}>
                         <div className="flex items-center gap-2">
@@ -641,7 +684,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o número..." />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent position="popper" sideOffset={5}>
                     {connections?.map((conn) => (
                       <SelectItem key={conn.id} value={conn.id}>
                         <div className="flex items-center gap-2">
@@ -709,6 +752,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
     const titles: Record<string, string> = {
       trigger: "Configurar Gatilho",
       message: "Configurar Mensagem",
+      whatsapp: "Configurar WhatsApp",
       delay: "Configurar Aguardar",
       menu: "Configurar Menu",
       ai: "Configurar IA",
