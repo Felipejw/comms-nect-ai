@@ -1,10 +1,9 @@
-import { Zap, MessageSquare, GitBranch, Clock, List, UserPlus, XCircle, Brain, LayoutList } from "lucide-react";
+import { Zap, MessageSquare, Clock, List, UserPlus, XCircle, Brain, LayoutList } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
 const sidebarNodeTypes = [
   { type: "trigger", icon: Zap, label: "Gatilho", color: "bg-primary" },
   { type: "message", icon: MessageSquare, label: "Mensagem", color: "bg-success" },
-  { type: "condition", icon: GitBranch, label: "Condição", color: "bg-warning" },
   { type: "delay", icon: Clock, label: "Aguardar", color: "bg-info" },
   { type: "menu", icon: List, label: "Menu", color: "bg-orange-500" },
   { type: "crm", icon: LayoutList, label: "CRM", color: "bg-sky-500" },

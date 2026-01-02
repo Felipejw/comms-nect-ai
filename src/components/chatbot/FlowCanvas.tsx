@@ -19,7 +19,6 @@ import "@xyflow/react/dist/style.css";
 import { NodePaletteTopBar, NodePaletteSidebar } from "./NodePalette";
 import TriggerNode from "./nodes/TriggerNode";
 import MessageNode from "./nodes/MessageNode";
-import ConditionNode from "./nodes/ConditionNode";
 import DelayNode from "./nodes/DelayNode";
 import MenuNode from "./nodes/MenuNode";
 import TransferNode from "./nodes/TransferNode";
@@ -34,7 +33,6 @@ import { Button } from "@/components/ui/button";
 const nodeTypes: NodeTypes = {
   trigger: TriggerNode,
   message: MessageNode,
-  condition: ConditionNode,
   delay: DelayNode,
   menu: MenuNode,
   transfer: TransferNode,
@@ -134,7 +132,6 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
     const labels: Record<string, string> = {
       trigger: "Gatilho",
       message: "Mensagem",
-      condition: "Condição",
       delay: "Aguardar",
       menu: "Menu",
       transfer: "Transferir",
@@ -308,7 +305,6 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
                 const colors: Record<string, string> = {
                   trigger: "hsl(var(--primary))",
                   message: "hsl(var(--success))",
-                  condition: "hsl(var(--warning))",
                   delay: "hsl(var(--info))",
                   menu: "#f97316",
                   transfer: "hsl(var(--destructive))",

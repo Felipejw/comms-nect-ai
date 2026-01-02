@@ -1,15 +1,17 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
-import { XCircle } from "lucide-react";
+import { XCircle, CheckCircle } from "lucide-react";
 
 interface EndNodeData {
   label?: string;
   message?: string;
+  markAsResolved?: boolean;
   [key: string]: unknown;
 }
 
 function EndNode({ data, selected }: NodeProps) {
   const nodeData = data as EndNodeData;
+  const markAsResolved = nodeData.markAsResolved ?? true;
   
   return (
     <div
@@ -28,8 +30,15 @@ function EndNode({ data, selected }: NodeProps) {
         </div>
         <div className="flex-1">
           <p className="font-medium text-sm">{nodeData.label || "Encerrar"}</p>
-          <p className="text-xs text-muted-foreground">
-            {nodeData.message ? "Com mensagem" : "Finalizar conversa"}
+          <p className="text-xs text-muted-foreground flex items-center gap-1">
+            {markAsResolved ? (
+              <>
+                <CheckCircle className="w-3 h-3 text-success" />
+                Finalizar e resolver
+              </>
+            ) : (
+              "Finalizar conversa"
+            )}
           </p>
         </div>
       </div>
