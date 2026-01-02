@@ -495,15 +495,28 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   </span>
                 </Label>
                 <p className="text-xs text-muted-foreground">
-                  Use sua chave do Google AI Studio
+                  Use sua chave do{" "}
+                  <a 
+                    href="https://aistudio.google.com/apikey" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-primary underline hover:no-underline"
+                  >
+                    Google AI Studio
+                  </a>
                 </p>
               </div>
               <Switch
                 checked={useOwnApiKey}
                 onCheckedChange={(v) => {
-                  handleChange("useOwnApiKey", v);
-                  // Reset model when switching
-                  handleChange("model", v ? "gemini-2.0-flash" : "google/gemini-2.5-flash");
+                  const newModel = v ? "gemini-2.0-flash" : "google/gemini-2.5-flash";
+                  const newData = { 
+                    ...formData, 
+                    useOwnApiKey: v, 
+                    model: newModel 
+                  };
+                  setFormData(newData);
+                  onUpdate(node.id, newData);
                 }}
               />
             </div>
@@ -580,11 +593,11 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
             <div className="space-y-2">
               <Label>Modelo de IA</Label>
               <Select
-                value={(formData.model as string) || defaultModel}
+                value={aiModels.some(m => m.value === formData.model) ? (formData.model as string) : defaultModel}
                 onValueChange={(v) => handleChange("model", v)}
               >
                 <SelectTrigger>
-                  <SelectValue />
+                  <SelectValue placeholder="Selecione um modelo" />
                 </SelectTrigger>
                 <SelectContent>
                   {aiModels.map((model) => (
