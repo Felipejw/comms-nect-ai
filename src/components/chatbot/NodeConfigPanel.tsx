@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Plus, Trash2, Save } from "lucide-react";
+import { useEffect, useState, useRef } from "react";
+import { Plus, Trash2, Save, Upload, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,6 +24,8 @@ import { useQueues } from "@/hooks/useQueues";
 import { useUsers } from "@/hooks/useUsers";
 import { useWhatsAppConnections } from "@/hooks/useWhatsAppConnections";
 import { useKanbanColumns } from "@/hooks/useKanbanColumns";
+import { supabase } from "@/integrations/supabase/client";
+import { toast } from "sonner";
 import type { Node } from "@xyflow/react";
 
 interface NodeConfigPanelProps {
@@ -47,6 +49,8 @@ const AI_MODELS = [
 
 export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSaveFlow, isSaving }: NodeConfigPanelProps) {
   const [formData, setFormData] = useState<Record<string, unknown>>({});
+  const [isUploading, setIsUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { data: queues } = useQueues();
   const { data: users } = useUsers();
   const { connections } = useWhatsAppConnections();
@@ -186,15 +190,101 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
             {(messageType === "image" || messageType === "video" || messageType === "document") && (
               <>
                 <div className="space-y-2">
-                  <Label>URL do arquivo</Label>
-                  <Input
-                    value={(formData.mediaUrl as string) || ""}
-                    onChange={(e) => handleChange("mediaUrl", e.target.value)}
-                    placeholder={`https://exemplo.com/${messageType === "image" ? "imagem.jpg" : messageType === "video" ? "video.mp4" : "documento.pdf"}`}
+                  <Label>Arquivo de mídia</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      value={(formData.mediaUrl as string) || ""}
+                      onChange={(e) => handleChange("mediaUrl", e.target.value)}
+                      placeholder={`https://exemplo.com/${messageType === "image" ? "imagem.jpg" : messageType === "video" ? "video.mp4" : "documento.pdf"}`}
+                      className="flex-1"
+                    />
+                    {formData.mediaUrl && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleChange("mediaUrl", "")}
+                      >
+                        <X className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    className="hidden"
+                    accept={
+                      messageType === "image" 
+                        ? "image/*" 
+                        : messageType === "video" 
+                        ? "video/*" 
+                        : "*/*"
+                    }
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      
+                      setIsUploading(true);
+                      try {
+                        const fileExt = file.name.split('.').pop();
+                        const fileName = `${crypto.randomUUID()}.${fileExt}`;
+                        const filePath = `chatbot/${fileName}`;
+                        
+                        const { error: uploadError } = await supabase.storage
+                          .from('whatsapp-media')
+                          .upload(filePath, file);
+                          
+                        if (uploadError) throw uploadError;
+                        
+                        const { data: { publicUrl } } = supabase.storage
+                          .from('whatsapp-media')
+                          .getPublicUrl(filePath);
+                          
+                        handleChange("mediaUrl", publicUrl);
+                        toast.success("Arquivo enviado com sucesso!");
+                      } catch (error) {
+                        console.error("Upload error:", error);
+                        toast.error("Erro ao enviar arquivo");
+                      } finally {
+                        setIsUploading(false);
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = "";
+                        }
+                      }
+                    }}
                   />
+                  <Button
+                    variant="outline"
+                    className="w-full gap-2"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isUploading}
+                  >
+                    {isUploading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Enviando...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4" />
+                        Fazer upload
+                      </>
+                    )}
+                  </Button>
                   <p className="text-xs text-muted-foreground">
-                    Cole a URL direta do arquivo de mídia
+                    Envie um arquivo ou cole a URL direta
                   </p>
+                  {messageType === "image" && formData.mediaUrl && (
+                    <div className="mt-2 rounded-lg overflow-hidden border border-border">
+                      <img 
+                        src={formData.mediaUrl as string} 
+                        alt="Preview" 
+                        className="w-full h-32 object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
                   <Label>Legenda (opcional)</Label>
