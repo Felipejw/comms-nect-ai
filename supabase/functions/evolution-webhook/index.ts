@@ -367,12 +367,13 @@ serve(async (req) => {
         if (existingConversation) {
           conversation = existingConversation;
           
-          // Update last_message_at
+          // Update last_message_at and ensure connection_id is set
           await supabaseClient
             .from("conversations")
             .update({ 
               last_message_at: new Date().toISOString(),
-              unread_count: fromMe ? existingConversation.unread_count : (existingConversation.unread_count || 0) + 1
+              unread_count: fromMe ? existingConversation.unread_count : (existingConversation.unread_count || 0) + 1,
+              connection_id: conn.id, // Ensure connection is linked
             })
             .eq("id", existingConversation.id);
         } else {
@@ -385,6 +386,7 @@ serve(async (req) => {
               subject: messageContent.substring(0, 50),
               unread_count: fromMe ? 0 : 1,
               is_bot_active: true,
+              connection_id: conn.id, // Link conversation to the WhatsApp connection
             })
             .select()
             .single();

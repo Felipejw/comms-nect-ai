@@ -498,6 +498,7 @@ export type Database = {
           active_flow_id: string | null
           assigned_to: string | null
           channel: string | null
+          connection_id: string | null
           contact_id: string
           created_at: string
           flow_state: Json | null
@@ -516,6 +517,7 @@ export type Database = {
           active_flow_id?: string | null
           assigned_to?: string | null
           channel?: string | null
+          connection_id?: string | null
           contact_id: string
           created_at?: string
           flow_state?: Json | null
@@ -534,6 +536,7 @@ export type Database = {
           active_flow_id?: string | null
           assigned_to?: string | null
           channel?: string | null
+          connection_id?: string | null
           contact_id?: string
           created_at?: string
           flow_state?: Json | null
@@ -554,6 +557,13 @@ export type Database = {
             columns: ["active_flow_id"]
             isOneToOne: false
             referencedRelation: "chatbot_flows"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "connections"
             referencedColumns: ["id"]
           },
           {

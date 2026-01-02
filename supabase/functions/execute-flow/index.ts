@@ -793,13 +793,51 @@ serve(async (req) => {
       });
     }
 
-    // Get connection for this conversation
-    const { data: connection } = await supabase
-      .from("connections")
-      .select("*")
-      .eq("status", "connected")
-      .limit(1)
-      .single();
+    // Get connection for this conversation - prioritize the one passed or linked
+    let connection = null;
+
+    // First, try the connection passed from webhook
+    if (connectionId) {
+      const { data: passedConnection } = await supabase
+        .from("connections")
+        .select("*")
+        .eq("id", connectionId)
+        .eq("status", "connected")
+        .single();
+      
+      if (passedConnection) {
+        connection = passedConnection;
+        console.log("[FlowExecutor] Using connection from webhook:", connectionId);
+      }
+    }
+
+    // If not found, try the connection linked to conversation
+    if (!connection && conversation.connection_id) {
+      const { data: linkedConnection } = await supabase
+        .from("connections")
+        .select("*")
+        .eq("id", conversation.connection_id)
+        .eq("status", "connected")
+        .single();
+      
+      if (linkedConnection) {
+        connection = linkedConnection;
+        console.log("[FlowExecutor] Using connection from conversation:", conversation.connection_id);
+      }
+    }
+
+    // Fallback to any connected instance
+    if (!connection) {
+      const { data: anyConnection } = await supabase
+        .from("connections")
+        .select("*")
+        .eq("status", "connected")
+        .limit(1)
+        .single();
+      
+      connection = anyConnection;
+      console.log("[FlowExecutor] Using fallback connection");
+    }
 
     if (!connection) {
       console.error("[FlowExecutor] No active WhatsApp connection found");
