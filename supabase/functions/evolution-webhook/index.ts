@@ -195,15 +195,60 @@ serve(async (req) => {
           ?.replace('@lid', '')
           ?.split(':')[0];
 
-        // Store the original LID for reference
-        const whatsappLid = isLid ? remoteJid?.replace('@lid', '')?.split(':')[0] : null;
+        // Store the original LID for reference and for sending messages
+        const whatsappLid = isLid ? phoneNumber : null;
+        
+        // For LID contacts, try to get the real phone number from Evolution API
+        let realPhoneNumber = phoneNumber;
+        if (isLid && phoneNumber) {
+          try {
+            const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
+            const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
+            
+            if (evolutionUrl && evolutionKey) {
+              // Try to fetch contact info using the LID
+              const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instance}`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'apikey': evolutionKey,
+                },
+                body: JSON.stringify({
+                  where: {
+                    id: remoteJid
+                  }
+                }),
+              });
+              
+              if (contactResponse.ok) {
+                const contactData = await contactResponse.json();
+                console.log(`[Webhook] Contact lookup result:`, JSON.stringify(contactData));
+                
+                // Try to extract phone from various response formats
+                const contactInfo = Array.isArray(contactData) ? contactData[0] : contactData;
+                if (contactInfo?.id && contactInfo.id.includes('@s.whatsapp.net')) {
+                  realPhoneNumber = contactInfo.id.replace('@s.whatsapp.net', '');
+                  console.log(`[Webhook] Found real phone number: ${realPhoneNumber}`);
+                } else if (contactInfo?.number) {
+                  realPhoneNumber = contactInfo.number;
+                  console.log(`[Webhook] Found real phone from number field: ${realPhoneNumber}`);
+                }
+              }
+            }
+          } catch (lookupError) {
+            console.error(`[Webhook] Error looking up contact:`, lookupError);
+          }
+        }
 
-        if (!phoneNumber) {
+        if (!realPhoneNumber) {
           console.log("[Webhook] Could not extract phone number from remoteJid:", remoteJid);
           break;
         }
 
-        console.log(`[Webhook] Processing message - Phone: ${phoneNumber}, isLID: ${isLid}, LID: ${whatsappLid}`);
+        // Use the real phone number for display, keep LID for reference
+        phoneNumber = realPhoneNumber;
+
+        console.log(`[Webhook] Processing message - Phone: ${phoneNumber}, isLID: ${isLid}, LID: ${whatsappLid}, RemoteJid: ${remoteJid}`);
 
         // Get message content - handle different message types
         const message = data?.message || {};
