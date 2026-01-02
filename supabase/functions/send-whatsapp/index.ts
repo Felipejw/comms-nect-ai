@@ -57,12 +57,12 @@ Deno.serve(async (req) => {
 
     console.log(`Sending WhatsApp message for conversation: ${conversationId}`);
 
-    // Get conversation with contact phone
+    // Get conversation with contact phone and LID
     const { data: conversation, error: convError } = await supabaseAdmin
       .from("conversations")
       .select(`
         *,
-        contact:contacts (id, name, phone)
+        contact:contacts (id, name, phone, whatsapp_lid)
       `)
       .eq("id", conversationId)
       .single();
@@ -75,13 +75,23 @@ Deno.serve(async (req) => {
       );
     }
 
-    const phone = conversation.contact?.phone;
-    if (!phone) {
+    const contact = conversation.contact;
+    const phone = contact?.phone;
+    const whatsappLid = contact?.whatsapp_lid;
+    
+    // Determine which identifier to use for sending
+    // Priority: 1. Real phone (if valid length), 2. LID, 3. Phone as fallback
+    const isValidPhone = phone && phone.length >= 10 && phone.length <= 15;
+    const phoneToSend = isValidPhone ? phone : (whatsappLid || phone);
+    
+    if (!phoneToSend) {
       return new Response(
-        JSON.stringify({ success: false, error: "Contact has no phone number" }),
+        JSON.stringify({ success: false, error: "Contact has no phone number or WhatsApp ID" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    
+    console.log(`Contact: phone=${phone}, lid=${whatsappLid}, using=${phoneToSend}`);
 
     // Get default WhatsApp connection
     const { data: connection, error: connError } = await supabaseAdmin
@@ -103,13 +113,17 @@ Deno.serve(async (req) => {
 
     const instanceName = connection.session_data?.instanceName || connection.name;
 
-    // Format phone number (remove non-numeric and ensure country code)
-    let formattedPhone = phone.replace(/\D/g, "");
-    if (!formattedPhone.startsWith("55") && formattedPhone.length <= 11) {
+    // Format phone number (remove non-numeric)
+    let formattedPhone = phoneToSend.replace(/\D/g, "");
+    
+    // Only add country code for real phone numbers (not LIDs)
+    // LIDs are typically 15+ digits and should not be modified
+    const isLidNumber = formattedPhone.length > 15;
+    if (!isLidNumber && !formattedPhone.startsWith("55") && formattedPhone.length <= 11) {
       formattedPhone = "55" + formattedPhone;
     }
 
-    console.log(`Sending to ${formattedPhone} via instance ${instanceName}`);
+    console.log(`Sending to ${formattedPhone} (isLid: ${isLidNumber}) via instance ${instanceName}`);
 
     // Send message via Evolution API
     let evolutionResponse;

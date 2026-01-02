@@ -338,10 +338,16 @@ serve(async (req) => {
         }
 
         // Get contact name with fallback
-        const contactName = data?.pushName || phoneNumber || "Contato Desconhecido";
+        // IMPORTANT: pushName from fromMe messages contains OUR name, not the contact's
+        // Only use pushName for received messages (fromMe: false)
+        let contactName = phoneNumber || "Contato Desconhecido";
+        if (!fromMe && data?.pushName) {
+          // Only trust pushName for incoming messages
+          contactName = data.pushName;
+        }
         
         // Tentar extrair foto do perfil do WhatsApp (pode estar em diferentes locais)
-        const profilePictureUrl = data?.profilePictureUrl || data?.pushName?.profilePictureUrl || null;
+        const profilePictureUrl = data?.profilePictureUrl || null;
 
         console.log(`[Webhook] Message ${fromMe ? 'SENT' : 'RECEIVED'} - Phone: ${phoneNumber}, Content: ${messageContent.substring(0, 50)}`);
 
@@ -413,9 +419,17 @@ serve(async (req) => {
           // Prepare updates for existing contact
           const updates: Record<string, string | null> = {};
           
-          // Update name if we have pushName and current name is just phone/LID
-          if (pushName && (contact.name === contact.phone || contact.name?.match(/^\d{15,}$/))) {
-            updates.name = pushName;
+          // Update name if:
+          // 1. This is an INCOMING message (fromMe: false) - so pushName is the client's name
+          // 2. We have a valid pushName
+          // 3. Current name is just phone/LID or a placeholder
+          const currentNameIsPlaceholder = 
+            contact.name === contact.phone || 
+            contact.name?.match(/^\d{15,}$/) ||
+            contact.name === "Contato Desconhecido";
+          
+          if (!fromMe && data?.pushName && currentNameIsPlaceholder) {
+            updates.name = data.pushName;
           }
           
           // Update avatar if available and contact doesn't have one
