@@ -13,9 +13,9 @@ serve(async (req) => {
   }
 
   try {
-    const { email, password, name, role = 'atendente' } = await req.json();
+    const { email, password, name, role = 'atendente', permissions = [] } = await req.json();
 
-    console.log(`Creating user with email: ${email}, role: ${role}`);
+    console.log(`Creating user with email: ${email}, role: ${role}, permissions count: ${permissions.length}`);
 
     // Create Supabase admin client
     const supabaseAdmin = createClient(
@@ -67,6 +67,28 @@ serve(async (req) => {
         console.error('Error updating role:', roleError.message);
       } else {
         console.log('Role updated to admin');
+      }
+    }
+
+    // Save permissions for atendente users
+    if (data.user && role !== 'admin' && permissions.length > 0) {
+      console.log('Saving permissions for user:', data.user.id);
+      
+      const permissionsToInsert = permissions.map((p: { module: string; can_view: boolean; can_edit: boolean }) => ({
+        user_id: data.user!.id,
+        module: p.module,
+        can_view: p.can_view,
+        can_edit: p.can_edit,
+      }));
+
+      const { error: permError } = await supabaseAdmin
+        .from('user_permissions')
+        .insert(permissionsToInsert);
+
+      if (permError) {
+        console.error('Error saving permissions:', permError.message);
+      } else {
+        console.log('Permissions saved successfully');
       }
     }
 
