@@ -294,6 +294,8 @@ export function useUpdateConversation() {
       assigned_to?: string | null;
       queue_id?: string | null;
       is_bot_active?: boolean;
+      active_flow_id?: string | null;
+      kanban_column_id?: string | null;
     }) => {
       const { data, error } = await supabase
         .from('conversations')
