@@ -58,6 +58,13 @@ export default function Chatbot() {
     setNodeDeleteFn(() => fn);
   }, []);
 
+  const handleRegisterUpdateFn = useCallback(
+    (fn: (nodeId: string, data: Record<string, unknown>) => void) => {
+      setNodeUpdateFn(() => fn);
+    },
+    []
+  );
+
   const handleRegisterSaveFn = useCallback((fn: () => Promise<void>) => {
     setSaveFn(() => fn);
   }, []);
@@ -89,6 +96,7 @@ export default function Chatbot() {
           flowId={selectedFlowId}
           onNodeSelect={handleNodeSelect}
           onRegisterDeleteFn={handleRegisterDeleteFn}
+          onRegisterUpdateFn={handleRegisterUpdateFn}
           onRegisterSaveFn={handleRegisterSaveFn}
           onSavingChange={setIsSaving}
         />
