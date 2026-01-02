@@ -177,6 +177,7 @@ serve(async (req) => {
       case "messages.upsert": {
         // New message received or sent
         const remoteJid = data?.key?.remoteJid;
+        const remoteJidAlt = data?.key?.remoteJidAlt; // Real phone when using LID
         const fromMe = data?.key?.fromMe || false;
         
         // Ignore group messages and broadcasts - only process direct messages
@@ -198,11 +199,19 @@ serve(async (req) => {
         // Store the original LID for reference and for sending messages
         const whatsappLid = isLid ? phoneNumber : null;
         
-        // For LID contacts, try to get the real phone number from Evolution API
+        // For LID contacts, try to get the real phone number
+        // Priority: 1. remoteJidAlt (most reliable), 2. Evolution API lookup
         let realPhoneNumber: string | null = null;
         const pushName = data?.pushName;
         
-        if (isLid && phoneNumber) {
+        // First, try to get real phone from remoteJidAlt (sent by WhatsApp when using LID)
+        if (isLid && remoteJidAlt?.includes('@s.whatsapp.net')) {
+          realPhoneNumber = remoteJidAlt.replace('@s.whatsapp.net', '');
+          console.log(`[Webhook] Got real phone from remoteJidAlt: ${realPhoneNumber}`);
+        }
+        
+        // If no remoteJidAlt, try Evolution API lookup
+        if (!realPhoneNumber && isLid && phoneNumber) {
           try {
             const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
             const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");

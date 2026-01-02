@@ -104,31 +104,32 @@ serve(async (req) => {
     console.log(`[SyncContacts] Built maps: ${lidToContact.size} LIDs, ${phoneToContact.size} phones, ${lidToRealPhone.size} LID->phone mappings`);
 
     // Get all contacts from database that need updating
+    // Criteria: bad names, phone looks like LID, or phone === whatsapp_lid
     const { data: dbContacts, error: dbError } = await supabase
       .from('contacts')
-      .select('id, name, phone, whatsapp_lid')
-      .or('name.eq.Chatbot Whats,name.eq.Contato Desconhecido,phone.like.%000000000%');
+      .select('id, name, phone, whatsapp_lid');
 
     if (dbError) {
       console.error(`[SyncContacts] Error fetching DB contacts:`, dbError);
       throw dbError;
     }
 
-    // Also get contacts where phone looks like a LID (length > 15)
-    const { data: lidPhoneContacts } = await supabase
-      .from('contacts')
-      .select('id, name, phone, whatsapp_lid')
-      .not('phone', 'is', null);
-
-    const allDbContacts = [
-      ...(dbContacts || []),
-      ...(lidPhoneContacts?.filter(c => c.phone && c.phone.length > 15) || [])
-    ];
-
-    // Remove duplicates
-    const uniqueContacts = Array.from(
-      new Map(allDbContacts.map(c => [c.id, c])).values()
-    );
+    // Filter contacts that need checking
+    const badNames = ['Chatbot Whats', 'Contato Desconhecido'];
+    const uniqueContacts = (dbContacts || []).filter(c => {
+      // Bad name
+      const nameIsBad = badNames.includes(c.name) || 
+                       c.name === c.phone || 
+                       c.name?.match(/^\d{14,}$/);
+      
+      // Phone looks like LID (long number)
+      const phoneLooksLikeLid = c.phone && c.phone.length > 13;
+      
+      // Phone equals whatsapp_lid (definitely a LID stored as phone)
+      const phoneEqualsLid = c.phone && c.whatsapp_lid && c.phone === c.whatsapp_lid;
+      
+      return nameIsBad || phoneLooksLikeLid || phoneEqualsLid;
+    });
 
     console.log(`[SyncContacts] Processing ${uniqueContacts.length} contacts from database`);
 

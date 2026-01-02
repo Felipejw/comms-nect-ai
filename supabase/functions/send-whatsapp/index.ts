@@ -79,19 +79,38 @@ Deno.serve(async (req) => {
     const phone = contact?.phone;
     const whatsappLid = contact?.whatsapp_lid;
     
-    // Determine which identifier to use for sending
-    // Priority: 1. Real phone (if valid length), 2. LID, 3. Phone as fallback
-    const isValidPhone = phone && phone.length >= 10 && phone.length <= 15;
-    const phoneToSend = isValidPhone ? phone : (whatsappLid || phone);
+    console.log(`Contact data: phone="${phone}", whatsapp_lid="${whatsappLid}"`);
     
-    if (!phoneToSend) {
+    // Determine which identifier to use and how to format it
+    // LID detection: phone === whatsapp_lid OR phone is very long (14+ digits with no valid country code)
+    const isPhoneActuallyLid = phone && whatsappLid && phone === whatsappLid;
+    const hasRealPhone = phone && phone !== whatsappLid && phone.length >= 10 && phone.length <= 15;
+    
+    let phoneToSend: string;
+    let sendAsLid = false;
+    
+    if (hasRealPhone) {
+      // We have a real phone number, use it
+      phoneToSend = phone;
+      console.log(`Using real phone number: ${phoneToSend}`);
+    } else if (whatsappLid) {
+      // Only have LID, send using LID format
+      phoneToSend = whatsappLid;
+      sendAsLid = true;
+      console.log(`Using LID (no real phone available): ${phoneToSend}`);
+    } else if (phone) {
+      // Fallback to whatever we have
+      phoneToSend = phone;
+      // Check if it looks like a LID (long number without valid country code)
+      const cleanPhone = phone.replace(/\D/g, "");
+      sendAsLid = cleanPhone.length > 13 || (cleanPhone.length >= 12 && !cleanPhone.match(/^(55|1|44|351|34|49|33|39|81|86|91)/));
+      console.log(`Using phone as fallback, sendAsLid=${sendAsLid}: ${phoneToSend}`);
+    } else {
       return new Response(
-        JSON.stringify({ success: false, error: "Contact has no phone number or WhatsApp ID" }),
+        JSON.stringify({ success: false, error: "Contato sem número de telefone ou ID do WhatsApp" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
-    
-    console.log(`Contact: phone=${phone}, lid=${whatsappLid}, using=${phoneToSend}`);
 
     // Get default WhatsApp connection
     const { data: connection, error: connError } = await supabaseAdmin
@@ -106,24 +125,29 @@ Deno.serve(async (req) => {
     if (connError || !connection) {
       console.error("No connected WhatsApp instance:", connError);
       return new Response(
-        JSON.stringify({ success: false, error: "No WhatsApp connection available" }),
+        JSON.stringify({ success: false, error: "Nenhuma conexão WhatsApp disponível" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     const instanceName = connection.session_data?.instanceName || connection.name;
 
-    // Format phone number (remove non-numeric)
-    let formattedPhone = phoneToSend.replace(/\D/g, "");
+    // Format the number based on whether it's a LID or real phone
+    let formattedNumber = phoneToSend.replace(/\D/g, "");
     
-    // Only add country code for real phone numbers (not LIDs)
-    // LIDs are typically 15+ digits and should not be modified
-    const isLidNumber = formattedPhone.length > 15;
-    if (!isLidNumber && !formattedPhone.startsWith("55") && formattedPhone.length <= 11) {
-      formattedPhone = "55" + formattedPhone;
+    if (sendAsLid) {
+      // For LIDs, append @lid suffix
+      formattedNumber = `${formattedNumber}@lid`;
+      console.log(`Sending to LID: ${formattedNumber}`);
+    } else {
+      // For real phone numbers, add country code if needed
+      if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
+        formattedNumber = "55" + formattedNumber;
+      }
+      console.log(`Sending to phone: ${formattedNumber}`);
     }
 
-    console.log(`Sending to ${formattedPhone} (isLid: ${isLidNumber}) via instance ${instanceName}`);
+    console.log(`Sending via instance ${instanceName}`);
 
     // Send message via Evolution API
     let evolutionResponse;
@@ -136,7 +160,7 @@ Deno.serve(async (req) => {
           "apikey": evolutionApiKey,
         },
         body: JSON.stringify({
-          number: formattedPhone,
+          number: formattedNumber,
           text: content,
         }),
       });
@@ -148,7 +172,7 @@ Deno.serve(async (req) => {
           "apikey": evolutionApiKey,
         },
         body: JSON.stringify({
-          number: formattedPhone,
+          number: formattedNumber,
           mediatype: "image",
           media: mediaUrl,
           caption: content,
@@ -162,7 +186,7 @@ Deno.serve(async (req) => {
           "apikey": evolutionApiKey,
         },
         body: JSON.stringify({
-          number: formattedPhone,
+          number: formattedNumber,
           mediatype: "document",
           media: mediaUrl,
           caption: content,
@@ -176,12 +200,12 @@ Deno.serve(async (req) => {
           "apikey": evolutionApiKey,
         },
         body: JSON.stringify({
-          number: formattedPhone,
+          number: formattedNumber,
           audio: mediaUrl,
         }),
       });
     } else if (messageType === "video" && mediaUrl) {
-      console.log(`Sending video to ${formattedPhone}`);
+      console.log(`Sending video to ${formattedNumber}`);
       evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
         method: "POST",
         headers: {
@@ -189,7 +213,7 @@ Deno.serve(async (req) => {
           "apikey": evolutionApiKey,
         },
         body: JSON.stringify({
-          number: formattedPhone,
+          number: formattedNumber,
           mediatype: "video",
           media: mediaUrl,
           caption: content,
@@ -197,7 +221,7 @@ Deno.serve(async (req) => {
       });
     } else {
       return new Response(
-        JSON.stringify({ success: false, error: "Unsupported message type or missing media URL" }),
+        JSON.stringify({ success: false, error: "Tipo de mensagem não suportado ou URL de mídia ausente" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -207,8 +231,18 @@ Deno.serve(async (req) => {
 
     if (!evolutionResponse.ok) {
       console.error("Evolution API error:", evolutionResult);
+      
+      // Check for specific error types
+      let errorMessage = evolutionResult.message || "Falha ao enviar mensagem";
+      
+      // Check if number doesn't exist on WhatsApp
+      if (evolutionResult.response?.message?.[0]?.exists === false) {
+        const failedNumber = evolutionResult.response.message[0].number;
+        errorMessage = `Número não encontrado no WhatsApp: ${failedNumber}. O contato pode ter trocado de número ou não estar mais no WhatsApp.`;
+      }
+      
       return new Response(
-        JSON.stringify({ success: false, error: evolutionResult.message || "Failed to send message" }),
+        JSON.stringify({ success: false, error: errorMessage }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -233,7 +267,7 @@ Deno.serve(async (req) => {
       return new Response(
         JSON.stringify({ 
           success: true, 
-          warning: "Message sent but not saved to database",
+          warning: "Mensagem enviada mas não salva no banco de dados",
           evolutionResult 
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -249,7 +283,7 @@ Deno.serve(async (req) => {
 
   } catch (error) {
     console.error("Error in send-whatsapp:", error);
-    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
