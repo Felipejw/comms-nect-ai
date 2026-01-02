@@ -19,31 +19,30 @@ serve(async (req) => {
     // Verify the caller is authenticated
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) {
+      console.log('No Authorization header');
       return new Response(
         JSON.stringify({ error: 'Authorization header required' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Create a client with the user's token to verify they're authenticated
-    const supabaseClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY') ?? '', {
-      global: { headers: { Authorization: authHeader } },
+    // Create admin client for user operations
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
       auth: { autoRefreshToken: false, persistSession: false }
     });
 
-    // Check if the user is authenticated
-    const { data: { user: callerUser }, error: authError } = await supabaseClient.auth.getUser();
+    // Extract the token and get user using admin client
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user: callerUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
+    
     if (authError || !callerUser) {
+      console.log('Auth error:', authError?.message);
       return new Response(
         JSON.stringify({ error: 'Unauthorized' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Create admin client for user creation
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    });
 
     // Verify caller is admin
     const { data: callerRole } = await supabaseAdmin
