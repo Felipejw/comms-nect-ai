@@ -616,14 +616,16 @@ export default function Atendimento() {
   const confirmChangeQueue = async () => {
     if (!selectedConversation) return;
     
+    const queueId = selectedQueueId === 'none' ? null : selectedQueueId;
+    
     await updateConversation.mutateAsync({
       id: selectedConversation.id,
-      queue_id: selectedQueueId || null,
+      queue_id: queueId,
     });
     
     setShowQueueDialog(false);
     
-    const selectedQueue = queues?.find(q => q.id === selectedQueueId);
+    const selectedQueue = queues?.find(q => q.id === queueId);
     toast({
       title: "Setor alterado",
       description: selectedQueue 
@@ -1771,8 +1773,8 @@ export default function Atendimento() {
               <SelectTrigger>
                 <SelectValue placeholder="Selecione um setor" />
               </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="">Sem setor</SelectItem>
+            <SelectContent>
+                <SelectItem value="none">Sem setor</SelectItem>
                 {queues?.map(queue => (
                   <SelectItem key={queue.id} value={queue.id}>
                     <div className="flex items-center gap-2">
