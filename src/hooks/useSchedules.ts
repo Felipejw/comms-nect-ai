@@ -57,6 +57,7 @@ export function useCreateSchedule() {
       user_id: string;
       title: string;
       description?: string;
+      message_content?: string;
       scheduled_at: string;
       reminder?: boolean;
     }) => {

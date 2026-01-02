@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.fetch-whatsapp-profile]
 verify_jwt = false
+
+[functions.process-schedules]
+verify_jwt = false
