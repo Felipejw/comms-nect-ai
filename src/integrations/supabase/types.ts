@@ -337,6 +337,7 @@ export type Database = {
       connections: {
         Row: {
           created_at: string
+          disconnect_requested: boolean | null
           id: string
           is_default: boolean | null
           name: string
@@ -349,6 +350,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          disconnect_requested?: boolean | null
           id?: string
           is_default?: boolean | null
           name: string
@@ -361,6 +363,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          disconnect_requested?: boolean | null
           id?: string
           is_default?: boolean | null
           name?: string

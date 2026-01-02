@@ -117,6 +117,61 @@ serve(async (req) => {
       case "connection_update": {
         // Connection status changed
         const state = data?.state;
+        
+        // Se for desconexão, verificar se foi solicitada explicitamente
+        if (state === "close" || state === "disconnected") {
+          // Verificar se a desconexão foi explicitamente solicitada pelo usuário
+          if (!conn.disconnect_requested) {
+            console.log(`[Webhook] Disconnect event received for ${conn.name} but not explicitly requested`);
+            
+            // Verificar status real na Evolution API antes de aceitar o evento
+            try {
+              const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
+              const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
+              
+              if (evolutionUrl && evolutionKey) {
+                const statusResponse = await fetch(
+                  `${evolutionUrl}/instance/connectionState/${instance}`,
+                  { headers: { "apikey": evolutionKey } }
+                );
+                
+                if (statusResponse.ok) {
+                  const statusData = await statusResponse.json();
+                  const realState = statusData?.instance?.state;
+                  
+                  console.log(`[Webhook] Evolution API says real state is: ${realState}`);
+                  
+                  if (realState === "open") {
+                    console.log(`[Webhook] Instance ${conn.name} is still connected, ignoring false disconnect event`);
+                    break; // Ignora o evento falso de desconexão
+                  }
+                }
+              }
+            } catch (e) {
+              console.error(`[Webhook] Error checking real status:`, e);
+              // Em caso de erro, ignorar o evento de desconexão por segurança
+              console.log(`[Webhook] Ignoring disconnect event due to verification error`);
+              break;
+            }
+          }
+          
+          // Se chegou aqui, é uma desconexão real (solicitada ou confirmada pela API)
+          console.log(`[Webhook] Processing disconnect for ${conn.name} (requested: ${conn.disconnect_requested})`);
+          
+          await supabaseClient
+            .from("connections")
+            .update({ 
+              status: "disconnected",
+              qr_code: null,
+              disconnect_requested: false // Limpar flag
+            })
+            .eq("id", conn.id);
+            
+          console.log(`[Webhook] Connection ${conn.id} disconnected`);
+          break;
+        }
+        
+        // Para outros estados (open, connecting, qrcode)
         let status = "disconnected";
 
         if (state === "open") {
@@ -131,10 +186,11 @@ serve(async (req) => {
             status,
             phone_number: data?.instance?.wuid?.split("@")[0] || conn.phone_number,
             qr_code: status === "connected" ? null : conn.qr_code,
+            disconnect_requested: false // Sempre limpar a flag
           })
           .eq("id", conn.id);
 
-        console.log(`Connection ${conn.id} status updated to: ${status}`);
+        console.log(`[Webhook] Connection ${conn.id} status updated to: ${status}`);
         break;
       }
 

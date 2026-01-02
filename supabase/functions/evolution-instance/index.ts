@@ -524,21 +524,35 @@ serve(async (req) => {
       }
 
       case "disconnect": {
+        // 1. Primeiro, marcar que a desconexão foi solicitada ANTES de chamar a API
+        // Isso serve como "flag" para o webhook saber que a desconexão foi intencional
+        console.log(`[Evolution Instance] Marking disconnect_requested=true for connection ${connectionId}`);
+        await supabaseClient
+          .from("connections")
+          .update({ disconnect_requested: true })
+          .eq("id", connectionId);
+
         const instName = await getInstanceName(supabaseClient, connectionId);
 
         if (instName) {
+          console.log(`[Evolution Instance] Sending logout to Evolution API for ${instName}`);
           const logoutResponse = await fetch(`${EVOLUTION_API_URL}/instance/logout/${instName}`, {
             method: "DELETE",
             headers: evolutionHeaders,
           });
 
-          console.log("Logout response:", logoutResponse.status);
+          console.log("[Evolution Instance] Logout response:", logoutResponse.status);
         }
 
-        // Update status in database
+        // 2. Update status in database and reset the flag
         await supabaseClient
           .from("connections")
-          .update({ status: "disconnected", qr_code: null, phone_number: null })
+          .update({ 
+            status: "disconnected", 
+            qr_code: null, 
+            phone_number: null,
+            disconnect_requested: false // Limpar flag após processar
+          })
           .eq("id", connectionId);
 
         return new Response(
