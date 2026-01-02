@@ -29,6 +29,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { useQuickReplies, useCreateQuickReply, useDeleteQuickReply, useUpdateQuickReply, QuickReply } from "@/hooks/useQuickReplies";
+import { useAuth } from "@/contexts/AuthContext";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
 const defaultCategories = ["Todas", "Saudações", "Atendimento", "Logística", "Suporte"];
 
@@ -42,6 +44,9 @@ const templateVariables = [
 ];
 
 export default function RespostasRapidas() {
+  const { hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('respostas_rapidas', 'edit');
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("Todas");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -162,13 +167,16 @@ export default function RespostasRapidas() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Respostas Rápidas</h2>
-          <p className="text-muted-foreground">Crie atalhos para agilizar seus atendimentos</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Respostas Rápidas</h2>
+            <p className="text-muted-foreground">Crie atalhos para agilizar seus atendimentos</p>
+          </div>
+          {!canEdit && <ReadOnlyBadge />}
         </div>
         <Dialog open={isDialogOpen} onOpenChange={(open) => open ? handleOpenDialog() : handleCloseDialog()}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
+            <Button className="gap-2" disabled={!canEdit}>
               <Plus className="w-4 h-4" />
               Nova Resposta
             </Button>
@@ -331,6 +339,7 @@ export default function RespostasRapidas() {
                     size="icon" 
                     className="w-8 h-8"
                     onClick={() => handleOpenDialog(reply)}
+                    disabled={!canEdit}
                   >
                     <Edit className="w-4 h-4" />
                   </Button>
@@ -339,6 +348,7 @@ export default function RespostasRapidas() {
                     size="icon" 
                     className="w-8 h-8 text-destructive hover:text-destructive"
                     onClick={() => setDeleteId(reply.id)}
+                    disabled={!canEdit}
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>

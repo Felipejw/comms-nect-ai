@@ -21,6 +21,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { useTags, useCreateTag, useUpdateTag, useDeleteTag, Tag as TagType } from "@/hooks/useTags";
+import { useAuth } from "@/contexts/AuthContext";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
 const colorOptions = [
   { name: "Vermelho", value: "#EF4444" },
@@ -34,6 +36,9 @@ const colorOptions = [
 ];
 
 export default function Tags() {
+  const { hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('tags', 'edit');
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<TagType | null>(null);
@@ -100,11 +105,14 @@ export default function Tags() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Tags</h2>
-          <p className="text-muted-foreground">Organize seus contatos com tags personalizadas</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Tags</h2>
+            <p className="text-muted-foreground">Organize seus contatos com tags personalizadas</p>
+          </div>
+          {!canEdit && <ReadOnlyBadge />}
         </div>
-        <Button className="gap-2" onClick={handleOpenCreate}>
+        <Button className="gap-2" onClick={handleOpenCreate} disabled={!canEdit}>
           <Plus className="w-4 h-4" />
           Nova Tag
         </Button>
@@ -144,6 +152,7 @@ export default function Tags() {
                     size="icon" 
                     className="w-8 h-8"
                     onClick={() => handleOpenEdit(tag)}
+                    disabled={!canEdit}
                   >
                     <Edit className="w-4 h-4" />
                   </Button>
@@ -152,6 +161,7 @@ export default function Tags() {
                     size="icon" 
                     className="w-8 h-8 text-destructive"
                     onClick={() => setDeleteTag(tag)}
+                    disabled={!canEdit}
                   >
                     <Trash2 className="w-4 h-4" />
                   </Button>

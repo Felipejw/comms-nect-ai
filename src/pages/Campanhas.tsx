@@ -50,6 +50,8 @@ import { useTags } from "@/hooks/useTags";
 import { format } from "date-fns";
 import { CampaignMetricsDashboard } from "@/components/campanhas/CampaignMetricsDashboard";
 import { ptBR } from "date-fns/locale";
+import { useAuth } from "@/contexts/AuthContext";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
 const statusConfig = {
   draft: { label: "Rascunho", className: "bg-muted text-muted-foreground" },
@@ -59,6 +61,9 @@ const statusConfig = {
 };
 
 export default function Campanhas() {
+  const { hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('campanhas', 'edit');
+  
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -200,11 +205,14 @@ export default function Campanhas() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Disparo em Massa</h2>
-          <p className="text-muted-foreground">Crie e gerencie seus disparos de mensagens</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Disparo em Massa</h2>
+            <p className="text-muted-foreground">Crie e gerencie seus disparos de mensagens</p>
+          </div>
+          {!canEdit && <ReadOnlyBadge />}
         </div>
-        <Button className="gap-2" onClick={() => setIsDialogOpen(true)}>
+        <Button className="gap-2" onClick={() => setIsDialogOpen(true)} disabled={!canEdit}>
           <Plus className="w-4 h-4" />
           Novo Disparo
         </Button>
@@ -252,7 +260,7 @@ export default function Campanhas() {
               <Send className="w-12 h-12 text-muted-foreground/30 mb-4" />
               <h3 className="text-lg font-medium mb-2">Nenhum disparo encontrado</h3>
               <p className="text-muted-foreground mb-4">Crie seu primeiro disparo em massa para começar</p>
-              <Button onClick={() => setIsDialogOpen(true)}>
+              <Button onClick={() => setIsDialogOpen(true)} disabled={!canEdit}>
                 <Plus className="w-4 h-4 mr-2" />
                 Criar Disparo
               </Button>
@@ -286,7 +294,7 @@ export default function Campanhas() {
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={() => openContactsDialog(campaign)}>
+                              <DropdownMenuItem onClick={() => openContactsDialog(campaign)} disabled={!canEdit}>
                                 <Users className="w-4 h-4 mr-2" />
                                 Adicionar contatos
                               </DropdownMenuItem>
@@ -295,12 +303,12 @@ export default function Campanhas() {
                                 Ver estatísticas
                               </DropdownMenuItem>
                               {campaign.status === "active" ? (
-                                <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "paused")}>
+                                <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "paused")} disabled={!canEdit}>
                                   <Pause className="w-4 h-4 mr-2" />
                                   Pausar
                                 </DropdownMenuItem>
                               ) : campaign.status === "paused" || campaign.status === "draft" ? (
-                                <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "active")}>
+                                <DropdownMenuItem onClick={() => handleUpdateStatus(campaign.id, "active")} disabled={!canEdit}>
                                   <Play className="w-4 h-4 mr-2" />
                                   {campaign.status === "draft" ? "Iniciar" : "Retomar"}
                                 </DropdownMenuItem>
@@ -308,6 +316,7 @@ export default function Campanhas() {
                               <DropdownMenuItem 
                                 className="text-destructive"
                                 onClick={() => openDeleteDialog(campaign)}
+                                disabled={!canEdit}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
                                 Excluir

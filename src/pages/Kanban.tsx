@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Plus, MoreHorizontal, Clock, User, Edit, Trash2, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
 import { Button } from "@/components/ui/button";
@@ -41,7 +41,8 @@ import {
   KanbanConversation,
 } from "@/hooks/useKanban";
 import { useNavigate } from "react-router-dom";
-import { useRef } from "react";
+import { useAuth } from "@/contexts/AuthContext";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
 const priorityConfig = {
   0: { label: "Baixa", className: "bg-muted text-muted-foreground" },
@@ -65,6 +66,9 @@ function formatRelativeTime(dateString: string | null): string {
 }
 
 export default function Kanban() {
+  const { hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('kanban', 'edit');
+  
   const { data: columns = [], isLoading: columnsLoading } = useKanbanColumns();
   const { data: conversations = [], isLoading: conversationsLoading } = useKanbanConversations();
   const createColumn = useCreateKanbanColumn();
@@ -139,6 +143,8 @@ export default function Kanban() {
   };
 
   const handleDragEnd = async (result: DropResult) => {
+    if (!canEdit) return; // Prevent dragging if user doesn't have edit permission
+    
     const { destination, source, draggableId } = result;
 
     if (!destination) return;
@@ -183,11 +189,14 @@ export default function Kanban() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold">Kanban de Conversas</h2>
-          <p className="text-muted-foreground">Arraste as conversas entre as colunas</p>
+        <div className="flex items-center gap-3">
+          <div>
+            <h2 className="text-2xl font-bold">Kanban de Conversas</h2>
+            <p className="text-muted-foreground">Arraste as conversas entre as colunas</p>
+          </div>
+          {!canEdit && <ReadOnlyBadge />}
         </div>
-        <Button className="gap-2" onClick={() => setIsCreateDialogOpen(true)}>
+        <Button className="gap-2" onClick={() => setIsCreateDialogOpen(true)} disabled={!canEdit}>
           <Plus className="w-4 h-4" />
           Nova Coluna
         </Button>
@@ -283,13 +292,14 @@ export default function Kanban() {
                       </Button>
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEditDialog(column)}>
+                      <DropdownMenuItem onClick={() => openEditDialog(column)} disabled={!canEdit}>
                         <Edit className="w-4 h-4 mr-2" />
                         Editar
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         onClick={() => openDeleteDialog(column)}
                         className="text-destructive"
+                        disabled={!canEdit}
                       >
                         <Trash2 className="w-4 h-4 mr-2" />
                         Excluir
