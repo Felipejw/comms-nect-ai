@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive } from "lucide-react";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -60,6 +60,7 @@ import { useNotifications } from "@/hooks/useNotifications";
 import { useCreateSchedule } from "@/hooks/useSchedules";
 import { useFlows } from "@/hooks/useFlows";
 import { useQueues } from "@/hooks/useQueues";
+import { useBulkDeleteConversations, useBulkUpdateConversations } from "@/hooks/useBulkConversationActions";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
@@ -70,6 +71,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useUsers } from "@/hooks/useUsers";
 
 // Template variable replacement helper
 const replaceTemplateVariables = (
@@ -156,6 +158,15 @@ export default function Atendimento() {
   // Signature toggle state
   const [signatureEnabled, setSignatureEnabled] = useState(false);
   
+  // Bulk selection state
+  const [bulkSelectionMode, setBulkSelectionMode] = useState(false);
+  const [selectedConversationIds, setSelectedConversationIds] = useState<Set<string>>(new Set());
+  const [showBulkDeleteDialog, setShowBulkDeleteDialog] = useState(false);
+  const [showBulkStatusDialog, setShowBulkStatusDialog] = useState(false);
+  const [showBulkAssignDialog, setShowBulkAssignDialog] = useState(false);
+  const [bulkStatusValue, setBulkStatusValue] = useState<string>("");
+  const [bulkAssignValue, setBulkAssignValue] = useState<string>("");
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +193,9 @@ export default function Atendimento() {
   const createSchedule = useCreateSchedule();
   const { data: flows } = useFlows();
   const { data: queues } = useQueues();
+  const { data: users } = useUsers();
+  const bulkDeleteConversations = useBulkDeleteConversations();
+  const bulkUpdateConversations = useBulkUpdateConversations();
   
   // Active flows for bot transfer
   const activeFlows = useMemo(() => flows?.filter(f => f.is_active) || [], [flows]);
@@ -340,6 +354,82 @@ export default function Atendimento() {
         ? prev.filter(t => t !== tagId)
         : [...prev, tagId]
     );
+  };
+
+  // Bulk selection functions
+  const toggleBulkSelectionMode = () => {
+    setBulkSelectionMode(!bulkSelectionMode);
+    setSelectedConversationIds(new Set());
+  };
+
+  const toggleConversationSelection = (id: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    setSelectedConversationIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedConversationIds.size === filteredConversations.length) {
+      setSelectedConversationIds(new Set());
+    } else {
+      setSelectedConversationIds(new Set(filteredConversations.map(c => c.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    await bulkDeleteConversations.mutateAsync(Array.from(selectedConversationIds));
+    setSelectedConversationIds(new Set());
+    setBulkSelectionMode(false);
+    setShowBulkDeleteDialog(false);
+    setSelectedConversation(null);
+  };
+
+  const handleBulkStatusUpdate = async () => {
+    if (!bulkStatusValue) return;
+    await bulkUpdateConversations.mutateAsync({
+      ids: Array.from(selectedConversationIds),
+      updates: { status: bulkStatusValue as "new" | "in_progress" | "resolved" | "archived" }
+    });
+    setSelectedConversationIds(new Set());
+    setBulkSelectionMode(false);
+    setShowBulkStatusDialog(false);
+    setBulkStatusValue("");
+  };
+
+  const handleBulkAssign = async () => {
+    await bulkUpdateConversations.mutateAsync({
+      ids: Array.from(selectedConversationIds),
+      updates: { assigned_to: bulkAssignValue === "none" ? null : bulkAssignValue || null }
+    });
+    setSelectedConversationIds(new Set());
+    setBulkSelectionMode(false);
+    setShowBulkAssignDialog(false);
+    setBulkAssignValue("");
+  };
+
+  const handleBulkResolve = async () => {
+    await bulkUpdateConversations.mutateAsync({
+      ids: Array.from(selectedConversationIds),
+      updates: { status: "resolved" }
+    });
+    setSelectedConversationIds(new Set());
+    setBulkSelectionMode(false);
+  };
+
+  const handleBulkArchive = async () => {
+    await bulkUpdateConversations.mutateAsync({
+      ids: Array.from(selectedConversationIds),
+      updates: { status: "archived" }
+    });
+    setSelectedConversationIds(new Set());
+    setBulkSelectionMode(false);
   };
 
   // Auto-scroll to bottom when new messages arrive
@@ -979,6 +1069,18 @@ export default function Atendimento() {
               </PopoverContent>
             </Popover>
             <Button
+              variant={bulkSelectionMode ? "secondary" : "outline"}
+              size="sm"
+              onClick={toggleBulkSelectionMode}
+              title={bulkSelectionMode ? "Cancelar seleção" : "Selecionar conversas"}
+            >
+              {bulkSelectionMode ? (
+                <X className="w-4 h-4" />
+              ) : (
+                <CheckSquare className="w-4 h-4" />
+              )}
+            </Button>
+            <Button
               variant={permission === 'granted' ? 'outline' : 'default'}
               size="sm"
               onClick={requestPermission}
@@ -1061,6 +1163,73 @@ export default function Atendimento() {
           </Tabs>
         </div>
 
+        {/* Bulk Selection Bar */}
+        {bulkSelectionMode && (
+          <div className="p-3 bg-primary/10 border-b border-border">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  checked={selectedConversationIds.size === filteredConversations.length && filteredConversations.length > 0}
+                  onCheckedChange={toggleSelectAll}
+                />
+                <span className="text-sm font-medium">
+                  {selectedConversationIds.size} selecionada(s)
+                </span>
+              </div>
+              <Button variant="ghost" size="sm" onClick={toggleBulkSelectionMode}>
+                <X className="w-4 h-4" />
+              </Button>
+            </div>
+            {selectedConversationIds.size > 0 && (
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={() => setShowBulkDeleteDialog(true)}
+                  disabled={bulkDeleteConversations.isPending}
+                >
+                  <Trash2 className="w-4 h-4 mr-1" />
+                  Excluir
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleBulkResolve}
+                  disabled={bulkUpdateConversations.isPending}
+                >
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Resolver
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleBulkArchive}
+                  disabled={bulkUpdateConversations.isPending}
+                >
+                  <Archive className="w-4 h-4 mr-1" />
+                  Arquivar
+                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <MoreHorizontal className="w-4 h-4 mr-1" />
+                      Mais
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem onClick={() => setShowBulkStatusDialog(true)}>
+                      Alterar Status
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowBulkAssignDialog(true)}>
+                      Atribuir Agente
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto scrollbar-thin">
           {filteredConversations.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
@@ -1070,12 +1239,21 @@ export default function Atendimento() {
             filteredConversations.map((conversation) => (
               <div
                 key={conversation.id}
-                onClick={() => handleSelectConversation(conversation)}
+                onClick={() => !bulkSelectionMode && handleSelectConversation(conversation)}
                 className={cn(
                   "conversation-item border-b border-border cursor-pointer p-3 sm:p-4",
-                  selectedConversation?.id === conversation.id && "conversation-item-active"
+                  selectedConversation?.id === conversation.id && !bulkSelectionMode && "conversation-item-active",
+                  selectedConversationIds.has(conversation.id) && "bg-primary/5"
                 )}
               >
+                {bulkSelectionMode && (
+                  <Checkbox
+                    checked={selectedConversationIds.has(conversation.id)}
+                    onCheckedChange={() => toggleConversationSelection(conversation.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="mr-2 shrink-0"
+                  />
+                )}
                 <Avatar className="w-10 h-10 sm:w-12 sm:h-12 shrink-0">
                   <AvatarImage src={conversation.contact?.avatar_url || undefined} />
                   <AvatarFallback className="bg-primary/10 text-primary font-medium text-sm">
@@ -1835,6 +2013,118 @@ export default function Atendimento() {
             >
               {updateConversation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
               Confirmar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Delete Dialog */}
+      <AlertDialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir conversas em massa</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir {selectedConversationIds.size} conversa(s)? 
+              Esta ação não pode ser desfeita e todas as mensagens serão removidas.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleBulkDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {bulkDeleteConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Excluir {selectedConversationIds.size} conversa(s)
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Status Dialog */}
+      <Dialog open={showBulkStatusDialog} onOpenChange={setShowBulkStatusDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Alterar Status em Massa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Alterar o status de {selectedConversationIds.size} conversa(s) para:
+            </p>
+            <Select value={bulkStatusValue} onValueChange={setBulkStatusValue}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione um status" />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(statusConfig).map(([key, config]) => (
+                  <SelectItem key={key} value={key}>
+                    <Badge className={cn("text-xs", config.className)}>
+                      {config.label}
+                    </Badge>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkStatusDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleBulkStatusUpdate}
+              disabled={bulkUpdateConversations.isPending || !bulkStatusValue}
+            >
+              {bulkUpdateConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Aplicar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Assign Dialog */}
+      <Dialog open={showBulkAssignDialog} onOpenChange={setShowBulkAssignDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Atribuir Agente em Massa</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <p className="text-sm text-muted-foreground">
+              Atribuir {selectedConversationIds.size} conversa(s) para:
+            </p>
+            <Select value={bulkAssignValue} onValueChange={setBulkAssignValue}>
+              <SelectTrigger>
+                <SelectValue placeholder="Selecione um agente" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">
+                  <span className="text-muted-foreground">Sem atribuição</span>
+                </SelectItem>
+                {users?.map(u => (
+                  <SelectItem key={u.id} value={u.user_id}>
+                    <div className="flex items-center gap-2">
+                      <Avatar className="w-5 h-5">
+                        <AvatarImage src={u.avatar_url || undefined} />
+                        <AvatarFallback className="text-[10px]">
+                          {u.name?.slice(0, 2).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      {u.name}
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBulkAssignDialog(false)}>
+              Cancelar
+            </Button>
+            <Button 
+              onClick={handleBulkAssign}
+              disabled={bulkUpdateConversations.isPending}
+            >
+              {bulkUpdateConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Atribuir
             </Button>
           </DialogFooter>
         </DialogContent>
