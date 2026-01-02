@@ -774,6 +774,7 @@ export type Database = {
           last_seen: string | null
           name: string
           phone: string | null
+          signature_enabled: boolean | null
           updated_at: string
           user_id: string
         }
@@ -786,6 +787,7 @@ export type Database = {
           last_seen?: string | null
           name: string
           phone?: string | null
+          signature_enabled?: boolean | null
           updated_at?: string
           user_id: string
         }
@@ -798,6 +800,7 @@ export type Database = {
           last_seen?: string | null
           name?: string
           phone?: string | null
+          signature_enabled?: boolean | null
           updated_at?: string
           user_id?: string
         }
