@@ -24,6 +24,7 @@ function TriggerNode({ data, selected }: NodeProps) {
       <Handle
         type="target"
         position={Position.Top}
+        id="target"
         className="!w-3 !h-3 !bg-primary !border-2 !border-background"
       />
       <div className="flex items-center gap-3">
@@ -46,6 +47,7 @@ function TriggerNode({ data, selected }: NodeProps) {
       <Handle
         type="source"
         position={Position.Bottom}
+        id="source"
         className="!w-3 !h-3 !bg-primary !border-2 !border-background"
       />
     </div>
