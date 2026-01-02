@@ -109,6 +109,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="keyword">Palavra-chave</SelectItem>
+                  <SelectItem value="phrase">Frase</SelectItem>
                   <SelectItem value="new_conversation">Nova conversa</SelectItem>
                 </SelectContent>
               </Select>
@@ -123,10 +124,24 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                 />
               </div>
             )}
+            {formData.triggerType === "phrase" && (
+              <div className="space-y-2">
+                <Label>Frase</Label>
+                <Input
+                  value={(formData.triggerValue as string) || ""}
+                  onChange={(e) => handleChange("triggerValue", e.target.value)}
+                  placeholder="Ex: quero fazer um pedido"
+                />
+                <p className="text-xs text-muted-foreground">
+                  A frase será comparada parcialmente com a mensagem do usuário
+                </p>
+              </div>
+            )}
           </>
         );
 
       case "message":
+        const messageType = (formData.messageType as string) || "text";
         return (
           <>
             <div className="space-y-2">
@@ -138,74 +153,64 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
               />
             </div>
             <div className="space-y-2">
-              <Label>Conteúdo da mensagem</Label>
-              <Textarea
-                value={(formData.content as string) || ""}
-                onChange={(e) => handleChange("content", e.target.value)}
-                placeholder="Digite a mensagem que será enviada..."
-                rows={4}
-              />
-              <p className="text-xs text-muted-foreground">
-                Use {"{{nome}}"} para inserir variáveis
-              </p>
+              <Label>Tipo de mensagem</Label>
+              <Select
+                value={messageType}
+                onValueChange={(v) => handleChange("messageType", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="text">Texto</SelectItem>
+                  <SelectItem value="image">Imagem</SelectItem>
+                  <SelectItem value="video">Vídeo</SelectItem>
+                  <SelectItem value="document">Documento</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
+            {messageType === "text" && (
+              <div className="space-y-2">
+                <Label>Conteúdo da mensagem</Label>
+                <Textarea
+                  value={(formData.content as string) || ""}
+                  onChange={(e) => handleChange("content", e.target.value)}
+                  placeholder="Digite a mensagem que será enviada..."
+                  rows={4}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Use {"{{nome}}"} para inserir variáveis
+                </p>
+              </div>
+            )}
+            {(messageType === "image" || messageType === "video" || messageType === "document") && (
+              <>
+                <div className="space-y-2">
+                  <Label>URL do arquivo</Label>
+                  <Input
+                    value={(formData.mediaUrl as string) || ""}
+                    onChange={(e) => handleChange("mediaUrl", e.target.value)}
+                    placeholder={`https://exemplo.com/${messageType === "image" ? "imagem.jpg" : messageType === "video" ? "video.mp4" : "documento.pdf"}`}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Cole a URL direta do arquivo de mídia
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Legenda (opcional)</Label>
+                  <Textarea
+                    value={(formData.caption as string) || ""}
+                    onChange={(e) => handleChange("caption", e.target.value)}
+                    placeholder="Digite uma legenda para a mídia..."
+                    rows={2}
+                  />
+                </div>
+              </>
+            )}
           </>
         );
 
-      case "condition":
-        return (
-          <>
-            <div className="space-y-2">
-              <Label>Nome do bloco</Label>
-              <Input
-                value={(formData.label as string) || ""}
-                onChange={(e) => handleChange("label", e.target.value)}
-                placeholder="Condição"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Campo para verificar</Label>
-              <Select
-                value={(formData.field as string) || ""}
-                onValueChange={(v) => handleChange("field", v)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="tag">Tag</SelectItem>
-                  <SelectItem value="variable">Variável</SelectItem>
-                  <SelectItem value="time">Horário</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Operador</Label>
-              <Select
-                value={(formData.operator as string) || ""}
-                onValueChange={(v) => handleChange("operator", v)}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione..." />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="equals">Igual a</SelectItem>
-                  <SelectItem value="contains">Contém</SelectItem>
-                  <SelectItem value="greater">Maior que</SelectItem>
-                  <SelectItem value="less">Menor que</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Valor</Label>
-              <Input
-                value={(formData.value as string) || ""}
-                onChange={(e) => handleChange("value", e.target.value)}
-                placeholder="Valor para comparar"
-              />
-            </div>
-          </>
-        );
+
 
       case "delay":
         return (
@@ -592,6 +597,16 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                 rows={2}
               />
             </div>
+            <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+              <div className="space-y-0.5">
+                <Label>Marcar como resolvido</Label>
+                <p className="text-xs text-muted-foreground">Encerrar e resolver a conversa</p>
+              </div>
+              <Switch
+                checked={(formData.markAsResolved as boolean) ?? true}
+                onCheckedChange={(v) => handleChange("markAsResolved", v)}
+              />
+            </div>
           </>
         );
 
@@ -604,7 +619,6 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
     const titles: Record<string, string> = {
       trigger: "Configurar Gatilho",
       message: "Configurar Mensagem",
-      condition: "Configurar Condição",
       delay: "Configurar Aguardar",
       menu: "Configurar Menu",
       ai: "Configurar IA",

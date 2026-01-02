@@ -27,6 +27,8 @@ function TriggerNode({ data, selected }: NodeProps) {
           <p className="text-xs text-muted-foreground">
             {nodeData.triggerType === "keyword"
               ? `Palavra: ${nodeData.triggerValue || "..."}`
+              : nodeData.triggerType === "phrase"
+              ? `Frase: ${nodeData.triggerValue || "..."}`
               : nodeData.triggerType === "new_conversation"
               ? "Nova conversa"
               : "Clique para configurar"}
