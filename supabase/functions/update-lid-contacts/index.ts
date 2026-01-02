@@ -26,7 +26,7 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Get all contacts with whatsapp_lid that have invalid phone numbers (same as LID)
+    // Get all contacts with whatsapp_lid
     const { data: contacts, error: contactsError } = await supabase
       .from('contacts')
       .select('id, name, phone, whatsapp_lid')
@@ -39,7 +39,7 @@ serve(async (req) => {
 
     console.log(`[UpdateLID] Found ${contacts?.length || 0} contacts with LID`);
 
-    // Get an active connection to use for the API calls
+    // Get an active connection
     const { data: connection, error: connError } = await supabase
       .from('connections')
       .select('*')
@@ -57,20 +57,50 @@ serve(async (req) => {
 
     const instanceName = (connection.session_data as Record<string, unknown>)?.instanceName as string || connection.name;
     
+    // Fetch all WhatsApp contacts at once to avoid multiple API calls
+    console.log(`[UpdateLID] Fetching all contacts from Evolution API...`);
+    const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instanceName}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': evolutionKey,
+      },
+      body: JSON.stringify({ where: {} }),
+    });
+
+    if (!contactResponse.ok) {
+      const errorText = await contactResponse.text();
+      console.error(`[UpdateLID] Failed to fetch contacts from Evolution:`, errorText);
+      return new Response(
+        JSON.stringify({ error: "Failed to fetch contacts from WhatsApp" }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const allWhatsAppContacts = await contactResponse.json();
+    const whatsAppContactsArray = Array.isArray(allWhatsAppContacts) ? allWhatsAppContacts : [];
+    console.log(`[UpdateLID] Got ${whatsAppContactsArray.length} contacts from WhatsApp`);
+
     const results = {
       total: contacts?.length || 0,
       updated: 0,
+      merged: 0,
       failed: 0,
       skipped: 0,
-      details: [] as { id: string; name: string; oldPhone: string; newPhone: string; status: string }[]
+      details: [] as { id: string; name: string; oldPhone: string; newPhone: string; status: string; mergedWith?: string }[]
     };
 
     for (const contact of contacts || []) {
       try {
         const lid = contact.whatsapp_lid;
         
-        // Check if phone is already a valid number (different from LID)
-        if (contact.phone && contact.phone !== lid && contact.phone.length >= 10) {
+        // Check if phone is already a valid number (different from LID and reasonable length)
+        const hasValidPhone = contact.phone && 
+                             contact.phone !== lid && 
+                             contact.phone.length >= 10 && 
+                             contact.phone.length <= 15;
+        
+        if (hasValidPhone) {
           console.log(`[UpdateLID] Skipping ${contact.name} - already has valid phone: ${contact.phone}`);
           results.skipped++;
           results.details.push({
@@ -83,65 +113,105 @@ serve(async (req) => {
           continue;
         }
 
-        // Try to get real phone from Evolution API
-        const remoteJid = `${lid}@lid`;
-        console.log(`[UpdateLID] Looking up contact ${contact.name} with LID: ${remoteJid}`);
+        // Find the LID contact in WhatsApp contacts
+        const lidRemoteJid = `${lid}@lid`;
+        const lidContact = whatsAppContactsArray.find((c: any) => c.remoteJid === lidRemoteJid);
+        
+        let realPhone: string | null = null;
+        
+        if (lidContact && lidContact.pushName) {
+          // Find linked contact with same pushName and real number
+          const linkedContact = whatsAppContactsArray.find((c: any) => 
+            c.pushName === lidContact.pushName && 
+            c.remoteJid?.includes('@s.whatsapp.net')
+          );
+          
+          if (linkedContact) {
+            realPhone = linkedContact.remoteJid.replace('@s.whatsapp.net', '');
+            console.log(`[UpdateLID] Found real phone via pushName for ${contact.name}: ${realPhone}`);
+          }
+        }
 
-        // First, try getting contact list and find the matching LID
-        const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instanceName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': evolutionKey,
-          },
-          body: JSON.stringify({
-            where: {}
-          }),
-        });
-
-        if (!contactResponse.ok) {
-          console.error(`[UpdateLID] API error for ${contact.name}:`, await contactResponse.text());
+        if (!realPhone) {
+          console.log(`[UpdateLID] Could not find real phone for ${contact.name} (LID: ${lid})`);
           results.failed++;
           results.details.push({
             id: contact.id,
             name: contact.name,
             oldPhone: contact.phone || '',
             newPhone: '',
-            status: 'failed - API error'
+            status: 'failed - no real phone found'
           });
           continue;
         }
 
-        const allContacts = await contactResponse.json();
-        
-        // Find the contact that matches our LID
-        let realPhone: string | null = null;
-        const contactsArray = Array.isArray(allContacts) ? allContacts : [];
-        
-        // Find the contact with matching LID remoteJid
-        const matchingContact = contactsArray.find((c: any) => c.remoteJid === remoteJid);
-        
-        if (matchingContact) {
-          console.log(`[UpdateLID] Found matching contact for ${contact.name}:`, JSON.stringify(matchingContact));
-          
-          // Check if there's a linked regular contact (same pushName with @s.whatsapp.net)
-          if (matchingContact.pushName) {
-            const linkedContact = contactsArray.find((c: any) => 
-              c.pushName === matchingContact.pushName && 
-              c.remoteJid?.includes('@s.whatsapp.net')
-            );
-            
-            if (linkedContact) {
-              realPhone = linkedContact.remoteJid.replace('@s.whatsapp.net', '');
-              console.log(`[UpdateLID] Found linked phone via pushName: ${realPhone}`);
-            }
-          }
-        } else {
-          console.log(`[UpdateLID] No matching contact found for LID: ${remoteJid}`);
-        }
+        // Check if there's already a contact with this real phone number
+        const { data: existingContactWithPhone } = await supabase
+          .from('contacts')
+          .select('id, name')
+          .eq('phone', realPhone)
+          .neq('id', contact.id)
+          .single();
 
-        if (realPhone && realPhone !== lid) {
-          // Update contact with real phone number
+        if (existingContactWithPhone) {
+          // Merge: Move conversations from LID contact to real phone contact
+          console.log(`[UpdateLID] Found duplicate! Merging ${contact.name} into ${existingContactWithPhone.name}`);
+          
+          // Update all conversations to point to the real contact
+          const { error: convUpdateError } = await supabase
+            .from('conversations')
+            .update({ contact_id: existingContactWithPhone.id })
+            .eq('contact_id', contact.id);
+          
+          if (convUpdateError) {
+            console.error(`[UpdateLID] Error moving conversations:`, convUpdateError);
+            results.failed++;
+            results.details.push({
+              id: contact.id,
+              name: contact.name,
+              oldPhone: contact.phone || '',
+              newPhone: realPhone,
+              status: 'failed - could not merge conversations'
+            });
+            continue;
+          }
+
+          // Update the real contact to have the LID if it doesn't
+          const { data: realContact } = await supabase
+            .from('contacts')
+            .select('whatsapp_lid')
+            .eq('id', existingContactWithPhone.id)
+            .single();
+          
+          if (realContact && !realContact.whatsapp_lid) {
+            await supabase
+              .from('contacts')
+              .update({ whatsapp_lid: lid })
+              .eq('id', existingContactWithPhone.id);
+          }
+
+          // Delete the duplicate LID contact
+          const { error: deleteError } = await supabase
+            .from('contacts')
+            .delete()
+            .eq('id', contact.id);
+          
+          if (deleteError) {
+            console.error(`[UpdateLID] Error deleting duplicate contact:`, deleteError);
+          }
+
+          console.log(`[UpdateLID] Merged ${contact.name} into ${existingContactWithPhone.name} and deleted duplicate`);
+          results.merged++;
+          results.details.push({
+            id: contact.id,
+            name: contact.name,
+            oldPhone: contact.phone || lid,
+            newPhone: realPhone,
+            status: 'merged',
+            mergedWith: existingContactWithPhone.id
+          });
+        } else {
+          // No duplicate - just update the phone number
           const { error: updateError } = await supabase
             .from('contacts')
             .update({ phone: realPhone })
@@ -168,20 +238,7 @@ serve(async (req) => {
               status: 'updated'
             });
           }
-        } else {
-          console.log(`[UpdateLID] Could not find real phone for ${contact.name}`);
-          results.failed++;
-          results.details.push({
-            id: contact.id,
-            name: contact.name,
-            oldPhone: contact.phone || '',
-            newPhone: '',
-            status: 'failed - no real phone found'
-          });
         }
-
-        // Small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 500));
 
       } catch (err) {
         const errMessage = err instanceof Error ? err.message : String(err);
@@ -197,7 +254,7 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[UpdateLID] Complete. Updated: ${results.updated}, Failed: ${results.failed}, Skipped: ${results.skipped}`);
+    console.log(`[UpdateLID] Complete. Updated: ${results.updated}, Merged: ${results.merged}, Failed: ${results.failed}, Skipped: ${results.skipped}`);
 
     return new Response(
       JSON.stringify(results),

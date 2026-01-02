@@ -199,56 +199,80 @@ serve(async (req) => {
         const whatsappLid = isLid ? phoneNumber : null;
         
         // For LID contacts, try to get the real phone number from Evolution API
-        let realPhoneNumber = phoneNumber;
+        let realPhoneNumber: string | null = null;
+        const pushName = data?.pushName;
+        
         if (isLid && phoneNumber) {
           try {
             const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
             const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
             
             if (evolutionUrl && evolutionKey) {
-              // Try to fetch contact info using the LID
+              // Fetch ALL contacts to find the LID -> real phone mapping
               const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instance}`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
                   'apikey': evolutionKey,
                 },
-                body: JSON.stringify({
-                  where: {
-                    id: remoteJid
-                  }
-                }),
+                body: JSON.stringify({ where: {} }), // Fetch all contacts
               });
               
               if (contactResponse.ok) {
-                const contactData = await contactResponse.json();
-                console.log(`[Webhook] Contact lookup result:`, JSON.stringify(contactData));
+                const allContacts = await contactResponse.json();
+                const contactsArray = Array.isArray(allContacts) ? allContacts : [];
                 
-                // Try to extract phone from various response formats
-                const contactInfo = Array.isArray(contactData) ? contactData[0] : contactData;
-                if (contactInfo?.id && contactInfo.id.includes('@s.whatsapp.net')) {
-                  realPhoneNumber = contactInfo.id.replace('@s.whatsapp.net', '');
-                  console.log(`[Webhook] Found real phone number: ${realPhoneNumber}`);
-                } else if (contactInfo?.number) {
-                  realPhoneNumber = contactInfo.number;
-                  console.log(`[Webhook] Found real phone from number field: ${realPhoneNumber}`);
+                // 1. Find the LID contact
+                const lidRemoteJid = `${phoneNumber}@lid`;
+                const lidContact = contactsArray.find((c: any) => c.remoteJid === lidRemoteJid);
+                
+                if (lidContact) {
+                  console.log(`[Webhook] Found LID contact:`, JSON.stringify(lidContact));
+                  
+                  // 2. Try to find linked contact with same pushName and real number
+                  const contactPushName = lidContact.pushName || pushName;
+                  if (contactPushName) {
+                    const linkedContact = contactsArray.find((c: any) => 
+                      c.pushName === contactPushName && 
+                      c.remoteJid?.includes('@s.whatsapp.net')
+                    );
+                    
+                    if (linkedContact) {
+                      realPhoneNumber = linkedContact.remoteJid.replace('@s.whatsapp.net', '');
+                      console.log(`[Webhook] Found real phone via pushName match: ${realPhoneNumber}`);
+                    }
+                  }
+                }
+                
+                // 3. If still no match, try direct ID lookup
+                if (!realPhoneNumber) {
+                  const directMatch = contactsArray.find((c: any) => 
+                    c.id === remoteJid && c.remoteJid?.includes('@s.whatsapp.net')
+                  );
+                  if (directMatch) {
+                    realPhoneNumber = directMatch.remoteJid.replace('@s.whatsapp.net', '');
+                    console.log(`[Webhook] Found real phone via direct match: ${realPhoneNumber}`);
+                  }
                 }
               }
             }
           } catch (lookupError) {
             console.error(`[Webhook] Error looking up contact:`, lookupError);
           }
+        } else if (!isLid) {
+          // Not a LID, use the phone number directly
+          realPhoneNumber = phoneNumber;
         }
 
-        if (!realPhoneNumber) {
+        // Final phone number to use (prefer real phone, fallback to LID if no real found)
+        const finalPhoneNumber = realPhoneNumber || phoneNumber;
+
+        if (!finalPhoneNumber) {
           console.log("[Webhook] Could not extract phone number from remoteJid:", remoteJid);
           break;
         }
 
-        // Use the real phone number for display, keep LID for reference
-        phoneNumber = realPhoneNumber;
-
-        console.log(`[Webhook] Processing message - Phone: ${phoneNumber}, isLID: ${isLid}, LID: ${whatsappLid}, RemoteJid: ${remoteJid}`);
+        console.log(`[Webhook] Processing message - RealPhone: ${realPhoneNumber}, LID: ${whatsappLid}, isLID: ${isLid}, RemoteJid: ${remoteJid}`);
 
         // Get message content - handle different message types
         const message = data?.message || {};
@@ -321,11 +345,36 @@ serve(async (req) => {
 
         console.log(`[Webhook] Message ${fromMe ? 'SENT' : 'RECEIVED'} - Phone: ${phoneNumber}, Content: ${messageContent.substring(0, 50)}`);
 
-        // Find or create contact - check by phone OR by LID
+        // ============ CONTACT SYNCHRONIZATION LOGIC ============
+        // Priority: 1. Find by real phone, 2. Find by LID, 3. Create new
+        // Always merge LID with real phone when both are known
         let contact;
         
-        // First try to find by LID if we have one
-        if (whatsappLid) {
+        // 1. First, try to find by REAL phone number (if we have one)
+        if (realPhoneNumber && realPhoneNumber !== whatsappLid) {
+          const { data: contactByPhone } = await supabaseClient
+            .from("contacts")
+            .select("*")
+            .eq("phone", realPhoneNumber)
+            .single();
+          
+          if (contactByPhone) {
+            contact = contactByPhone;
+            console.log(`[Webhook] Found contact by real phone: ${contact.id}`);
+            
+            // Add LID to this contact if not already set
+            if (whatsappLid && !contact.whatsapp_lid) {
+              await supabaseClient
+                .from("contacts")
+                .update({ whatsapp_lid: whatsappLid })
+                .eq("id", contact.id);
+              console.log(`[Webhook] Added LID ${whatsappLid} to existing contact ${contact.id}`);
+            }
+          }
+        }
+        
+        // 2. If not found by real phone, try to find by LID
+        if (!contact && whatsappLid) {
           const { data: contactByLid } = await supabaseClient
             .from("contacts")
             .select("*")
@@ -335,40 +384,57 @@ serve(async (req) => {
           if (contactByLid) {
             contact = contactByLid;
             console.log(`[Webhook] Found contact by LID: ${contact.id}`);
+            
+            // Update phone to real number if we now have it and it was stored as LID
+            if (realPhoneNumber && realPhoneNumber !== whatsappLid) {
+              if (!contact.phone || contact.phone === whatsappLid || contact.phone.length > 15) {
+                await supabaseClient
+                  .from("contacts")
+                  .update({ phone: realPhoneNumber })
+                  .eq("id", contact.id);
+                console.log(`[Webhook] Updated contact phone from LID to real: ${realPhoneNumber}`);
+              }
+            }
           }
         }
         
-        // If not found by LID, try by phone
+        // 3. Fallback: try by phoneNumber (which could be LID or real)
         if (!contact) {
           const { data: existingContact } = await supabaseClient
             .from("contacts")
             .select("*")
-            .eq("phone", phoneNumber)
+            .eq("phone", finalPhoneNumber)
             .single();
           
           contact = existingContact;
         }
 
         if (contact) {
-          // Preparar atualizações para o contato
+          // Prepare updates for existing contact
           const updates: Record<string, string | null> = {};
           
-          // Update contact name if we have a better one (pushName) and current is just the phone or LID-like
-          if (data?.pushName && (contact.name === contact.phone || contact.name?.match(/^\d{15,}$/))) {
-            updates.name = data.pushName;
+          // Update name if we have pushName and current name is just phone/LID
+          if (pushName && (contact.name === contact.phone || contact.name?.match(/^\d{15,}$/))) {
+            updates.name = pushName;
           }
           
-          // Atualizar foto de perfil se disponível e contato não tem foto
+          // Update avatar if available and contact doesn't have one
           if (profilePictureUrl && !contact.avatar_url) {
             updates.avatar_url = profilePictureUrl;
           }
           
-          // Store the LID if we have it and contact doesn't have one
+          // Store LID if we have it and contact doesn't
           if (whatsappLid && !contact.whatsapp_lid) {
             updates.whatsapp_lid = whatsappLid;
           }
           
-          // Aplicar atualizações se houver
+          // Update phone to real number if it's still the LID
+          if (realPhoneNumber && realPhoneNumber !== whatsappLid && 
+              (contact.phone === whatsappLid || !contact.phone || contact.phone.length > 15)) {
+            updates.phone = realPhoneNumber;
+          }
+          
+          // Apply updates if any
           if (Object.keys(updates).length > 0) {
             await supabaseClient
               .from("contacts")
@@ -377,14 +443,18 @@ serve(async (req) => {
             console.log(`[Webhook] Updated contact: ${JSON.stringify(updates)}`);
           }
         } else {
-          // Create new contact
+          // Create new contact - ONLY use real phone, never LID in phone field
+          const phoneToStore = (realPhoneNumber && realPhoneNumber !== whatsappLid) 
+            ? realPhoneNumber 
+            : finalPhoneNumber;
+          
           const { data: newContact, error: contactError } = await supabaseClient
             .from("contacts")
             .insert({
               name: contactName,
-              phone: phoneNumber,
+              phone: phoneToStore, // Real phone when available
               avatar_url: profilePictureUrl,
-              whatsapp_lid: whatsappLid,
+              whatsapp_lid: whatsappLid, // Always store LID for reference
               status: "active",
             })
             .select()
@@ -395,7 +465,7 @@ serve(async (req) => {
             throw contactError;
           }
           contact = newContact;
-          console.log(`[Webhook] New contact created: ${contact.id} (${contactName}), LID: ${whatsappLid}`);
+          console.log(`[Webhook] New contact created: ${contact.id} (${contactName}), Phone: ${phoneToStore}, LID: ${whatsappLid}`);
         }
 
         // Find or create conversation
