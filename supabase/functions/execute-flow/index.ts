@@ -966,9 +966,25 @@ serve(async (req) => {
     }
 
     const instanceName = (connection.session_data as Record<string, unknown>)?.instanceName as string || connection.name;
-    const phone = contactPhone || conversation.contacts?.phone;
-    const contactName = conversation.contacts?.name || "";
     const contactId = conversation.contact_id;
+    const contactName = conversation.contacts?.name || "";
+    
+    // Determine the correct phone/LID to use for sending messages
+    // If contact has a whatsapp_lid, use that (with @lid suffix) for sending
+    // Otherwise use the regular phone number
+    const whatsappLid = conversation.contacts?.whatsapp_lid;
+    let phone = contactPhone || conversation.contacts?.phone;
+    
+    // If we have a LID, we need to format it properly for the Evolution API
+    // The API expects either a regular phone number OR the full remoteJid format
+    if (whatsappLid && phone === whatsappLid) {
+      // The phone stored is actually the LID, not a real number
+      // Try using the LID format for Evolution API
+      phone = `${whatsappLid}@lid`;
+      console.log(`[FlowExecutor] Using LID format for sending: ${phone}`);
+    }
+    
+    console.log(`[FlowExecutor] Contact: ${contactName}, Phone: ${phone}, LID: ${whatsappLid}`);
 
     // Check if we're waiting for a menu response or AI response
     const flowState = conversation.flow_state as FlowState | null;
