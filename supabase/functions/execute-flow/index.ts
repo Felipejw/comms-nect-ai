@@ -93,6 +93,47 @@ async function sendWhatsAppMessage(
   }
 }
 
+// Message history type
+interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+// Fetch conversation history for AI context
+async function fetchConversationHistory(
+  supabase: any,
+  conversationId: string,
+  maxMessages: number = 10
+): Promise<ChatMessage[]> {
+  try {
+    const { data: messages, error } = await supabase
+      .from("messages")
+      .select("content, sender_type, created_at")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(maxMessages);
+
+    if (error || !messages) {
+      console.error("[FlowExecutor] Error fetching history:", error);
+      return [];
+    }
+
+    // Convert to chat format and reverse to chronological order
+    const history: ChatMessage[] = messages
+      .reverse()
+      .map((msg: any) => ({
+        role: msg.sender_type === "contact" ? "user" : "assistant",
+        content: msg.content,
+      }));
+
+    console.log(`[FlowExecutor] Loaded ${history.length} messages for context`);
+    return history;
+  } catch (error) {
+    console.error("[FlowExecutor] Error in fetchConversationHistory:", error);
+    return [];
+  }
+}
+
 // Call Google AI Studio API directly (for user's own API key)
 async function callGoogleAI(
   apiKey: string,
@@ -101,7 +142,8 @@ async function callGoogleAI(
   model: string,
   temperature: number,
   maxTokens: number,
-  knowledgeBase?: string
+  knowledgeBase?: string,
+  conversationHistory?: ChatMessage[]
 ): Promise<string> {
   const fullSystemPrompt = knowledgeBase 
     ? `${systemPrompt}\n\n### Base de conhecimento:\n${knowledgeBase}`
@@ -110,15 +152,28 @@ async function callGoogleAI(
   try {
     console.log("[FlowExecutor] Calling Google AI Studio with model:", model);
     
+    // Build contents array with history
+    const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
+    
+    if (conversationHistory && conversationHistory.length > 0) {
+      for (const msg of conversationHistory) {
+        contents.push({
+          role: msg.role === "user" ? "user" : "model",
+          parts: [{ text: msg.content }],
+        });
+      }
+    }
+    
+    // Add current user message
+    contents.push({ role: "user", parts: [{ text: userMessage }] });
+    
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          contents: [
-            { role: "user", parts: [{ text: userMessage }] }
-          ],
+          contents,
           systemInstruction: { parts: [{ text: fullSystemPrompt }] },
           generationConfig: {
             temperature: temperature || 0.7,
@@ -149,7 +204,8 @@ async function callLovableAI(
   model: string,
   temperature: number,
   maxTokens: number,
-  knowledgeBase?: string
+  knowledgeBase?: string,
+  conversationHistory?: ChatMessage[]
 ): Promise<string> {
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
   if (!lovableApiKey) {
@@ -164,6 +220,20 @@ async function callLovableAI(
   try {
     console.log("[FlowExecutor] Calling Lovable AI with model:", model);
     
+    // Build messages array with history
+    const messages: Array<{ role: string; content: string }> = [
+      { role: "system", content: fullSystemPrompt },
+    ];
+    
+    if (conversationHistory && conversationHistory.length > 0) {
+      for (const msg of conversationHistory) {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
+    
+    // Add current user message
+    messages.push({ role: "user", content: userMessage });
+    
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -172,10 +242,7 @@ async function callLovableAI(
       },
       body: JSON.stringify({
         model: model || "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: fullSystemPrompt },
-          { role: "user", content: userMessage },
-        ],
+        messages,
         temperature: temperature || 0.7,
         max_tokens: maxTokens || 1024,
       }),
@@ -203,12 +270,13 @@ async function callAI(
   maxTokens: number,
   knowledgeBase?: string,
   useOwnApiKey?: boolean,
-  googleApiKey?: string
+  googleApiKey?: string,
+  conversationHistory?: ChatMessage[]
 ): Promise<string> {
   if (useOwnApiKey && googleApiKey) {
-    return callGoogleAI(googleApiKey, systemPrompt, userMessage, model, temperature, maxTokens, knowledgeBase);
+    return callGoogleAI(googleApiKey, systemPrompt, userMessage, model, temperature, maxTokens, knowledgeBase, conversationHistory);
   }
-  return callLovableAI(systemPrompt, userMessage, model, temperature, maxTokens, knowledgeBase);
+  return callLovableAI(systemPrompt, userMessage, model, temperature, maxTokens, knowledgeBase, conversationHistory);
 }
 
 // Get the next node following an edge
@@ -621,6 +689,9 @@ async function executeFlowFromNode(
           const useOwnApiKey = currentNode.data.useOwnApiKey as boolean;
           const googleApiKey = currentNode.data.googleApiKey as string;
 
+          // Fetch conversation history for context
+          const conversationHistory = await fetchConversationHistory(supabase, conversationId, 10);
+
           const aiResponse = await callAI(
             systemPrompt, 
             messageContent, 
@@ -629,7 +700,8 @@ async function executeFlowFromNode(
             maxTokens, 
             knowledgeBase,
             useOwnApiKey,
-            googleApiKey
+            googleApiKey,
+            conversationHistory
           );
 
           await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, aiResponse);
@@ -939,6 +1011,9 @@ serve(async (req) => {
         });
       }
       
+      // Fetch conversation history for context
+      const conversationHistory = await fetchConversationHistory(supabase, conversationId, 10);
+      
       // Continue AI conversation
       const aiResponse = await callAI(
         aiData.systemPrompt,
@@ -948,7 +1023,8 @@ serve(async (req) => {
         aiData.maxTokens || 1024,
         aiData.knowledgeBase,
         aiData.useOwnApiKey,
-        aiData.googleApiKey
+        aiData.googleApiKey,
+        conversationHistory
       );
       
       await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, aiResponse);
