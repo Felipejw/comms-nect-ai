@@ -41,6 +41,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { PermissionsModal } from "@/components/usuarios/PermissionsModal";
+import { PermissionsPanel, PermissionState, getDefaultPermissions } from "@/components/usuarios/PermissionsPanel";
 
 const roleConfig = {
   admin: { label: "Administrador", className: "bg-destructive/10 text-destructive" },
@@ -65,6 +66,7 @@ export default function Usuarios() {
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "atendente">("atendente");
+  const [newPermissions, setNewPermissions] = useState<Record<string, PermissionState>>(getDefaultPermissions());
 
   const filteredUsers = users.filter(
     (u) =>
@@ -80,12 +82,22 @@ export default function Usuarios() {
 
     setIsCreating(true);
     try {
+      // Convert permissions to array format for API
+      const permissionsArray = newRole === "atendente" 
+        ? Object.entries(newPermissions).map(([module, perm]) => ({
+            module,
+            can_view: perm.can_view,
+            can_edit: perm.can_edit,
+          }))
+        : [];
+
       const { error } = await supabase.functions.invoke("create-user", {
         body: {
           email: newEmail.trim(),
           password: newPassword,
           name: newName.trim(),
           role: newRole,
+          permissions: permissionsArray,
         },
       });
 
@@ -97,6 +109,7 @@ export default function Usuarios() {
       setNewEmail("");
       setNewPassword("");
       setNewRole("atendente");
+      setNewPermissions(getDefaultPermissions());
       refetch();
     } catch (error) {
       toast.error("Erro ao criar atendente: " + (error as Error).message);
@@ -194,7 +207,12 @@ export default function Usuarios() {
               </div>
               <div className="space-y-2">
                 <Label>Nível</Label>
-                <Select value={newRole} onValueChange={(v) => setNewRole(v as "admin" | "atendente")}>
+                <Select value={newRole} onValueChange={(v) => {
+                  setNewRole(v as "admin" | "atendente");
+                  if (v === "admin") {
+                    setNewPermissions(getDefaultPermissions());
+                  }
+                }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Selecione o nível" />
                   </SelectTrigger>
@@ -204,6 +222,16 @@ export default function Usuarios() {
                   </SelectContent>
                 </Select>
               </div>
+              
+              {newRole === "atendente" && (
+                <div className="space-y-2">
+                  <Label>Permissões</Label>
+                  <PermissionsPanel 
+                    permissions={newPermissions}
+                    onPermissionsChange={setNewPermissions}
+                  />
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
