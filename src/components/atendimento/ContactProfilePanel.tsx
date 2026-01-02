@@ -21,22 +21,16 @@ import {
 } from '@/hooks/useContactProfile';
 import { useTags, useAddTagToContact, useRemoveTagFromContact } from '@/hooks/useTags';
 import { useUpdateContact } from '@/hooks/useContacts';
+import { useKanbanColumns } from '@/hooks/useKanbanColumns';
+import { useUpdateConversation } from '@/hooks/useConversations';
 import { format, formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 
 interface ContactProfilePanelProps {
   contactId: string;
+  conversationId?: string;
   onClose: () => void;
 }
-
-const kanbanStages = {
-  lead: { label: 'Lead', color: 'bg-blue-500/10 text-blue-500' },
-  contacted: { label: 'Contatado', color: 'bg-yellow-500/10 text-yellow-500' },
-  proposal: { label: 'Proposta', color: 'bg-purple-500/10 text-purple-500' },
-  negotiation: { label: 'Negociação', color: 'bg-orange-500/10 text-orange-500' },
-  closed_won: { label: 'Fechado ✓', color: 'bg-green-500/10 text-green-500' },
-  closed_lost: { label: 'Perdido', color: 'bg-red-500/10 text-red-500' },
-};
 
 const statusConfig = {
   new: { label: 'Nova', className: 'bg-primary/10 text-primary' },
@@ -45,13 +39,15 @@ const statusConfig = {
   archived: { label: 'Arquivada', className: 'bg-muted text-muted-foreground' },
 };
 
-export default function ContactProfilePanel({ contactId, onClose }: ContactProfilePanelProps) {
+export default function ContactProfilePanel({ contactId, conversationId, onClose }: ContactProfilePanelProps) {
   const { data: contact, isLoading: contactLoading } = useContactProfile(contactId);
   const { data: history, isLoading: historyLoading } = useContactConversationHistory(contactId);
   const { data: allTags } = useTags();
+  const { data: kanbanColumns = [] } = useKanbanColumns();
   
   const updateNotes = useUpdateContactNotes();
   const updateContact = useUpdateContact();
+  const updateConversation = useUpdateConversation();
   const fetchProfilePicture = useFetchWhatsAppProfilePicture();
   const addTagToContact = useAddTagToContact();
   const removeTagFromContact = useRemoveTagFromContact();
@@ -71,11 +67,16 @@ export default function ContactProfilePanel({ contactId, onClose }: ContactProfi
     await fetchProfilePicture.mutateAsync({ contactId: contact.id });
   };
 
-  const handleKanbanChange = async (stage: string) => {
-    if (!contact) return;
-    await updateContact.mutateAsync({ 
-      id: contact.id, 
-      kanban_stage: stage as any 
+  // Get current kanban column from conversation history
+  const currentConversation = history?.find(c => c.id === conversationId);
+  const currentKanbanColumnId = currentConversation?.kanban_column_id;
+  const currentKanbanColumn = kanbanColumns.find(c => c.id === currentKanbanColumnId);
+
+  const handleKanbanChange = async (columnId: string) => {
+    if (!conversationId) return;
+    await updateConversation.mutateAsync({ 
+      id: conversationId, 
+      kanban_column_id: columnId === 'none' ? null : columnId
     });
   };
 
@@ -164,9 +165,11 @@ export default function ContactProfilePanel({ contactId, onClose }: ContactProfi
               )}
             </div>
             <h4 className="font-semibold mt-3">{contact.name || contact.phone || 'Contato'}</h4>
-            <Badge className={kanbanStages[contact.kanban_stage || 'lead'].color}>
-              {kanbanStages[contact.kanban_stage || 'lead'].label}
-            </Badge>
+            {currentKanbanColumn && (
+              <Badge style={{ backgroundColor: `${currentKanbanColumn.color}20`, color: currentKanbanColumn.color }}>
+                {currentKanbanColumn.name}
+              </Badge>
+            )}
           </div>
 
           {/* Contact Info */}
@@ -195,19 +198,26 @@ export default function ContactProfilePanel({ contactId, onClose }: ContactProfi
 
           {/* Kanban Stage */}
           <div>
-            <label className="text-sm font-medium mb-2 block">Etapa do Funil</label>
+            <label className="text-sm font-medium mb-2 block">Etapa do Kanban</label>
             <Select 
-              value={contact.kanban_stage || 'lead'} 
+              value={currentKanbanColumnId || 'none'} 
               onValueChange={handleKanbanChange}
-              disabled={updateContact.isPending}
+              disabled={updateConversation.isPending || !conversationId}
             >
               <SelectTrigger>
-                <SelectValue />
+                <SelectValue placeholder="Selecione uma etapa" />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(kanbanStages).map(([value, { label }]) => (
-                  <SelectItem key={value} value={value}>
-                    {label}
+                <SelectItem value="none">Nenhuma etapa</SelectItem>
+                {kanbanColumns.map((column) => (
+                  <SelectItem key={column.id} value={column.id}>
+                    <div className="flex items-center gap-2">
+                      <div 
+                        className="w-3 h-3 rounded-full" 
+                        style={{ backgroundColor: column.color || '#3B82F6' }}
+                      />
+                      {column.name}
+                    </div>
                   </SelectItem>
                 ))}
               </SelectContent>
