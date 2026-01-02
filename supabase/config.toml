@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.update-lid-contacts]
 verify_jwt = false
+
+[functions.sync-contacts]
+verify_jwt = false
