@@ -1052,13 +1052,13 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>
-      <DialogContent className="max-w-md max-h-[85vh] flex flex-col overflow-hidden">
-        <DialogHeader className="flex-shrink-0">
+      <DialogContent className="max-w-md h-[85vh] flex flex-col">
+        <DialogHeader className="flex-shrink-0 pb-4">
           <DialogTitle>{getTitle()}</DialogTitle>
         </DialogHeader>
-        <ScrollArea className="flex-1 min-h-0 max-h-[calc(85vh-180px)]">
-          <div className="space-y-4 pb-2 pr-4">{renderFields()}</div>
-        </ScrollArea>
+        <div className="flex-1 overflow-y-auto min-h-0 pr-2">
+          <div className="space-y-4 pb-4">{renderFields()}</div>
+        </div>
         <div className="pt-4 border-t border-border space-y-2 flex-shrink-0">
           {onSaveFlow && (
             <Button
