@@ -218,7 +218,8 @@ export function useSaveFlowData() {
       if (edges.length > 0) {
         const { error: edgesError } = await supabase.from("flow_edges").insert(
           edges.map((edge) => ({
-            id: edge.id,
+            // Generate a proper UUID if the edge id is not a valid UUID (React Flow uses format like "xy-edge__...")
+            id: edge.id.startsWith("xy-edge__") ? crypto.randomUUID() : edge.id,
             flow_id: flowId,
             source_id: edge.source,
             target_id: edge.target,
