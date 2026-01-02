@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Plus, Search, Filter, MoreHorizontal, Shield, Edit, Trash2, Key, Loader2, Lock } from "lucide-react";
+import { useAuth } from "@/contexts/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -49,6 +50,7 @@ const roleConfig = {
 export default function Usuarios() {
   const { data: users = [], isLoading, refetch } = useUsers();
   const updateRole = useUpdateUserRole();
+  const { isAdmin } = useAuth();
   
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -303,20 +305,26 @@ export default function Usuarios() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Select
-                        value={normalizedRole}
-                        onValueChange={(v) => handleRoleChange(user.id, v as "admin" | "atendente")}
-                      >
-                        <SelectTrigger className="w-[140px]">
-                          <Badge className={roleConfig[normalizedRole]?.className}>
-                            {roleConfig[normalizedRole]?.label}
-                          </Badge>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="admin">Administrador</SelectItem>
-                          <SelectItem value="atendente">Atendente</SelectItem>
-                        </SelectContent>
-                      </Select>
+                      {isAdmin ? (
+                        <Select
+                          value={normalizedRole}
+                          onValueChange={(v) => handleRoleChange(user.id, v as "admin" | "atendente")}
+                        >
+                          <SelectTrigger className="w-[140px]">
+                            <Badge className={roleConfig[normalizedRole]?.className}>
+                              {roleConfig[normalizedRole]?.label}
+                            </Badge>
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="admin">Administrador</SelectItem>
+                            <SelectItem value="atendente">Atendente</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge className={roleConfig[normalizedRole]?.className}>
+                          {roleConfig[normalizedRole]?.label}
+                        </Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <Badge
@@ -339,7 +347,7 @@ export default function Usuarios() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {normalizedRole === "atendente" && (
+                          {isAdmin && normalizedRole === "atendente" && (
                             <DropdownMenuItem onClick={() => handleOpenPermissions(user.id, user.name)}>
                               <Lock className="w-4 h-4 mr-2" />
                               Gerenciar Permissões
