@@ -517,6 +517,11 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   handleChange("tagName", "");
                   handleChange("kanbanColumnId", "");
                   handleChange("kanbanColumnName", "");
+                  handleChange("startTime", "");
+                  handleChange("endTime", "");
+                  handleChange("daysOfWeek", []);
+                  handleChange("messageCount", "");
+                  handleChange("messageOperator", "");
                 }}
               >
                 <SelectTrigger>
@@ -526,6 +531,9 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   <SelectItem value="message">Conteúdo da mensagem</SelectItem>
                   <SelectItem value="tag">Tag do contato</SelectItem>
                   <SelectItem value="kanban">Etapa do CRM</SelectItem>
+                  <SelectItem value="business_hours">Horário de atendimento</SelectItem>
+                  <SelectItem value="day_of_week">Dia da semana</SelectItem>
+                  <SelectItem value="message_count">Quantidade de mensagens</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -645,6 +653,110 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
                   Verifica se a conversa está nesta etapa do CRM
                 </p>
               </div>
+            )}
+
+            {conditionType === "business_hours" && (
+              <>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-2">
+                    <Label>Início</Label>
+                    <Input
+                      type="time"
+                      value={(formData.startTime as string) || "09:00"}
+                      onChange={(e) => handleChange("startTime", e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Fim</Label>
+                    <Input
+                      type="time"
+                      value={(formData.endTime as string) || "18:00"}
+                      onChange={(e) => handleChange("endTime", e.target.value)}
+                    />
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Verifica se a mensagem foi enviada dentro do horário especificado
+                </p>
+              </>
+            )}
+
+            {conditionType === "day_of_week" && (
+              <div className="space-y-2">
+                <Label>Dias da semana</Label>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { value: "0", label: "Dom" },
+                    { value: "1", label: "Seg" },
+                    { value: "2", label: "Ter" },
+                    { value: "3", label: "Qua" },
+                    { value: "4", label: "Qui" },
+                    { value: "5", label: "Sex" },
+                    { value: "6", label: "Sáb" },
+                  ].map((day) => {
+                    const selectedDays = (formData.daysOfWeek as string[]) || [];
+                    const isSelected = selectedDays.includes(day.value);
+                    return (
+                      <button
+                        key={day.value}
+                        type="button"
+                        onClick={() => {
+                          const newDays = isSelected
+                            ? selectedDays.filter((d) => d !== day.value)
+                            : [...selectedDays, day.value];
+                          handleChange("daysOfWeek", newDays);
+                        }}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+                          isSelected
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "bg-muted border-border hover:bg-muted/80"
+                        }`}
+                      >
+                        {day.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Verifica se hoje é um dos dias selecionados
+                </p>
+              </div>
+            )}
+
+            {conditionType === "message_count" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Operador</Label>
+                  <Select
+                    value={(formData.messageOperator as string) || "greater"}
+                    onValueChange={(v) => handleChange("messageOperator", v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent position="popper" sideOffset={5}>
+                      <SelectItem value="greater">Maior que</SelectItem>
+                      <SelectItem value="less">Menor que</SelectItem>
+                      <SelectItem value="equals">Igual a</SelectItem>
+                      <SelectItem value="greater_equals">Maior ou igual a</SelectItem>
+                      <SelectItem value="less_equals">Menor ou igual a</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Quantidade de mensagens</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={(formData.messageCount as number) || ""}
+                    onChange={(e) => handleChange("messageCount", parseInt(e.target.value) || 0)}
+                    placeholder="5"
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Verifica o número total de mensagens na conversa
+                </p>
+              </>
             )}
 
             <div className="mt-4 p-3 rounded-lg bg-muted/50">

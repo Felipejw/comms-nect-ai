@@ -1,6 +1,6 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
-import { GitBranch, Tag, Columns, MessageSquare } from "lucide-react";
+import { GitBranch, Tag, Columns, MessageSquare, Clock, Calendar, Hash } from "lucide-react";
 
 interface ConditionNodeData {
   label?: string;
@@ -12,6 +12,11 @@ interface ConditionNodeData {
   tagName?: string;
   kanbanColumnId?: string;
   kanbanColumnName?: string;
+  startTime?: string;
+  endTime?: string;
+  daysOfWeek?: string[];
+  messageCount?: number;
+  messageOperator?: string;
   [key: string]: unknown;
 }
 
@@ -19,7 +24,20 @@ const CONDITION_ICONS: Record<string, React.ReactNode> = {
   tag: <Tag className="w-4 h-4 text-warning-foreground" />,
   kanban: <Columns className="w-4 h-4 text-warning-foreground" />,
   message: <MessageSquare className="w-4 h-4 text-warning-foreground" />,
+  business_hours: <Clock className="w-4 h-4 text-warning-foreground" />,
+  day_of_week: <Calendar className="w-4 h-4 text-warning-foreground" />,
+  message_count: <Hash className="w-4 h-4 text-warning-foreground" />,
   default: <GitBranch className="w-4 h-4 text-warning-foreground" />,
+};
+
+const DAY_NAMES: Record<string, string> = {
+  "0": "Dom",
+  "1": "Seg",
+  "2": "Ter",
+  "3": "Qua",
+  "4": "Qui",
+  "5": "Sex",
+  "6": "Sáb",
 };
 
 function ConditionNode({ data, selected }: NodeProps) {
@@ -32,6 +50,28 @@ function ConditionNode({ data, selected }: NodeProps) {
         return nodeData.tagName ? `Tem tag "${nodeData.tagName}"` : "Verificar tag";
       case "kanban":
         return nodeData.kanbanColumnName ? `Etapa CRM "${nodeData.kanbanColumnName}"` : "Verificar etapa CRM";
+      case "business_hours":
+        if (nodeData.startTime && nodeData.endTime) {
+          return `${nodeData.startTime} - ${nodeData.endTime}`;
+        }
+        return "Horário de atendimento";
+      case "day_of_week":
+        if (nodeData.daysOfWeek && nodeData.daysOfWeek.length > 0) {
+          return nodeData.daysOfWeek.map(d => DAY_NAMES[d] || d).join(", ");
+        }
+        return "Dias da semana";
+      case "message_count":
+        if (nodeData.messageCount !== undefined && nodeData.messageOperator) {
+          const opLabels: Record<string, string> = {
+            greater: ">",
+            less: "<",
+            equals: "=",
+            greater_equals: "≥",
+            less_equals: "≤",
+          };
+          return `Msgs ${opLabels[nodeData.messageOperator] || ">"} ${nodeData.messageCount}`;
+        }
+        return "Quantidade de mensagens";
       case "message":
         if (nodeData.field && nodeData.operator && nodeData.value) {
           const opLabels: Record<string, string> = {
