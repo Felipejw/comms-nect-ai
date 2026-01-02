@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { X, Camera, Save, Loader2, Mail, Phone, Building, Tag as TagIcon, MessageSquare, Clock } from 'lucide-react';
+import { X, Camera, Save, Loader2, Mail, Phone, Building, Tag as TagIcon, MessageSquare, Clock, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import {
@@ -54,12 +55,21 @@ export default function ContactProfilePanel({ contactId, conversationId, onClose
   
   const [notes, setNotes] = useState<string | null>(null);
   const [isEditingNotes, setIsEditingNotes] = useState(false);
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [editedName, setEditedName] = useState<string>('');
 
   const handleSaveNotes = async () => {
     if (!contact || notes === null) return;
     await updateNotes.mutateAsync({ contactId: contact.id, notes });
     setIsEditingNotes(false);
     setNotes(null);
+  };
+
+  const handleSaveName = async () => {
+    if (!contact || !editedName.trim()) return;
+    await updateContact.mutateAsync({ id: contact.id, name: editedName.trim() });
+    setIsEditingName(false);
+    setEditedName('');
   };
 
   const handleFetchProfilePicture = async () => {
@@ -164,7 +174,68 @@ export default function ContactProfilePanel({ contactId, conversationId, onClose
                 </Button>
               )}
             </div>
-            <h4 className="font-semibold mt-3">{contact.name || contact.phone || 'Contato'}</h4>
+            
+            {/* Editable Name */}
+            <div className="mt-3 flex items-center gap-1">
+              {isEditingName ? (
+                <div className="flex items-center gap-1">
+                  <Input
+                    value={editedName}
+                    onChange={(e) => setEditedName(e.target.value)}
+                    className="h-8 text-center font-semibold"
+                    placeholder="Nome do contato"
+                    autoFocus
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveName();
+                      if (e.key === 'Escape') {
+                        setIsEditingName(false);
+                        setEditedName('');
+                      }
+                    }}
+                  />
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="w-7 h-7"
+                    onClick={handleSaveName}
+                    disabled={updateContact.isPending || !editedName.trim()}
+                  >
+                    {updateContact.isPending ? (
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                      <Save className="w-3 h-3" />
+                    )}
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="w-7 h-7"
+                    onClick={() => {
+                      setIsEditingName(false);
+                      setEditedName('');
+                    }}
+                  >
+                    <X className="w-3 h-3" />
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <h4 className="font-semibold">{contact.name || contact.phone || 'Contato'}</h4>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    className="w-6 h-6"
+                    onClick={() => {
+                      setEditedName(contact.name || '');
+                      setIsEditingName(true);
+                    }}
+                  >
+                    <Pencil className="w-3 h-3" />
+                  </Button>
+                </>
+              )}
+            </div>
+            
             {currentKanbanColumn && (
               <Badge style={{ backgroundColor: `${currentKanbanColumn.color}20`, color: currentKanbanColumn.color }}>
                 {currentKanbanColumn.name}

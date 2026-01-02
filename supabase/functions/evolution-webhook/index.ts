@@ -6,16 +6,62 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Helper function to download and store media
+async function downloadAndStoreMedia(
+  supabaseUrl: string,
+  supabaseKey: string,
+  instanceName: string,
+  messageKey: { remoteJid: string; fromMe: boolean; id: string },
+  mediaType: 'audio' | 'image' | 'video' | 'document',
+  fileName?: string
+): Promise<string | null> {
+  try {
+    console.log(`[Webhook] Downloading media: ${mediaType} for message ${messageKey.id}`);
+    
+    const response = await fetch(`${supabaseUrl}/functions/v1/download-whatsapp-media`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${supabaseKey}`,
+      },
+      body: JSON.stringify({
+        instanceName,
+        messageKey,
+        mediaType,
+        fileName
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Webhook] Failed to download media: ${response.status}`, errorText);
+      return null;
+    }
+
+    const result = await response.json();
+    if (result.success && result.url) {
+      console.log(`[Webhook] Media downloaded successfully: ${result.url}`);
+      return result.url;
+    }
+
+    console.error('[Webhook] Media download returned no URL:', result);
+    return null;
+  } catch (error) {
+    console.error('[Webhook] Error downloading media:', error);
+    return null;
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
+    const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+    
+    const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
 
     const webhook = await req.json();
     console.log("[Webhook] ====== EVENT RECEIVED ======");
@@ -139,6 +185,9 @@ serve(async (req) => {
           break;
         }
 
+        // Detect if this is a LID (Link ID) instead of a real phone number
+        const isLid = remoteJid?.includes('@lid');
+        
         // Extract phone number from remoteJid
         // Handle formats: 5511999999999@s.whatsapp.net, 64081549635686@lid, 64081549635686:25@lid
         let phoneNumber = remoteJid
@@ -146,10 +195,15 @@ serve(async (req) => {
           ?.replace('@lid', '')
           ?.split(':')[0];
 
+        // Store the original LID for reference
+        const whatsappLid = isLid ? remoteJid?.replace('@lid', '')?.split(':')[0] : null;
+
         if (!phoneNumber) {
           console.log("[Webhook] Could not extract phone number from remoteJid:", remoteJid);
           break;
         }
+
+        console.log(`[Webhook] Processing message - Phone: ${phoneNumber}, isLID: ${isLid}, LID: ${whatsappLid}`);
 
         // Get message content - handle different message types
         const message = data?.message || {};
@@ -162,30 +216,51 @@ serve(async (req) => {
           message.audioMessage?.caption ||
           null;
         
-        // Determine message type
-        let messageType: "text" | "image" | "audio" | "document" = "text";
+        // Determine message type and prepare for media download
+        let messageType: "text" | "image" | "audio" | "document" | "video" = "text";
         let mediaUrl: string | null = null;
+        let needsMediaDownload = false;
+        let mediaFileName: string | undefined;
         
         if (message.imageMessage) {
           messageType = "image";
-          mediaUrl = message.imageMessage.url || null;
+          needsMediaDownload = true;
           messageContent = messageContent || "[Imagem]";
         } else if (message.audioMessage) {
           messageType = "audio";
-          mediaUrl = message.audioMessage.url || null;
+          needsMediaDownload = true;
           messageContent = messageContent || "[Áudio]";
         } else if (message.documentMessage) {
           messageType = "document";
-          mediaUrl = message.documentMessage.url || null;
+          needsMediaDownload = true;
+          mediaFileName = message.documentMessage.fileName;
           messageContent = messageContent || `[Documento: ${message.documentMessage.fileName || 'arquivo'}]`;
         } else if (message.videoMessage) {
-          messageType = "image"; // Using image type for video since it's not in the enum
-          mediaUrl = message.videoMessage.url || null;
+          messageType = "video";
+          needsMediaDownload = true;
           messageContent = messageContent || "[Vídeo]";
         } else if (message.stickerMessage) {
           messageType = "image";
-          mediaUrl = message.stickerMessage.url || null;
+          needsMediaDownload = true;
           messageContent = messageContent || "[Sticker]";
+        }
+
+        // Download media if needed (only for received messages, not sent by us)
+        if (needsMediaDownload && !fromMe) {
+          const messageKey = {
+            remoteJid: data?.key?.remoteJid,
+            fromMe: data?.key?.fromMe,
+            id: data?.key?.id
+          };
+          
+          mediaUrl = await downloadAndStoreMedia(
+            supabaseUrl,
+            supabaseServiceKey,
+            instance,
+            messageKey,
+            messageType === 'video' ? 'video' : messageType as 'audio' | 'image' | 'document',
+            mediaFileName
+          );
         }
 
         // If no content at all, use fallback
@@ -201,28 +276,51 @@ serve(async (req) => {
 
         console.log(`[Webhook] Message ${fromMe ? 'SENT' : 'RECEIVED'} - Phone: ${phoneNumber}, Content: ${messageContent.substring(0, 50)}`);
 
-        // Find or create contact
+        // Find or create contact - check by phone OR by LID
         let contact;
-        const { data: existingContact } = await supabaseClient
-          .from("contacts")
-          .select("*")
-          .eq("phone", phoneNumber)
-          .single();
-
-        if (existingContact) {
+        
+        // First try to find by LID if we have one
+        if (whatsappLid) {
+          const { data: contactByLid } = await supabaseClient
+            .from("contacts")
+            .select("*")
+            .eq("whatsapp_lid", whatsappLid)
+            .single();
+          
+          if (contactByLid) {
+            contact = contactByLid;
+            console.log(`[Webhook] Found contact by LID: ${contact.id}`);
+          }
+        }
+        
+        // If not found by LID, try by phone
+        if (!contact) {
+          const { data: existingContact } = await supabaseClient
+            .from("contacts")
+            .select("*")
+            .eq("phone", phoneNumber)
+            .single();
+          
           contact = existingContact;
-          
+        }
+
+        if (contact) {
           // Preparar atualizações para o contato
-          const updates: Record<string, string> = {};
+          const updates: Record<string, string | null> = {};
           
-          // Update contact name if we have a better one (pushName) and current is just the phone
-          if (data?.pushName && existingContact.name === existingContact.phone) {
+          // Update contact name if we have a better one (pushName) and current is just the phone or LID-like
+          if (data?.pushName && (contact.name === contact.phone || contact.name?.match(/^\d{15,}$/))) {
             updates.name = data.pushName;
           }
           
           // Atualizar foto de perfil se disponível e contato não tem foto
-          if (profilePictureUrl && !existingContact.avatar_url) {
+          if (profilePictureUrl && !contact.avatar_url) {
             updates.avatar_url = profilePictureUrl;
+          }
+          
+          // Store the LID if we have it and contact doesn't have one
+          if (whatsappLid && !contact.whatsapp_lid) {
+            updates.whatsapp_lid = whatsappLid;
           }
           
           // Aplicar atualizações se houver
@@ -230,16 +328,18 @@ serve(async (req) => {
             await supabaseClient
               .from("contacts")
               .update(updates)
-              .eq("id", existingContact.id);
+              .eq("id", contact.id);
             console.log(`[Webhook] Updated contact: ${JSON.stringify(updates)}`);
           }
         } else {
+          // Create new contact
           const { data: newContact, error: contactError } = await supabaseClient
             .from("contacts")
             .insert({
               name: contactName,
               phone: phoneNumber,
               avatar_url: profilePictureUrl,
+              whatsapp_lid: whatsappLid,
               status: "active",
             })
             .select()
@@ -250,7 +350,7 @@ serve(async (req) => {
             throw contactError;
           }
           contact = newContact;
-          console.log(`[Webhook] New contact created: ${contact.id} (${contactName})`);
+          console.log(`[Webhook] New contact created: ${contact.id} (${contactName}), LID: ${whatsappLid}`);
         }
 
         // Find or create conversation
@@ -313,7 +413,7 @@ serve(async (req) => {
           throw msgError;
         }
 
-        console.log(`[Webhook] Message saved for conversation ${conversation.id} (type: ${messageType}, fromMe: ${fromMe})`);
+        console.log(`[Webhook] Message saved for conversation ${conversation.id} (type: ${messageType}, mediaUrl: ${mediaUrl}, fromMe: ${fromMe})`);
         break;
       }
 
