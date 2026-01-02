@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { UserPlus, Users, Phone } from "lucide-react";
+import { ValidationBadge, validateTransferNode } from "./ValidationBadge";
 
 interface TransferNodeData {
   label?: string;
@@ -17,6 +18,7 @@ interface TransferNodeData {
 
 function TransferNode({ data, selected }: NodeProps) {
   const nodeData = data as TransferNodeData;
+  const validationError = validateTransferNode(nodeData);
   
   const getTransferInfo = () => {
     switch (nodeData.transferType) {
@@ -43,10 +45,11 @@ function TransferNode({ data, selected }: NodeProps) {
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-destructive ring-2 ring-destructive/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}

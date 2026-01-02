@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.download-whatsapp-media]
 verify_jwt = false
+
+[functions.execute-flow]
+verify_jwt = false

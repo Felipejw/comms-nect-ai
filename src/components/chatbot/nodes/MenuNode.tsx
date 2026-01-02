@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { List } from "lucide-react";
+import { ValidationBadge, validateMenuNode } from "./ValidationBadge";
 
 interface MenuOption {
   id: string;
@@ -16,14 +17,16 @@ interface MenuNodeData {
 
 function MenuNode({ data, selected }: NodeProps) {
   const nodeData = data as MenuNodeData;
+  const validationError = validateMenuNode(nodeData);
   const options = nodeData.options || [];
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-orange-500 ring-2 ring-orange-500/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}

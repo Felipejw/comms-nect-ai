@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { Handle, Position, NodeProps } from "@xyflow/react";
 import { MessageSquare, Image, Video, FileText } from "lucide-react";
+import { ValidationBadge, validateMessageNode } from "./ValidationBadge";
 
 interface MessageNodeData {
   label?: string;
@@ -13,6 +14,7 @@ interface MessageNodeData {
 
 function MessageNode({ data, selected }: NodeProps) {
   const nodeData = data as MessageNodeData;
+  const validationError = validateMessageNode(nodeData);
   
   const getIcon = () => {
     switch (nodeData.messageType) {
@@ -36,10 +38,11 @@ function MessageNode({ data, selected }: NodeProps) {
   
   return (
     <div
-      className={`px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
+      className={`relative px-4 py-3 rounded-xl border-2 bg-card shadow-lg min-w-[180px] transition-all ${
         selected ? "border-success ring-2 ring-success/20" : "border-border"
       }`}
     >
+      {validationError && <ValidationBadge message={validationError} />}
       <Handle
         type="target"
         position={Position.Top}

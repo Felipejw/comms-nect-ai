@@ -414,6 +414,34 @@ serve(async (req) => {
         }
 
         console.log(`[Webhook] Message saved for conversation ${conversation.id} (type: ${messageType}, mediaUrl: ${mediaUrl}, fromMe: ${fromMe})`);
+
+        // Trigger flow executor for incoming messages (not from us)
+        if (!fromMe) {
+          try {
+            console.log("[Webhook] Triggering flow executor for conversation:", conversation.id);
+            const flowResponse = await fetch(`${supabaseUrl}/functions/v1/execute-flow`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${supabaseServiceKey}`,
+              },
+              body: JSON.stringify({
+                conversationId: conversation.id,
+                messageContent: messageContent,
+                contactPhone: phoneNumber,
+              }),
+            });
+
+            if (!flowResponse.ok) {
+              console.error("[Webhook] Flow executor error:", await flowResponse.text());
+            } else {
+              const flowResult = await flowResponse.json();
+              console.log("[Webhook] Flow executor result:", flowResult);
+            }
+          } catch (flowError) {
+            console.error("[Webhook] Error calling flow executor:", flowError);
+          }
+        }
         break;
       }
 
