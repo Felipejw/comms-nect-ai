@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { Plug, Calendar, Eye, EyeOff, ExternalLink, Check, Loader2 } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { Plug, Calendar, Eye, EyeOff, ExternalLink, Check, Loader2, RefreshCw, LogOut, ChevronDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,20 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
@@ -29,18 +43,30 @@ interface GoogleCalendarConfig {
   access_token?: string;
   refresh_token?: string;
   expires_at?: string;
+  selected_calendar_id?: string;
   [key: string]: string | undefined;
+}
+
+interface GoogleCalendar {
+  id: string;
+  summary: string;
+  description?: string;
+  primary: boolean;
+  backgroundColor?: string;
 }
 
 export default function Integracoes() {
   const [isConfigOpen, setIsConfigOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isLoadingCalendars, setIsLoadingCalendars] = useState(false);
   const [showClientId, setShowClientId] = useState(false);
   const [showClientSecret, setShowClientSecret] = useState(false);
   
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [calendars, setCalendars] = useState<GoogleCalendar[]>([]);
   
   const [integration, setIntegration] = useState<{
     id: string;
@@ -96,7 +122,6 @@ export default function Integracoes() {
       };
 
       if (integration) {
-        // Update existing
         const { error } = await supabase
           .from("integrations")
           .update({
@@ -107,7 +132,6 @@ export default function Integracoes() {
 
         if (error) throw error;
       } else {
-        // Create new
         const { error } = await supabase
           .from("integrations")
           .insert([{
@@ -131,8 +155,168 @@ export default function Integracoes() {
     }
   };
 
+  // Handle OAuth callback
+  const handleOAuthCallback = useCallback(async () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get("code");
+    const stateParam = urlParams.get("state");
+
+    if (code && stateParam) {
+      try {
+        const state = JSON.parse(decodeURIComponent(stateParam));
+        const integrationId = state.integration_id;
+
+        // Clear URL params
+        window.history.replaceState({}, document.title, window.location.pathname);
+
+        setIsConnecting(true);
+
+        const { data, error } = await supabase.functions.invoke("google-auth", {
+          body: {
+            action: "callback",
+            integration_id: integrationId,
+            code,
+            redirect_uri: window.location.origin + "/integracoes",
+          },
+        });
+
+        if (error) throw error;
+
+        if (data?.success) {
+          toast.success(`Conectado como ${data.email}`);
+          loadIntegration();
+        } else {
+          throw new Error(data?.error || "Erro desconhecido");
+        }
+      } catch (error) {
+        console.error("OAuth callback error:", error);
+        toast.error("Erro ao conectar conta Google");
+      } finally {
+        setIsConnecting(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    handleOAuthCallback();
+  }, [handleOAuthCallback]);
+
+  const handleConnectGoogle = async () => {
+    if (!integration?.id) {
+      toast.error("Configure as credenciais primeiro");
+      return;
+    }
+
+    setIsConnecting(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("google-auth", {
+        body: {
+          action: "authorize",
+          integration_id: integration.id,
+          redirect_uri: window.location.origin + "/integracoes",
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.auth_url) {
+        window.location.href = data.auth_url;
+      } else {
+        throw new Error("URL de autorização não gerada");
+      }
+    } catch (error) {
+      console.error("Erro ao iniciar OAuth:", error);
+      toast.error("Erro ao conectar com Google");
+      setIsConnecting(false);
+    }
+  };
+
+  const handleDisconnect = async () => {
+    if (!integration?.id) return;
+
+    try {
+      const { error } = await supabase.functions.invoke("google-auth", {
+        body: {
+          action: "disconnect",
+          integration_id: integration.id,
+        },
+      });
+
+      if (error) throw error;
+
+      toast.success("Conta desconectada");
+      loadIntegration();
+      setCalendars([]);
+    } catch (error) {
+      console.error("Erro ao desconectar:", error);
+      toast.error("Erro ao desconectar conta");
+    }
+  };
+
+  const loadCalendars = async () => {
+    if (!integration?.id) return;
+
+    setIsLoadingCalendars(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("google-calendar", {
+        body: {
+          action: "list-calendars",
+          integration_id: integration.id,
+        },
+      });
+
+      if (error) throw error;
+
+      setCalendars(data?.calendars || []);
+    } catch (error) {
+      console.error("Erro ao carregar calendários:", error);
+      toast.error("Erro ao carregar calendários");
+    } finally {
+      setIsLoadingCalendars(false);
+    }
+  };
+
+  useEffect(() => {
+    if (integration?.is_active && integration.config?.access_token) {
+      loadCalendars();
+    }
+  }, [integration?.is_active, integration?.config?.access_token]);
+
+  const handleSelectCalendar = async (calendarId: string) => {
+    if (!integration?.id) return;
+
+    try {
+      const updatedConfig = {
+        ...integration.config,
+        selected_calendar_id: calendarId,
+      };
+
+      const { error } = await supabase
+        .from("integrations")
+        .update({
+          config: updatedConfig,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", integration.id);
+
+      if (error) throw error;
+
+      setIntegration({
+        ...integration,
+        config: updatedConfig,
+      });
+
+      const calendar = calendars.find(c => c.id === calendarId);
+      toast.success(`Calendário "${calendar?.summary}" selecionado`);
+    } catch (error) {
+      console.error("Erro ao selecionar calendário:", error);
+      toast.error("Erro ao selecionar calendário");
+    }
+  };
+
   const hasCredentials = !!(integration?.config?.client_id && integration?.config?.client_secret);
   const isConnected = !!(integration?.config?.access_token && integration?.is_active);
+  const selectedCalendar = calendars.find(c => c.id === integration?.config?.selected_calendar_id);
 
   return (
     <div className="space-y-6">
@@ -160,7 +344,7 @@ export default function Integracoes() {
               </div>
             </div>
             <div className="flex items-center gap-2">
-              {isLoading ? (
+              {isLoading || isConnecting ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : isConnected ? (
                 <Badge className="bg-green-500/10 text-green-600 hover:bg-green-500/20">
@@ -177,31 +361,111 @@ export default function Integracoes() {
         </CardHeader>
         <CardContent className="space-y-4">
           {isConnected && integration?.config?.connected_email && (
-            <div className="p-3 bg-muted/50 rounded-lg">
+            <div className="p-3 bg-muted/50 rounded-lg space-y-2">
               <p className="text-sm text-muted-foreground">
                 Conectado como: <span className="font-medium text-foreground">{integration.config.connected_email}</span>
               </p>
+              
+              {/* Calendar Selector */}
+              <div className="flex items-center gap-2">
+                <Label className="text-sm text-muted-foreground whitespace-nowrap">Calendário:</Label>
+                <Select
+                  value={integration.config.selected_calendar_id || ""}
+                  onValueChange={handleSelectCalendar}
+                  disabled={isLoadingCalendars}
+                >
+                  <SelectTrigger className="flex-1">
+                    <SelectValue placeholder="Selecione um calendário">
+                      {isLoadingCalendars ? (
+                        <span className="flex items-center gap-2">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          Carregando...
+                        </span>
+                      ) : selectedCalendar ? (
+                        <span className="flex items-center gap-2">
+                          {selectedCalendar.backgroundColor && (
+                            <span 
+                              className="w-3 h-3 rounded-full" 
+                              style={{ backgroundColor: selectedCalendar.backgroundColor }}
+                            />
+                          )}
+                          {selectedCalendar.summary}
+                        </span>
+                      ) : (
+                        "Selecione um calendário"
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {calendars.map((cal) => (
+                      <SelectItem key={cal.id} value={cal.id}>
+                        <span className="flex items-center gap-2">
+                          {cal.backgroundColor && (
+                            <span 
+                              className="w-3 h-3 rounded-full" 
+                              style={{ backgroundColor: cal.backgroundColor }}
+                            />
+                          )}
+                          {cal.summary}
+                          {cal.primary && (
+                            <Badge variant="outline" className="text-xs ml-1">Principal</Badge>
+                          )}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={loadCalendars}
+                  disabled={isLoadingCalendars}
+                >
+                  <RefreshCw className={`w-4 h-4 ${isLoadingCalendars ? "animate-spin" : ""}`} />
+                </Button>
+              </div>
             </div>
           )}
 
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant={hasCredentials ? "outline" : "default"}
-              onClick={() => setIsConfigOpen(true)}
-            >
-              {hasCredentials ? "Editar credenciais" : "Configurar credenciais"}
-            </Button>
+            {!isConnected && (
+              <Button
+                variant={hasCredentials ? "outline" : "default"}
+                onClick={() => setIsConfigOpen(true)}
+              >
+                {hasCredentials ? "Editar credenciais" : "Configurar credenciais"}
+              </Button>
+            )}
 
             {hasCredentials && !isConnected && (
-              <Button disabled>
-                Conectar conta Google (em breve)
+              <Button onClick={handleConnectGoogle} disabled={isConnecting}>
+                {isConnecting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Conectar conta Google
               </Button>
             )}
 
             {isConnected && (
-              <Button variant="destructive" disabled>
-                Desconectar
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    Opções
+                    <ChevronDown className="w-4 h-4 ml-2" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent>
+                  <DropdownMenuItem onClick={() => setIsConfigOpen(true)}>
+                    Editar credenciais
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem 
+                    onClick={handleDisconnect}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Desconectar
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
 
@@ -319,6 +583,12 @@ export default function Integracoes() {
                 <li>Ative a API do Google Calendar</li>
                 <li>Configure a tela de consentimento OAuth</li>
                 <li>Crie credenciais OAuth 2.0 (Web application)</li>
+                <li>
+                  Adicione esta URL de redirecionamento:
+                  <code className="block mt-1 p-2 bg-background rounded text-xs break-all">
+                    {window.location.origin}/integracoes
+                  </code>
+                </li>
                 <li>Copie o Client ID e Client Secret</li>
               </ol>
             </div>

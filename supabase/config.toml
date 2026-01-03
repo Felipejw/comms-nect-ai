@@ -29,3 +29,9 @@ verify_jwt = false
 
 [functions.sync-contacts]
 verify_jwt = false
+
+[functions.google-auth]
+verify_jwt = false
+
+[functions.google-calendar]
+verify_jwt = false
