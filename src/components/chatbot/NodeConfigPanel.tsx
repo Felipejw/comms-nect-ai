@@ -1192,6 +1192,170 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
           </>
         );
 
+      case "schedule":
+        return (
+          <>
+            <div className="space-y-2">
+              <Label>Nome do bloco</Label>
+              <Input
+                value={(formData.label as string) || ""}
+                onChange={(e) => handleChange("label", e.target.value)}
+                placeholder="Agendar"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Tipo de ação</Label>
+              <Select
+                value={(formData.actionType as string) || "check_availability"}
+                onValueChange={(v) => handleChange("actionType", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="check_availability">Verificar disponibilidade</SelectItem>
+                  <SelectItem value="create_event">Criar agendamento</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            
+            {(formData.actionType === "check_availability" || !formData.actionType) && (
+              <>
+                <div className="space-y-2">
+                  <Label>Período para buscar</Label>
+                  <Select
+                    value={(formData.period as string) || "today"}
+                    onValueChange={(v) => handleChange("period", v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="today">Hoje</SelectItem>
+                      <SelectItem value="tomorrow">Amanhã</SelectItem>
+                      <SelectItem value="next_3_days">Próximos 3 dias</SelectItem>
+                      <SelectItem value="next_7_days">Próximos 7 dias</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Duração do serviço (minutos)</Label>
+                  <Select
+                    value={String((formData.serviceDuration as number) || 60)}
+                    onValueChange={(v) => handleChange("serviceDuration", parseInt(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="15">15 minutos</SelectItem>
+                      <SelectItem value="30">30 minutos</SelectItem>
+                      <SelectItem value="45">45 minutos</SelectItem>
+                      <SelectItem value="60">1 hora</SelectItem>
+                      <SelectItem value="90">1h30</SelectItem>
+                      <SelectItem value="120">2 horas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-2">
+                    <Label>Horário início</Label>
+                    <Input
+                      type="time"
+                      value={(formData.workingHoursStart as string) || "09:00"}
+                      onChange={(e) => handleChange("workingHoursStart", e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Horário fim</Label>
+                    <Input
+                      type="time"
+                      value={(formData.workingHoursEnd as string) || "18:00"}
+                      onChange={(e) => handleChange("workingHoursEnd", e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Máximo de opções a mostrar</Label>
+                  <Select
+                    value={String((formData.maxOptions as number) || 5)}
+                    onValueChange={(v) => handleChange("maxOptions", parseInt(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="3">3 horários</SelectItem>
+                      <SelectItem value="5">5 horários</SelectItem>
+                      <SelectItem value="10">10 horários</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+
+            {formData.actionType === "create_event" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Título do evento</Label>
+                  <Input
+                    value={(formData.eventTitle as string) || ""}
+                    onChange={(e) => handleChange("eventTitle", e.target.value)}
+                    placeholder="Consulta com {{nome}}"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Use {"{{nome}}"} para inserir variáveis
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Descrição do evento (opcional)</Label>
+                  <Textarea
+                    value={(formData.eventDescription as string) || ""}
+                    onChange={(e) => handleChange("eventDescription", e.target.value)}
+                    placeholder="Agendamento realizado via WhatsApp"
+                    rows={2}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Duração do evento (minutos)</Label>
+                  <Select
+                    value={String((formData.eventDuration as number) || 60)}
+                    onValueChange={(v) => handleChange("eventDuration", parseInt(v))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="15">15 minutos</SelectItem>
+                      <SelectItem value="30">30 minutos</SelectItem>
+                      <SelectItem value="45">45 minutos</SelectItem>
+                      <SelectItem value="60">1 hora</SelectItem>
+                      <SelectItem value="90">1h30</SelectItem>
+                      <SelectItem value="120">2 horas</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+                  <div className="space-y-0.5">
+                    <Label>Enviar confirmação</Label>
+                    <p className="text-xs text-muted-foreground">Enviar mensagem de confirmação ao cliente</p>
+                  </div>
+                  <Switch
+                    checked={(formData.sendConfirmation as boolean) ?? true}
+                    onCheckedChange={(v) => handleChange("sendConfirmation", v)}
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+              <p className="text-xs text-blue-600 dark:text-blue-400">
+                <strong>Dica:</strong> Configure a integração com Google Agenda em Integrações para usar este bloco.
+              </p>
+            </div>
+          </>
+        );
+
       default:
         return null;
     }
@@ -1209,6 +1373,7 @@ export function NodeConfigPanel({ node, open, onClose, onUpdate, onDelete, onSav
       crm: "Configurar CRM",
       transfer: "Configurar Transferência",
       end: "Configurar Encerramento",
+      schedule: "Configurar Agendamento",
     };
     return titles[node.type || ""] || "Configurar Bloco";
   };
