@@ -679,6 +679,70 @@ export type Database = {
           },
         ]
       }
+      google_calendar_events: {
+        Row: {
+          contact_id: string | null
+          conversation_id: string | null
+          created_at: string
+          description: string | null
+          end_time: string
+          google_event_id: string
+          id: string
+          integration_id: string | null
+          start_time: string
+          status: string | null
+          title: string
+        }
+        Insert: {
+          contact_id?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          description?: string | null
+          end_time: string
+          google_event_id: string
+          id?: string
+          integration_id?: string | null
+          start_time: string
+          status?: string | null
+          title: string
+        }
+        Update: {
+          contact_id?: string | null
+          conversation_id?: string | null
+          created_at?: string
+          description?: string | null
+          end_time?: string
+          google_event_id?: string
+          id?: string
+          integration_id?: string | null
+          start_time?: string
+          status?: string | null
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "google_calendar_events_contact_id_fkey"
+            columns: ["contact_id"]
+            isOneToOne: false
+            referencedRelation: "contacts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "google_calendar_events_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "google_calendar_events_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "integrations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integrations: {
         Row: {
           config: Json | null
