@@ -36,6 +36,17 @@ interface FlowState {
     useOwnApiKey?: boolean;
     googleApiKey?: string;
   };
+  // Schedule mode
+  awaitingScheduleResponse?: boolean;
+  scheduleNodeData?: {
+    integrationId: string;
+    calendarId: string;
+    availableSlots: Array<{ start: string; end: string }>;
+    eventTitle?: string;
+    eventDescription?: string;
+    eventDuration?: number;
+    sendConfirmation?: boolean;
+  };
 }
 
 // Send WhatsApp message through Evolution API
@@ -861,6 +872,178 @@ async function executeFlowFromNode(
         break;
       }
 
+      case "schedule": {
+        const actionType = currentNode.data.actionType as string || "check_availability";
+        
+        // Get Google Calendar integration
+        const { data: integration, error: intError } = await supabase
+          .from("integrations")
+          .select("*")
+          .eq("type", "google_calendar")
+          .eq("is_active", true)
+          .maybeSingle();
+
+        if (intError || !integration) {
+          console.log("[FlowExecutor] Google Calendar integration not found or not active");
+          const errorMsg = "Desculpe, o sistema de agendamento não está disponível no momento.";
+          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, errorMsg);
+          await supabase.from("messages").insert({
+            conversation_id: conversationId,
+            content: errorMsg,
+            sender_type: "bot",
+            message_type: "text",
+          });
+          currentNode = getNextNode(nodes, edges, currentNode.id);
+          break;
+        }
+
+        const config = integration.config as Record<string, string>;
+        const calendarId = config?.selected_calendar_id || "primary";
+
+        if (actionType === "check_availability") {
+          const period = currentNode.data.period as string || "today";
+          const serviceDuration = (currentNode.data.serviceDuration as number) || 60;
+          const workingHoursStart = currentNode.data.workingHoursStart as string || "09:00";
+          const workingHoursEnd = currentNode.data.workingHoursEnd as string || "18:00";
+          const maxOptions = (currentNode.data.maxOptions as number) || 5;
+
+          // Calculate dates based on period
+          const dates: Date[] = [];
+          const today = new Date();
+          
+          switch (period) {
+            case "today":
+              dates.push(today);
+              break;
+            case "tomorrow":
+              const tomorrow = new Date(today);
+              tomorrow.setDate(tomorrow.getDate() + 1);
+              dates.push(tomorrow);
+              break;
+            case "next_3_days":
+              for (let i = 0; i < 3; i++) {
+                const date = new Date(today);
+                date.setDate(date.getDate() + i);
+                dates.push(date);
+              }
+              break;
+            case "next_7_days":
+              for (let i = 0; i < 7; i++) {
+                const date = new Date(today);
+                date.setDate(date.getDate() + i);
+                dates.push(date);
+              }
+              break;
+          }
+
+          // Fetch available slots for each date
+          const allSlots: Array<{ start: string; end: string; displayDate: string; displayTime: string }> = [];
+
+          for (const date of dates) {
+            try {
+              const { data: slotsData, error: slotsError } = await supabase.functions.invoke("google-calendar", {
+                body: {
+                  action: "check-availability",
+                  integration_id: integration.id,
+                  calendar_id: calendarId,
+                  date: date.toISOString(),
+                  service_duration: serviceDuration,
+                  working_hours_start: workingHoursStart,
+                  working_hours_end: workingHoursEnd,
+                },
+              });
+
+              if (!slotsError && slotsData?.available_slots) {
+                for (const slot of slotsData.available_slots) {
+                  const startDate = new Date(slot.start);
+                  const dayNames = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
+                  const dayName = dayNames[startDate.getDay()];
+                  const displayDate = `${dayName}, ${startDate.getDate().toString().padStart(2, "0")}/${(startDate.getMonth() + 1).toString().padStart(2, "0")}`;
+                  const displayTime = `${startDate.getHours().toString().padStart(2, "0")}:${startDate.getMinutes().toString().padStart(2, "0")}`;
+                  
+                  allSlots.push({
+                    start: slot.start,
+                    end: slot.end,
+                    displayDate,
+                    displayTime,
+                  });
+                }
+              }
+            } catch (error) {
+              console.error("[FlowExecutor] Error fetching slots for date:", date, error);
+            }
+          }
+
+          if (allSlots.length === 0) {
+            const noSlotsMsg = "Desculpe, não há horários disponíveis no período selecionado. Por favor, tente novamente mais tarde ou entre em contato conosco.";
+            await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, noSlotsMsg);
+            await supabase.from("messages").insert({
+              conversation_id: conversationId,
+              content: noSlotsMsg,
+              sender_type: "bot",
+              message_type: "text",
+            });
+            currentNode = getNextNode(nodes, edges, currentNode.id);
+            break;
+          }
+
+          // Limit slots and create message
+          const displaySlots = allSlots.slice(0, maxOptions);
+          
+          let slotsMessage = "📅 *Horários Disponíveis*\n\nEscolha um horário digitando o número correspondente:\n\n";
+          displaySlots.forEach((slot, idx) => {
+            slotsMessage += `*${idx + 1}.* ${slot.displayDate} às ${slot.displayTime}\n`;
+          });
+          slotsMessage += "\nDigite *0* para cancelar.";
+
+          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, slotsMessage);
+          await supabase.from("messages").insert({
+            conversation_id: conversationId,
+            content: slotsMessage,
+            sender_type: "bot",
+            message_type: "text",
+          });
+
+          // Get next node to check if it's a create_event node
+          const nextNode = getNextNode(nodes, edges, currentNode.id);
+          const eventTitle = nextNode?.data?.eventTitle as string || currentNode.data.eventTitle as string || "Agendamento";
+          const eventDescription = nextNode?.data?.eventDescription as string || currentNode.data.eventDescription as string || "";
+          const eventDuration = nextNode?.data?.eventDuration as number || serviceDuration;
+          const sendConfirmation = nextNode?.data?.sendConfirmation !== false;
+
+          // Save flow state to wait for schedule response
+          const scheduleState: FlowState = {
+            currentNodeId: currentNode.id,
+            awaitingMenuResponse: false,
+            awaitingScheduleResponse: true,
+            scheduleNodeData: {
+              integrationId: integration.id,
+              calendarId,
+              availableSlots: displaySlots.map(s => ({ start: s.start, end: s.end })),
+              eventTitle,
+              eventDescription,
+              eventDuration,
+              sendConfirmation,
+            },
+            flowId: flowId,
+          };
+
+          await supabase
+            .from("conversations")
+            .update({ flow_state: scheduleState })
+            .eq("id", conversationId);
+
+          console.log("[FlowExecutor] Schedule options displayed, waiting for user response");
+          currentNode = null; // Stop execution, wait for user input
+        } else if (actionType === "create_event") {
+          // This case is typically handled after user selects a slot
+          // For direct create_event, we would need slot info in previous state
+          console.log("[FlowExecutor] create_event action requires slot selection first");
+          currentNode = getNextNode(nodes, edges, currentNode.id);
+        }
+        break;
+      }
+
       default:
         console.log("[FlowExecutor] Unknown node type:", currentNode.type);
         currentNode = getNextNode(nodes, edges, currentNode.id);
@@ -1059,6 +1242,203 @@ serve(async (req) => {
       return new Response(JSON.stringify({ success: true, message: "AI conversation continued" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+    
+    // Check if in Schedule selection mode
+    if (flowState?.awaitingScheduleResponse && flowState.scheduleNodeData) {
+      console.log("[FlowExecutor] Processing schedule selection");
+      
+      const scheduleData = flowState.scheduleNodeData;
+      const inputTrimmed = messageContent.trim();
+      
+      // Check for cancel
+      if (inputTrimmed === "0") {
+        console.log("[FlowExecutor] User cancelled scheduling");
+        
+        await supabase
+          .from("conversations")
+          .update({ flow_state: null })
+          .eq("id", conversationId);
+        
+        const cancelMsg = "Agendamento cancelado. Se precisar de algo mais, é só me chamar! 😊";
+        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, cancelMsg);
+        
+        await supabase.from("messages").insert({
+          conversation_id: conversationId,
+          content: cancelMsg,
+          sender_type: "bot",
+          message_type: "text",
+        });
+        
+        return new Response(JSON.stringify({ success: true, message: "Scheduling cancelled" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      // Try to parse selection number
+      const selectedIndex = parseInt(inputTrimmed, 10) - 1;
+      
+      if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= scheduleData.availableSlots.length) {
+        // Invalid selection
+        const invalidMsg = `Por favor, digite um número de 1 a ${scheduleData.availableSlots.length}, ou 0 para cancelar.`;
+        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, invalidMsg);
+        
+        await supabase.from("messages").insert({
+          conversation_id: conversationId,
+          content: invalidMsg,
+          sender_type: "bot",
+          message_type: "text",
+        });
+        
+        return new Response(JSON.stringify({ success: true, message: "Invalid selection, asked again" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      // Valid selection - create the event
+      const selectedSlot = scheduleData.availableSlots[selectedIndex];
+      
+      // Replace variables in event title
+      const processedTitle = (scheduleData.eventTitle || "Agendamento")
+        .replace(/\{\{nome\}\}/gi, contactName || "Cliente")
+        .replace(/\{\{telefone\}\}/gi, phone || "");
+      
+      const processedDescription = (scheduleData.eventDescription || "")
+        .replace(/\{\{nome\}\}/gi, contactName || "Cliente")
+        .replace(/\{\{telefone\}\}/gi, phone || "")
+        + `\n\nAgendado via WhatsApp\nContato: ${contactName || "N/A"}\nTelefone: ${phone || "N/A"}`;
+      
+      console.log("[FlowExecutor] Creating calendar event:", processedTitle, selectedSlot.start);
+      
+      try {
+        const { data: eventResult, error: eventError } = await supabase.functions.invoke("google-calendar", {
+          body: {
+            action: "create-event",
+            integration_id: scheduleData.integrationId,
+            calendar_id: scheduleData.calendarId,
+            title: processedTitle,
+            description: processedDescription,
+            start_time: selectedSlot.start,
+            end_time: selectedSlot.end,
+            contact_id: contactId,
+            conversation_id: conversationId,
+          },
+        });
+        
+        if (eventError) {
+          throw eventError;
+        }
+        
+        console.log("[FlowExecutor] Event created successfully:", eventResult?.event_id);
+        
+        // Clear flow state
+        await supabase
+          .from("conversations")
+          .update({ flow_state: null })
+          .eq("id", conversationId);
+        
+        // Format confirmation message
+        const eventDate = new Date(selectedSlot.start);
+        const dayNames = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
+        const monthNames = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+        
+        const formattedDate = `${dayNames[eventDate.getDay()]}, ${eventDate.getDate()} de ${monthNames[eventDate.getMonth()]}`;
+        const formattedTime = `${eventDate.getHours().toString().padStart(2, "0")}:${eventDate.getMinutes().toString().padStart(2, "0")}`;
+        
+        let confirmationMsg = `✅ *Agendamento Confirmado!*\n\n`;
+        confirmationMsg += `📅 *Data:* ${formattedDate}\n`;
+        confirmationMsg += `🕐 *Horário:* ${formattedTime}\n`;
+        confirmationMsg += `📝 *Serviço:* ${processedTitle}\n\n`;
+        confirmationMsg += `Você receberá um lembrete antes do horário agendado.\n\n`;
+        confirmationMsg += `Se precisar remarcar ou cancelar, entre em contato conosco!`;
+        
+        if (scheduleData.sendConfirmation !== false) {
+          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, confirmationMsg);
+          
+          await supabase.from("messages").insert({
+            conversation_id: conversationId,
+            content: confirmationMsg,
+            sender_type: "bot",
+            message_type: "text",
+          });
+        }
+        
+        // Continue to next node in flow if exists
+        const { data: flowNodes } = await supabase
+          .from("flow_nodes")
+          .select("*")
+          .eq("flow_id", flowState.flowId);
+
+        const { data: flowEdges } = await supabase
+          .from("flow_edges")
+          .select("*")
+          .eq("flow_id", flowState.flowId);
+
+        if (flowNodes && flowEdges) {
+          const nodes: FlowNode[] = flowNodes.map(n => ({
+            id: n.id,
+            type: n.type,
+            data: (n.data as Record<string, unknown>) || {},
+          }));
+
+          const edges: FlowEdge[] = flowEdges.map(e => ({
+            id: e.id,
+            source_id: e.source_id,
+            target_id: e.target_id,
+            label: e.label || undefined,
+          }));
+
+          const nextNode = nodes.find(n => {
+            const edge = edges.find(e => e.source_id === flowState.currentNodeId && !e.label);
+            return edge && n.id === edge.target_id;
+          });
+          
+          if (nextNode) {
+            console.log("[FlowExecutor] Continuing flow after scheduling");
+            await executeFlowFromNode(
+              supabase,
+              nodes,
+              edges,
+              nextNode,
+              conversationId,
+              contactId,
+              phone,
+              messageContent,
+              evolutionUrl,
+              evolutionKey,
+              instanceName,
+              contactName,
+              flowState.flowId
+            );
+          }
+        }
+        
+        return new Response(JSON.stringify({ success: true, message: "Event created successfully" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+        
+      } catch (error) {
+        console.error("[FlowExecutor] Error creating event:", error);
+        
+        const errorMsg = "Desculpe, ocorreu um erro ao criar o agendamento. Por favor, tente novamente ou entre em contato conosco.";
+        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, errorMsg);
+        
+        await supabase.from("messages").insert({
+          conversation_id: conversationId,
+          content: errorMsg,
+          sender_type: "bot",
+          message_type: "text",
+        });
+        
+        await supabase
+          .from("conversations")
+          .update({ flow_state: null })
+          .eq("id", conversationId);
+        
+        return new Response(JSON.stringify({ success: false, message: "Error creating event" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
     
     if (flowState?.awaitingMenuResponse && flowState.menuOptions && flowState.currentNodeId) {
