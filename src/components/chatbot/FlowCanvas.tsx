@@ -26,7 +26,6 @@ import EndNode from "./nodes/EndNode";
 import AINode from "./nodes/AINode";
 import CRMNode from "./nodes/CRMNode";
 import WhatsAppNode from "./nodes/WhatsAppNode";
-import ConditionNode from "./nodes/ConditionNode";
 import ScheduleNode from "./nodes/ScheduleNode";
 import { useFlow, useSaveFlowData } from "@/hooks/useFlows";
 import { toast } from "sonner";
@@ -43,7 +42,6 @@ const nodeTypes: NodeTypes = {
   end: EndNode,
   ai: AINode,
   crm: CRMNode,
-  condition: ConditionNode,
   schedule: ScheduleNode,
 };
 
@@ -164,7 +162,6 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
       end: "Encerrar",
       ai: "IA",
       crm: "CRM",
-      condition: "Condição",
       schedule: "Agendar",
     };
     return labels[type] || "Bloco";
@@ -347,7 +344,6 @@ function FlowCanvasInner({ flowId, onNodeSelect, onRegisterDeleteFn, onRegisterS
                   end: "#ec4899",
                   ai: "#8b5cf6",
                   crm: "#0ea5e9",
-                  condition: "hsl(var(--warning))",
                   schedule: "#3b82f6",
                 };
                 return colors[node.type || ""] || "#6b7280";
