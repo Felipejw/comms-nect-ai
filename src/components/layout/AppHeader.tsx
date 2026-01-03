@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ConnectionStatusIndicator } from "./ConnectionStatusIndicator";
 
 interface AppHeaderProps {
   title: string;
@@ -22,6 +23,9 @@ export function AppHeader({ title }: AppHeaderProps) {
       </div>
 
       <div className="flex items-center gap-4">
+        {/* Connection Status Indicator */}
+        <ConnectionStatusIndicator />
+
         {/* User Menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
