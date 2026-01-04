@@ -1,7 +1,11 @@
-import { Activity, Users, MessageSquare, Clock, Wifi, WifiOff, Server, Database } from "lucide-react";
+import { Activity, Users, MessageSquare, Clock, Wifi, WifiOff, Server, Database, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { usePanelStats, useActivityLog, useRecentConversationsPanel } from "@/hooks/usePanelStats";
+import { formatDistanceToNow } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 interface SystemStatus {
   name: string;
@@ -17,13 +21,6 @@ const systems: SystemStatus[] = [
   { name: "Serviço de Mensagens", status: "online", uptime: "99.90%", load: 67 },
 ];
 
-const realtimeStats = [
-  { label: "Atendentes Online", value: 12, icon: Users, color: "text-success" },
-  { label: "Em Atendimento", value: 28, icon: MessageSquare, color: "text-primary" },
-  { label: "Tempo Médio Atual", value: "3.2 min", icon: Clock, color: "text-warning" },
-  { label: "Na Fila", value: 15, icon: Activity, color: "text-info" },
-];
-
 const statusConfig = {
   online: { label: "Online", className: "bg-success/10 text-success", icon: Wifi },
   offline: { label: "Offline", className: "bg-destructive/10 text-destructive", icon: WifiOff },
@@ -31,6 +28,51 @@ const statusConfig = {
 };
 
 export default function Painel() {
+  const { stats, isLoading: isLoadingStats } = usePanelStats();
+  const { activities, isLoading: isLoadingActivities } = useActivityLog();
+  const { conversations, isLoading: isLoadingConversations } = useRecentConversationsPanel();
+
+  const realtimeStats = [
+    { label: "Atendentes Online", value: stats?.agentsOnline ?? 0, icon: Users, color: "text-success" },
+    { label: "Em Atendimento", value: stats?.inProgress ?? 0, icon: MessageSquare, color: "text-primary" },
+    { label: "Tempo Médio Atual", value: `${stats?.avgTimeMinutes ?? 0} min`, icon: Clock, color: "text-warning" },
+    { label: "Na Fila", value: stats?.inQueue ?? 0, icon: Activity, color: "text-info" },
+  ];
+
+  const formatActivityTime = (timestamp: string) => {
+    try {
+      return formatDistanceToNow(new Date(timestamp), { addSuffix: false, locale: ptBR });
+    } catch {
+      return "agora";
+    }
+  };
+
+  const getActivityMessage = (activity: { action: string; entity_type: string; metadata?: unknown }) => {
+    const actionMap: Record<string, string> = {
+      "create": "criou",
+      "update": "atualizou",
+      "delete": "excluiu",
+      "login": "entrou no sistema",
+      "logout": "saiu do sistema",
+    };
+    const entityMap: Record<string, string> = {
+      "conversation": "conversa",
+      "contact": "contato",
+      "message": "mensagem",
+      "user": "usuário",
+      "campaign": "campanha",
+    };
+
+    const action = actionMap[activity.action] || activity.action;
+    const entity = entityMap[activity.entity_type] || activity.entity_type;
+
+    if (activity.action === "login" || activity.action === "logout") {
+      return action;
+    }
+
+    return `${action} ${entity}`;
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -38,7 +80,7 @@ export default function Painel() {
           <h2 className="text-2xl font-bold">Painel do Sistema</h2>
           <p className="text-muted-foreground">Monitoramento em tempo real</p>
         </div>
-        <Badge className="bg-success/10 text-success animate-pulse-soft">
+        <Badge className="bg-success/10 text-success animate-pulse">
           <Wifi className="w-3 h-3 mr-1" />
           Ao Vivo
         </Badge>
@@ -46,19 +88,27 @@ export default function Painel() {
 
       {/* Real-time Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {realtimeStats.map((stat) => (
-          <div key={stat.label} className="bg-card rounded-xl border border-border p-5">
-            <div className="flex items-center gap-3">
-              <div className={cn("p-2 rounded-lg bg-muted", stat.color)}>
-                <stat.icon className="w-5 h-5" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{stat.value}</p>
-                <p className="text-sm text-muted-foreground">{stat.label}</p>
+        {isLoadingStats ? (
+          <>
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-24 rounded-xl" />
+            ))}
+          </>
+        ) : (
+          realtimeStats.map((stat) => (
+            <div key={stat.label} className="bg-card rounded-xl border border-border p-5">
+              <div className="flex items-center gap-3">
+                <div className={cn("p-2 rounded-lg bg-muted", stat.color)}>
+                  <stat.icon className="w-5 h-5" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">{stat.value}</p>
+                  <p className="text-sm text-muted-foreground">{stat.label}</p>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
 
       {/* System Status */}
@@ -100,28 +150,74 @@ export default function Painel() {
         </div>
       </div>
 
+      {/* Recent Conversations */}
+      <div className="bg-card rounded-xl border border-border p-6">
+        <h3 className="font-semibold text-lg mb-6 flex items-center gap-2">
+          <MessageSquare className="w-5 h-5" />
+          Conversas Recentes
+        </h3>
+        {isLoadingConversations ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
+        ) : conversations.length === 0 ? (
+          <p className="text-center text-muted-foreground py-8">Nenhuma conversa recente</p>
+        ) : (
+          <div className="space-y-3">
+            {conversations.slice(0, 6).map((conv) => (
+              <div key={conv.id} className="flex items-center justify-between p-3 rounded-lg border border-border hover:bg-muted/50 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-2 h-2 rounded-full bg-primary" />
+                  <div>
+                    <p className="font-medium">{(conv.contacts as { name: string } | null)?.name || "Contato desconhecido"}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {conv.assignedName ? `Atendente: ${conv.assignedName}` : "Sem atendente"}
+                    </p>
+                  </div>
+                </div>
+                <Badge 
+                  variant="outline" 
+                  className={cn(
+                    conv.status === "in_progress" && "bg-primary/10 text-primary",
+                    conv.status === "new" && "bg-warning/10 text-warning",
+                    conv.status === "resolved" && "bg-success/10 text-success",
+                  )}
+                >
+                  {conv.status === "in_progress" ? "Em atendimento" : 
+                   conv.status === "new" ? "Na fila" : 
+                   conv.status === "resolved" ? "Resolvido" : conv.status}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Activity Feed */}
       <div className="bg-card rounded-xl border border-border p-6">
         <h3 className="font-semibold text-lg mb-6 flex items-center gap-2">
           <Activity className="w-5 h-5" />
           Atividade Recente
         </h3>
-        <div className="space-y-4">
-          {[
-            { time: "Agora", event: "Carlos iniciou atendimento com Maria Silva", type: "chat" },
-            { time: "2 min", event: "Fernanda resolveu conversa #4523", type: "resolved" },
-            { time: "5 min", event: "Novo contato registrado: Pedro Alves", type: "contact" },
-            { time: "8 min", event: "Campanha 'Natal 2024' enviada para 2.500 contatos", type: "campaign" },
-            { time: "15 min", event: "Ricardo entrou no sistema", type: "login" },
-            { time: "20 min", event: "Chatbot respondeu 15 mensagens automaticamente", type: "bot" },
-          ].map((activity, index) => (
-            <div key={index} className="flex items-center gap-4 text-sm">
-              <span className="text-muted-foreground w-16">{activity.time}</span>
-              <div className="w-2 h-2 rounded-full bg-primary" />
-              <span>{activity.event}</span>
-            </div>
-          ))}
-        </div>
+        {isLoadingActivities ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : activities.length === 0 ? (
+          <p className="text-center text-muted-foreground py-8">Nenhuma atividade recente registrada</p>
+        ) : (
+          <div className="space-y-4">
+            {activities.slice(0, 10).map((activity) => (
+              <div key={activity.id} className="flex items-center gap-4 text-sm">
+                <span className="text-muted-foreground w-20">{formatActivityTime(activity.created_at)}</span>
+                <div className="w-2 h-2 rounded-full bg-primary" />
+                <span>{getActivityMessage(activity)}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

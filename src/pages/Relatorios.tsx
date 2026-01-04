@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Download, Filter, Calendar, TrendingUp, TrendingDown, Users, MessageSquare, Clock, CheckCircle } from "lucide-react";
+import { Download, Calendar, Users, MessageSquare, Clock, CheckCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   Select,
   SelectContent,
@@ -30,33 +31,29 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { useReportStats } from "@/hooks/useReportStats";
 
-const barData = [
-  { name: "Jan", conversas: 420, resolvidas: 380 },
-  { name: "Fev", conversas: 580, resolvidas: 520 },
-  { name: "Mar", conversas: 650, resolvidas: 600 },
-  { name: "Abr", conversas: 720, resolvidas: 680 },
-  { name: "Mai", conversas: 690, resolvidas: 650 },
-  { name: "Jun", conversas: 850, resolvidas: 800 },
-];
-
-const pieData = [
-  { name: "Suporte", value: 45, color: "hsl(221, 83%, 53%)" },
-  { name: "Vendas", value: 30, color: "hsl(142, 76%, 36%)" },
-  { name: "Financeiro", value: 15, color: "hsl(38, 92%, 50%)" },
-  { name: "Outros", value: 10, color: "hsl(215, 16%, 47%)" },
-];
-
-const reportData = [
-  { agent: "Carlos Eduardo", conversations: 245, resolved: 238, avgTime: "4.2 min", satisfaction: 98 },
-  { agent: "Fernanda Souza", conversations: 198, resolved: 190, avgTime: "5.1 min", satisfaction: 96 },
-  { agent: "Ricardo Lima", conversations: 312, resolved: 305, avgTime: "3.8 min", satisfaction: 99 },
-  { agent: "Patricia Mendes", conversations: 167, resolved: 158, avgTime: "6.2 min", satisfaction: 94 },
-  { agent: "Lucas Santos", conversations: 289, resolved: 280, avgTime: "4.5 min", satisfaction: 97 },
-];
+type Period = "week" | "month" | "quarter" | "year";
 
 export default function Relatorios() {
-  const [period, setPeriod] = useState("month");
+  const [period, setPeriod] = useState<Period>("month");
+  const { 
+    stats, 
+    isLoadingStats, 
+    monthlyData, 
+    isLoadingMonthly,
+    categoryData,
+    isLoadingCategory,
+    agentPerformance,
+    isLoadingAgents
+  } = useReportStats(period);
+
+  const formatTime = (minutes: number) => {
+    if (minutes < 60) return `${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    return `${hours}h ${mins}min`;
+  };
 
   return (
     <div className="space-y-6">
@@ -66,7 +63,7 @@ export default function Relatorios() {
           <p className="text-muted-foreground">Análise detalhada do desempenho</p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={period} onValueChange={setPeriod}>
+          <Select value={period} onValueChange={(v) => setPeriod(v as Period)}>
             <SelectTrigger className="w-40">
               <Calendar className="w-4 h-4 mr-2" />
               <SelectValue />
@@ -87,38 +84,48 @@ export default function Relatorios() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatsCard
-          title="Total de Conversas"
-          value="3.910"
-          change="+18% vs período anterior"
-          changeType="positive"
-          icon={MessageSquare}
-          iconColor="bg-primary/10 text-primary"
-        />
-        <StatsCard
-          title="Taxa de Resolução"
-          value="94.2%"
-          change="+2.3% vs período anterior"
-          changeType="positive"
-          icon={CheckCircle}
-          iconColor="bg-success/10 text-success"
-        />
-        <StatsCard
-          title="Tempo Médio"
-          value="4.6 min"
-          change="-12% vs período anterior"
-          changeType="positive"
-          icon={Clock}
-          iconColor="bg-warning/10 text-warning"
-        />
-        <StatsCard
-          title="Novos Contatos"
-          value="892"
-          change="+24% vs período anterior"
-          changeType="positive"
-          icon={Users}
-          iconColor="bg-info/10 text-info"
-        />
+        {isLoadingStats ? (
+          <>
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-32 rounded-xl" />
+            ))}
+          </>
+        ) : (
+          <>
+            <StatsCard
+              title="Total de Conversas"
+              value={stats?.totalConversations?.toLocaleString() || "0"}
+              change="vs período anterior"
+              changeType="neutral"
+              icon={MessageSquare}
+              iconColor="bg-primary/10 text-primary"
+            />
+            <StatsCard
+              title="Taxa de Resolução"
+              value={`${stats?.resolutionRate || 0}%`}
+              change="vs período anterior"
+              changeType={stats?.resolutionRate && stats.resolutionRate > 80 ? "positive" : "negative"}
+              icon={CheckCircle}
+              iconColor="bg-success/10 text-success"
+            />
+            <StatsCard
+              title="Tempo Médio"
+              value={formatTime(stats?.avgTimeMinutes || 0)}
+              change="vs período anterior"
+              changeType="neutral"
+              icon={Clock}
+              iconColor="bg-warning/10 text-warning"
+            />
+            <StatsCard
+              title="Novos Contatos"
+              value={stats?.newContacts?.toLocaleString() || "0"}
+              change="vs período anterior"
+              changeType="positive"
+              icon={Users}
+              iconColor="bg-info/10 text-info"
+            />
+          </>
+        )}
       </div>
 
       {/* Charts */}
@@ -126,51 +133,71 @@ export default function Relatorios() {
         <div className="lg:col-span-2 bg-card rounded-xl border border-border p-6">
           <h3 className="font-semibold text-lg mb-6">Evolução Mensal</h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={barData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 32%, 91%)" />
-                <XAxis dataKey="name" stroke="hsl(215, 16%, 47%)" fontSize={12} />
-                <YAxis stroke="hsl(215, 16%, 47%)" fontSize={12} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: "hsl(0, 0%, 100%)",
-                    border: "1px solid hsl(214, 32%, 91%)",
-                    borderRadius: "8px",
-                  }}
-                />
-                <Bar dataKey="conversas" fill="hsl(221, 83%, 53%)" radius={[4, 4, 0, 0]} />
-                <Bar dataKey="resolvidas" fill="hsl(142, 76%, 36%)" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {isLoadingMonthly ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : monthlyData.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Nenhum dado disponível
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={monthlyData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: "hsl(var(--card))",
+                      border: "1px solid hsl(var(--border))",
+                      borderRadius: "8px",
+                    }}
+                  />
+                  <Bar dataKey="conversas" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} name="Conversas" />
+                  <Bar dataKey="resolvidas" fill="hsl(var(--success))" radius={[4, 4, 0, 0]} name="Resolvidas" />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
 
         <div className="bg-card rounded-xl border border-border p-6">
           <h3 className="font-semibold text-lg mb-6">Por Categoria</h3>
           <div className="h-72">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {isLoadingCategory ? (
+              <div className="flex items-center justify-center h-full">
+                <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+              </div>
+            ) : categoryData.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Nenhum dado disponível
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={categoryData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={100}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {categoryData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
           <div className="flex flex-wrap justify-center gap-4 mt-4">
-            {pieData.map((item) => (
+            {categoryData.map((item) => (
               <div key={item.name} className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.fill }} />
                 <span className="text-sm text-muted-foreground">{item.name}</span>
               </div>
             ))}
@@ -181,32 +208,44 @@ export default function Relatorios() {
       {/* Table */}
       <div className="bg-card rounded-xl border border-border p-6">
         <h3 className="font-semibold text-lg mb-6">Desempenho por Atendente</h3>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Atendente</TableHead>
-              <TableHead className="text-right">Conversas</TableHead>
-              <TableHead className="text-right">Resolvidas</TableHead>
-              <TableHead className="text-right">Tempo Médio</TableHead>
-              <TableHead className="text-right">Satisfação</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {reportData.map((row) => (
-              <TableRow key={row.agent}>
-                <TableCell className="font-medium">{row.agent}</TableCell>
-                <TableCell className="text-right">{row.conversations}</TableCell>
-                <TableCell className="text-right">{row.resolved}</TableCell>
-                <TableCell className="text-right">{row.avgTime}</TableCell>
-                <TableCell className="text-right">
-                  <Badge className={row.satisfaction >= 95 ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}>
-                    {row.satisfaction}%
-                  </Badge>
-                </TableCell>
-              </TableRow>
+        {isLoadingAgents ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <Skeleton key={i} className="h-12 w-full" />
             ))}
-          </TableBody>
-        </Table>
+          </div>
+        ) : agentPerformance.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground">
+            Nenhum dado de atendente disponível para este período
+          </div>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Atendente</TableHead>
+                <TableHead className="text-right">Atendimentos</TableHead>
+                <TableHead className="text-right">Resolvidos</TableHead>
+                <TableHead className="text-right">Tempo Médio</TableHead>
+                <TableHead className="text-right">Satisfação</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {agentPerformance.map((row) => (
+                <TableRow key={row.name}>
+                  <TableCell className="font-medium">{row.name}</TableCell>
+                  <TableCell className="text-right">{row.atendimentos}</TableCell>
+                  <TableCell className="text-right">{row.resolvidos}</TableCell>
+                  <TableCell className="text-right">{row.tempoMedio}</TableCell>
+                  <TableCell className="text-right">
+                    <Badge className={parseInt(row.satisfacao) >= 90 ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}>
+                      {row.satisfacao}
+                    </Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
       </div>
     </div>
   );
