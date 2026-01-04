@@ -250,7 +250,13 @@ export function useSendMessage() {
         });
 
         if (error) throw error;
-        if (!data.success) throw new Error(data.error);
+        
+        // Check for reconnection needed
+        if (!data.success) {
+          const customError = new Error(data.error) as Error & { needsReconnection?: boolean };
+          customError.needsReconnection = data.needsReconnection || false;
+          throw customError;
+        }
         return data.message;
       }
 
@@ -287,9 +293,21 @@ export function useSendMessage() {
       
       queryClient.invalidateQueries({ queryKey: ['messages', variables.conversationId] });
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      // Also invalidate connections to update status indicator
+      queryClient.invalidateQueries({ queryKey: ['whatsapp-connections'] });
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao enviar mensagem: ' + error.message);
+    onError: (error: Error & { needsReconnection?: boolean }) => {
+      if (error.needsReconnection) {
+        toast.error(error.message, {
+          duration: 8000,
+          action: {
+            label: "Ir para Conexões",
+            onClick: () => window.location.href = "/conexoes"
+          }
+        });
+      } else {
+        toast.error('Erro ao enviar mensagem: ' + error.message);
+      }
     },
   });
 }
