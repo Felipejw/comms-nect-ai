@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet } from "lucide-react";
+import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet, RefreshCw, AlertTriangle } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -37,9 +37,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useContacts, useCreateContact, useDeleteContact, useUpdateContact, Contact } from "@/hooks/useContacts";
+import { useSyncContacts, hasLidIssue, hasPlaceholderName } from "@/hooks/useSyncContacts";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
@@ -112,6 +119,12 @@ export default function Contatos() {
   const createContact = useCreateContact();
   const deleteContact = useDeleteContact();
   const updateContact = useUpdateContact();
+  const syncContacts = useSyncContacts();
+
+  // Count contacts with issues
+  const problemContactsCount = contacts?.filter(c => 
+    hasLidIssue(c) || hasPlaceholderName(c)
+  ).length || 0;
 
   const filteredContacts = contacts?.filter(
     (c) =>
@@ -291,6 +304,36 @@ export default function Contatos() {
           {!canEdit && <ReadOnlyBadge />}
         </div>
         <div className="flex gap-2">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  variant="outline" 
+                  className="gap-2" 
+                  onClick={() => syncContacts.mutate()}
+                  disabled={syncContacts.isPending || !canEdit}
+                >
+                  {syncContacts.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  Sincronizar
+                  {problemContactsCount > 0 && (
+                    <Badge variant="destructive" className="ml-1 h-5 w-5 p-0 flex items-center justify-center text-xs">
+                      {problemContactsCount}
+                    </Badge>
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Sincroniza contatos com o WhatsApp e corrige duplicatas</p>
+                {problemContactsCount > 0 && (
+                  <p className="text-warning">{problemContactsCount} contatos com problemas detectados</p>
+                )}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
           <Button variant="outline" className="gap-2" onClick={() => setIsImportDialogOpen(true)} disabled={!canEdit}>
             <Upload className="w-4 h-4" />
             Importar
@@ -420,7 +463,26 @@ export default function Contatos() {
                       </div>
                     </div>
                   </TableCell>
-                  <TableCell>{formatPhoneDisplay(contact.phone)}</TableCell>
+                  <TableCell>
+                    <div className="flex items-center gap-2">
+                      <span>{formatPhoneDisplay(contact.phone)}</span>
+                      {hasLidIssue(contact) && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <AlertTriangle className="w-4 h-4 text-warning" />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Número precisa de sincronização</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
+                      {!contact.phone && (contact as any).whatsapp_lid && (
+                        <Badge variant="outline" className="text-xs">LID</Badge>
+                      )}
+                    </div>
+                  </TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
                       {contact.tags?.map((tag) => (

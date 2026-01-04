@@ -15,6 +15,7 @@ export interface Contact {
   last_contact_at: string | null;
   created_at: string;
   updated_at: string;
+  whatsapp_lid: string | null;
   tags?: { id: string; name: string; color: string }[];
 }
 

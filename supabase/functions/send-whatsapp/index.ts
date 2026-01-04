@@ -247,6 +247,57 @@ Deno.serve(async (req) => {
       );
     }
 
+    // After successful send, try to update contact info if needed
+    // Check if Evolution API returned real phone info
+    const sentToNumber = evolutionResult?.key?.remoteJid;
+    if (sentToNumber && contact && sendAsLid) {
+      // If we sent via LID and got back a real phone number
+      const returnedPhone = sentToNumber.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
+      
+      if (sentToNumber.includes('@s.whatsapp.net') && returnedPhone.length <= 15) {
+        // We now have the real phone number
+        console.log(`Got real phone from Evolution response: ${returnedPhone}`);
+        
+        // Check if there's already a contact with this phone
+        const { data: existingWithPhone } = await supabaseAdmin
+          .from("contacts")
+          .select("id")
+          .eq("phone", returnedPhone)
+          .neq("id", contact.id)
+          .single();
+        
+        if (existingWithPhone) {
+          // There's a duplicate - merge them
+          console.log(`Found duplicate contact ${existingWithPhone.id}, merging...`);
+          
+          // Move conversations to existing contact
+          await supabaseAdmin
+            .from("conversations")
+            .update({ contact_id: existingWithPhone.id })
+            .eq("contact_id", contact.id);
+          
+          // Delete the LID contact
+          await supabaseAdmin
+            .from("contacts")
+            .delete()
+            .eq("id", contact.id);
+          
+          console.log(`Merged contact ${contact.id} into ${existingWithPhone.id}`);
+        } else {
+          // Just update the phone
+          await supabaseAdmin
+            .from("contacts")
+            .update({ 
+              phone: returnedPhone,
+              whatsapp_lid: phoneToSend // Store the LID we used
+            })
+            .eq("id", contact.id);
+          
+          console.log(`Updated contact ${contact.id} with real phone: ${returnedPhone}`);
+        }
+      }
+    }
+
     // Save message to database
     const { data: message, error: msgError } = await supabaseAdmin
       .from("messages")
