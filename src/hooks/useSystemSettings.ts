@@ -46,15 +46,56 @@ export function useSystemSettings() {
     },
   });
 
+  const createOrUpdateSetting = useMutation({
+    mutationFn: async ({ 
+      key, 
+      value, 
+      description, 
+      category 
+    }: { 
+      key: string; 
+      value: string; 
+      description?: string;
+      category?: string;
+    }) => {
+      const { data: existing } = await supabase
+        .from("system_settings")
+        .select("id")
+        .eq("key", key)
+        .single();
+
+      if (existing) {
+        const { error } = await supabase
+          .from("system_settings")
+          .update({ value })
+          .eq("key", key);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from("system_settings")
+          .insert({ key, value, description, category });
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["system-settings"] });
+      toast.success("Configuração salva!");
+    },
+    onError: () => {
+      toast.error("Erro ao salvar configuração");
+    },
+  });
+
   const getSetting = (key: string): string => {
     const setting = settings.find((s) => s.key === key);
-    return setting?.value || "disabled";
+    return setting?.value || "";
   };
 
   return {
     settings,
     isLoading,
     updateSetting,
+    createOrUpdateSetting,
     getSetting,
   };
 }

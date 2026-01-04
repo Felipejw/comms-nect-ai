@@ -27,6 +27,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { ROUTE_TO_MODULE, type ModuleKey } from "@/hooks/usePermissions";
+import { useSystemSettings } from "@/hooks/useSystemSettings";
 
 interface NavItem {
   title: string;
@@ -54,7 +55,7 @@ const navSections: NavSection[] = [
     items: [
       { title: "WhatsApp", href: "/atendimento", icon: MessageSquare, module: "atendimento" },
       { title: "Respostas Rápidas", href: "/respostas-rapidas", icon: Zap, module: "respostas_rapidas" },
-      { title: "Kanban", href: "/kanban", icon: Kanban, module: "kanban" },
+      { title: "CRM", href: "/kanban", icon: Kanban, module: "kanban" },
       { title: "Contatos", href: "/contatos", icon: Users, module: "contatos" },
       { title: "Agendamentos", href: "/agendamentos", icon: Calendar, module: "agendamentos" },
       { title: "Tags", href: "/tags", icon: Tags, module: "tags" },
@@ -77,8 +78,12 @@ const navSections: NavSection[] = [
 export function AppSidebar() {
   const location = useLocation();
   const { hasPermission, isAdmin } = useAuth();
+  const { getSetting } = useSystemSettings();
   const [expandedSections, setExpandedSections] = useState<string[]>(["Gerência", "Atendimento", "Administração"]);
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  const platformName = getSetting("platform_name") || "TalkFlow";
+  const platformLogo = getSetting("platform_logo");
 
   const toggleSection = (title: string) => {
     setExpandedSections((prev) =>
@@ -122,10 +127,18 @@ export function AppSidebar() {
       <div className="flex items-center justify-between h-16 px-4 border-b border-sidebar-border">
         {!isCollapsed && (
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-              <MessageSquare className="w-5 h-5 text-primary-foreground" />
-            </div>
-            <span className="font-bold text-lg">TalkFlow</span>
+            {platformLogo ? (
+              <img 
+                src={platformLogo} 
+                alt={platformName} 
+                className="w-8 h-8 object-contain rounded-lg"
+              />
+            ) : (
+              <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
+                <MessageSquare className="w-5 h-5 text-primary-foreground" />
+              </div>
+            )}
+            <span className="font-bold text-lg">{platformName}</span>
           </div>
         )}
         <Button
