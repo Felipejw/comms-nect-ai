@@ -62,6 +62,7 @@ import { useFlows } from "@/hooks/useFlows";
 import { useQueues } from "@/hooks/useQueues";
 import { useBulkDeleteConversations, useBulkUpdateConversations, useBulkAddTagsToConversations, useBulkRemoveTagsFromConversations, useExportConversations } from "@/hooks/useBulkConversationActions";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
+import { ChatConnectionIndicator } from "@/components/atendimento/ChatConnectionIndicator";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
 import {
@@ -1443,10 +1444,13 @@ export default function Atendimento() {
                       {formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"}
                     </p>
                     {selectedConversation.channel === "whatsapp" && (
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1 text-accent border-accent/30 hidden sm:flex">
-                        <MessageCircle className="w-3 h-3" />
-                        WhatsApp
-                      </Badge>
+                      <div className="flex items-center gap-1.5">
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0 gap-1 text-accent border-accent/30 hidden sm:flex">
+                          <MessageCircle className="w-3 h-3" />
+                          WhatsApp
+                        </Badge>
+                        <ChatConnectionIndicator connectionId={selectedConversation.connection_id} />
+                      </div>
                     )}
                   </div>
                 </div>

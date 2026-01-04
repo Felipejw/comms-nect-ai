@@ -38,3 +38,6 @@ verify_jwt = false
 
 [functions.merge-duplicate-contacts]
 verify_jwt = false
+
+[functions.check-connections]
+verify_jwt = false

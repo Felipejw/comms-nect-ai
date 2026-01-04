@@ -27,6 +27,7 @@ export interface Conversation {
   contact_id: string;
   assigned_to: string | null;
   queue_id: string | null;
+  connection_id: string | null;
   status: 'new' | 'in_progress' | 'resolved' | 'archived';
   subject: string | null;
   channel: string;
