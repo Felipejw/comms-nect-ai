@@ -15,7 +15,7 @@ export default function Configuracoes() {
         </p>
       </div>
 
-      <Tabs defaultValue="opcoes" className="w-full">
+      <Tabs defaultValue="perfil" className="w-full">
         <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent">
           <TabsTrigger
             value="perfil"
