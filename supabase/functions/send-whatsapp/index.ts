@@ -132,6 +132,40 @@ Deno.serve(async (req) => {
 
     const instanceName = connection.session_data?.instanceName || connection.name;
 
+    // Verify real connection status before sending
+    console.log(`Checking real status of instance ${instanceName}...`);
+    try {
+      const statusCheck = await fetch(`${evolutionApiUrl}/instance/connectionState/${instanceName}`, {
+        headers: { "apikey": evolutionApiKey }
+      });
+      const statusResult = await statusCheck.json();
+      console.log(`Instance ${instanceName} status:`, JSON.stringify(statusResult));
+      
+      const connectionState = statusResult?.instance?.state || statusResult?.state;
+      if (connectionState !== 'open') {
+        console.log(`Instance ${instanceName} is not connected (state: ${connectionState}), updating database...`);
+        
+        // Update database to reflect disconnection
+        await supabaseAdmin
+          .from("connections")
+          .update({ status: 'disconnected' })
+          .eq("id", connection.id);
+        
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: "WhatsApp desconectado. Por favor, reconecte na página de Conexões.",
+            needsReconnection: true,
+            connectionId: connection.id 
+          }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    } catch (statusError) {
+      console.error("Error checking connection status:", statusError);
+      // Continue anyway, the send will fail if there's actually a problem
+    }
+
     // Format the number based on whether it's a LID or real phone
     let formattedNumber = phoneToSend.replace(/\D/g, "");
     
@@ -234,6 +268,35 @@ Deno.serve(async (req) => {
       
       // Check for specific error types
       let errorMessage = evolutionResult.message || "Falha ao enviar mensagem";
+      let needsReconnection = false;
+      
+      // Check for session errors (WhatsApp disconnected)
+      const responseMessage = evolutionResult.response?.message || evolutionResult.message || "";
+      if (typeof responseMessage === "string" && 
+          (responseMessage.includes("No sessions") || 
+           responseMessage.includes("Session not found") ||
+           responseMessage.includes("not connected"))) {
+        console.log(`Session error detected for instance ${instanceName}, marking as disconnected...`);
+        
+        // Update database to reflect disconnection
+        await supabaseAdmin
+          .from("connections")
+          .update({ status: 'disconnected' })
+          .eq("id", connection.id);
+        
+        errorMessage = "Sessão do WhatsApp expirou. Reconecte o WhatsApp na página de Conexões.";
+        needsReconnection = true;
+        
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: errorMessage,
+            needsReconnection: true,
+            connectionId: connection.id 
+          }),
+          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
       
       // Check if number doesn't exist on WhatsApp
       if (evolutionResult.response?.message?.[0]?.exists === false) {
@@ -242,7 +305,7 @@ Deno.serve(async (req) => {
       }
       
       return new Response(
-        JSON.stringify({ success: false, error: errorMessage }),
+        JSON.stringify({ success: false, error: errorMessage, needsReconnection }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
