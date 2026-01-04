@@ -707,13 +707,22 @@ serve(async (req) => {
         if (existingConversation) {
           conversation = existingConversation;
           
-          // Update last_message_at and ensure connection_id is set
+          // Format subject based on message type
+          let subjectPreview = messageContent;
+          if (messageType === 'audio') subjectPreview = '🎵 Áudio';
+          else if (messageType === 'image') subjectPreview = '📷 Imagem';
+          else if (messageType === 'video') subjectPreview = '🎬 Vídeo';
+          else if (messageType === 'document') subjectPreview = '📎 Documento';
+          else subjectPreview = messageContent.substring(0, 100);
+          
+          // Update last_message_at, subject with last message, and ensure connection_id is set
           await supabaseClient
             .from("conversations")
             .update({ 
               last_message_at: new Date().toISOString(),
               unread_count: fromMe ? existingConversation.unread_count : (existingConversation.unread_count || 0) + 1,
-              connection_id: conn.id, // Ensure connection is linked
+              connection_id: conn.id,
+              subject: subjectPreview,
             })
             .eq("id", existingConversation.id);
         } else {

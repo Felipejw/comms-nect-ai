@@ -271,7 +271,20 @@ export function useSendMessage() {
       if (error) throw error;
       return data;
     },
-    onSuccess: (_, variables) => {
+    onSuccess: async (data, variables) => {
+      // Update conversation subject with last message
+      let subjectPreview = variables.content;
+      if (variables.messageType === 'audio') subjectPreview = '🎵 Áudio';
+      else if (variables.messageType === 'image') subjectPreview = '📷 Imagem';
+      else if (variables.messageType === 'video') subjectPreview = '🎬 Vídeo';
+      else if (variables.messageType === 'document') subjectPreview = '📎 Documento';
+      else subjectPreview = variables.content.substring(0, 100);
+      
+      await supabase
+        .from('conversations')
+        .update({ subject: subjectPreview })
+        .eq('id', variables.conversationId);
+      
       queryClient.invalidateQueries({ queryKey: ['messages', variables.conversationId] });
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
     },

@@ -1327,7 +1327,7 @@ export default function Atendimento() {
                     </span>
                   </div>
                   <p className="text-sm text-muted-foreground truncate mb-1">
-                    {conversation.subject || "Sem assunto"}
+                    {conversation.subject || "Nova conversa"}
                   </p>
                   {conversation.tags && conversation.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1">
