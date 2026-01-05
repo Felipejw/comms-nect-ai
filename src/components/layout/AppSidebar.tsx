@@ -19,8 +19,8 @@ import {
   QrCode,
   Kanban,
   MessagesSquare,
-  Menu,
-  X,
+  ChevronsLeft,
+  ChevronsRight,
   Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -75,7 +75,11 @@ const navSections: NavSection[] = [
   },
 ];
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  onNavigate?: () => void;
+}
+
+export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const location = useLocation();
   const { hasPermission, isAdmin } = useAuth();
   const { getSetting } = useSystemSettings();
@@ -146,8 +150,9 @@ export function AppSidebar() {
           size="icon"
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="text-sidebar-foreground hover:bg-sidebar-accent"
+          title={isCollapsed ? "Expandir menu" : "Recolher menu"}
         >
-          {isCollapsed ? <Menu className="w-5 h-5" /> : <X className="w-5 h-5" />}
+          {isCollapsed ? <ChevronsRight className="w-5 h-5" /> : <ChevronsLeft className="w-5 h-5" />}
         </Button>
       </div>
 
@@ -175,6 +180,7 @@ export function AppSidebar() {
                   <li key={item.href}>
                     <NavLink
                       to={item.href}
+                      onClick={onNavigate}
                       className={cn(
                         "sidebar-link",
                         isActive(item.href) && "sidebar-link-active",
@@ -197,6 +203,7 @@ export function AppSidebar() {
       <div className="p-3 border-t border-sidebar-border">
         <NavLink
           to="/configuracoes"
+          onClick={onNavigate}
           className={cn(
             "sidebar-link",
             isActive("/configuracoes") && "sidebar-link-active",

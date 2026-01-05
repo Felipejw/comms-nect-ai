@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Upload, X, Loader2, Palette } from "lucide-react";
+import { Upload, X, Loader2, Palette, RotateCcw } from "lucide-react";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -376,16 +376,37 @@ export const CustomizeTab = () => {
             </div>
           </div>
 
-          <Button onClick={handleSaveBranding} disabled={isSaving} className="w-full sm:w-auto">
-            {isSaving ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Salvando...
-              </>
-            ) : (
-              "Salvar Identidade Visual"
-            )}
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-3">
+            <Button 
+              variant="outline" 
+              onClick={() => {
+                setPrimaryColor(DEFAULT_BRANDING.primary_color);
+                setSecondaryColor(DEFAULT_BRANDING.secondary_color);
+                setAccentColor(DEFAULT_BRANDING.accent_color);
+                setBackgroundColor(DEFAULT_BRANDING.background_color);
+                setForegroundColor(DEFAULT_BRANDING.foreground_color);
+                setSidebarBgColor(DEFAULT_BRANDING.sidebar_background_color);
+                setSidebarFgColor(DEFAULT_BRANDING.sidebar_foreground_color);
+                setSidebarAccentColor(DEFAULT_BRANDING.sidebar_accent_color);
+                setCardBgColor(DEFAULT_BRANDING.card_background_color);
+                setBorderColor(DEFAULT_BRANDING.border_color);
+              }}
+              className="gap-2"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Restaurar Cores Padrão
+            </Button>
+            <Button onClick={handleSaveBranding} disabled={isSaving} className="flex-1 sm:flex-none">
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Salvando...
+                </>
+              ) : (
+                "Salvar Identidade Visual"
+              )}
+            </Button>
+          </div>
         </CardContent>
       </Card>
     </div>
