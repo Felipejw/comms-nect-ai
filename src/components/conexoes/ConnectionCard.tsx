@@ -344,6 +344,26 @@ export function ConnectionCard({
             <Calendar className="w-4 h-4 flex-shrink-0" />
             <span>Data: {formattedDate}</span>
           </div>
+          
+          {/* Color selector field */}
+          <div className="pt-2">
+            <p className="text-xs text-muted-foreground mb-2">Cor da conexão:</p>
+            <div className="flex flex-wrap gap-1.5">
+              {CONNECTION_COLORS.map((c) => (
+                <button
+                  key={c.value}
+                  onClick={() => onUpdateColor(connection.id, c.value)}
+                  className={cn(
+                    "w-6 h-6 rounded-full transition-all hover:scale-110 border-2",
+                    connectionColor === c.value ? "border-foreground scale-110" : "border-transparent"
+                  )}
+                  style={{ backgroundColor: c.value }}
+                  title={c.label}
+                  disabled={isUpdating}
+                />
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Primary Action */}
