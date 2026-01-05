@@ -171,6 +171,14 @@ export default function Conexoes() {
     }
   };
 
+  const handleUpdateColor = async (connectionId: string, color: string) => {
+    try {
+      await updateConnection.mutateAsync({ connectionId, color });
+    } catch (error) {
+      console.error("Error updating connection color:", error);
+    }
+  };
+
   const currentQrConnection = connections.find(c => c.id === selectedConnection?.id);
 
   return (
@@ -272,6 +280,7 @@ export default function Conexoes() {
               onRefreshQr={handleRefreshQrCode}
               onViewQr={handleViewQr}
               onUpdateName={handleUpdateName}
+              onUpdateColor={handleUpdateColor}
               isDisconnecting={disconnect.isPending}
               isRecreating={recreateConnection.isPending}
               isDeleting={deleteConnection.isPending}
