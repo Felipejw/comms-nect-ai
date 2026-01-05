@@ -73,6 +73,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useUsers } from "@/hooks/useUsers";
 
 // Template variable replacement helper
@@ -977,7 +978,7 @@ export default function Atendimento() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] -m-6 bg-card border border-border overflow-hidden shadow-sm">
+    <div className="flex h-[calc(100vh-3rem)] md:h-[calc(100vh-3rem)] -m-4 md:-m-6 bg-card border border-border overflow-hidden shadow-sm">
       {/* Hidden file inputs */}
       <input
         ref={imageInputRef}
@@ -1480,7 +1481,7 @@ export default function Atendimento() {
                   className="md:hidden shrink-0"
                   onClick={() => setShowMobileChat(false)}
                 >
-                  <X className="w-5 h-5" />
+                  <ArrowLeft className="w-5 h-5" />
                 </Button>
                 <div className="relative">
                   <Avatar className="w-8 h-8 sm:w-10 sm:h-10 shrink-0">
@@ -1959,14 +1960,29 @@ export default function Atendimento() {
         </div>
       )}
 
-      {/* Contact Profile Panel */}
+      {/* Contact Profile Panel - Using Sheet on mobile */}
       {showProfilePanel && selectedConversation?.contact?.id && (
-      <ContactProfilePanel
-          contactId={selectedConversation.contact.id}
-          conversationId={selectedConversation.id}
-          onClose={() => setShowProfilePanel(false)}
-        />
+        <div className="hidden md:block">
+          <ContactProfilePanel
+            contactId={selectedConversation.contact.id}
+            conversationId={selectedConversation.id}
+            onClose={() => setShowProfilePanel(false)}
+          />
+        </div>
       )}
+      
+      {/* Mobile Profile Sheet */}
+      <Sheet open={showProfilePanel && !!selectedConversation?.contact?.id} onOpenChange={(open) => !open && setShowProfilePanel(false)}>
+        <SheetContent side="right" className="w-full sm:max-w-md p-0 md:hidden">
+          {selectedConversation?.contact?.id && (
+            <ContactProfilePanel
+              contactId={selectedConversation.contact.id}
+              conversationId={selectedConversation.id}
+              onClose={() => setShowProfilePanel(false)}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
