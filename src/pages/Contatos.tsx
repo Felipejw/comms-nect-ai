@@ -1,9 +1,10 @@
 import { useState, useRef } from "react";
-import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet, RefreshCw, AlertTriangle } from "lucide-react";
+import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet, RefreshCw, AlertTriangle, CheckSquare, Square, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Table,
   TableBody,
@@ -53,6 +54,21 @@ import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
+
+// Helper to check if phone is a LID (long identifier, not a real phone)
+const isLidPhone = (phone: string | null | undefined): boolean => {
+  if (!phone) return false;
+  const cleaned = phone.replace(/\D/g, '');
+  // LIDs typically have more than 15 digits
+  return cleaned.length > 15;
+};
+
+// Clean phone - remove LID-like numbers
+const cleanPhone = (phone: string | null | undefined): string | undefined => {
+  if (!phone) return undefined;
+  if (isLidPhone(phone)) return undefined;
+  return phone;
+};
 
 // Format phone number for display
 const formatPhoneDisplay = (phone: string | null | undefined) => {
@@ -105,9 +121,14 @@ export default function Contatos() {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
+  const [isBulkDeleteDialogOpen, setIsBulkDeleteDialogOpen] = useState(false);
   const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
   const [newContact, setNewContact] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
   const [editContact, setEditContact] = useState({ name: "", email: "", phone: "", company: "", notes: "" });
+  
+  // Bulk selection state
+  const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   
   // Import state
   const [csvData, setCsvData] = useState<{ headers: string[]; rows: string[][] } | null>(null);
@@ -139,10 +160,13 @@ export default function Contatos() {
       return;
     }
     
+    // Clean phone to avoid saving LID-like numbers
+    const cleanedPhone = cleanPhone(newContact.phone.trim());
+    
     await createContact.mutateAsync({
       name: newContact.name.trim(),
       email: newContact.email.trim() || undefined,
-      phone: newContact.phone.trim() || undefined,
+      phone: cleanedPhone,
       company: newContact.company.trim() || undefined,
       notes: newContact.notes.trim() || undefined,
     });
@@ -157,11 +181,14 @@ export default function Contatos() {
       return;
     }
     
+    // Clean phone to avoid saving LID-like numbers
+    const cleanedPhone = cleanPhone(editContact.phone.trim());
+    
     await updateContact.mutateAsync({
       id: selectedContact.id,
       name: editContact.name.trim(),
       email: editContact.email.trim() || undefined,
-      phone: editContact.phone.trim() || undefined,
+      phone: cleanedPhone,
       company: editContact.company.trim() || undefined,
       notes: editContact.notes.trim() || undefined,
     });
@@ -175,6 +202,50 @@ export default function Contatos() {
     await deleteContact.mutateAsync(selectedContact.id);
     setIsDeleteDialogOpen(false);
     setSelectedContact(null);
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedContactIds.length === 0) return;
+    
+    setIsBulkDeleting(true);
+    let successCount = 0;
+    let errorCount = 0;
+
+    for (const id of selectedContactIds) {
+      try {
+        await deleteContact.mutateAsync(id);
+        successCount++;
+      } catch {
+        errorCount++;
+      }
+    }
+
+    setIsBulkDeleting(false);
+    setIsBulkDeleteDialogOpen(false);
+    setSelectedContactIds([]);
+
+    if (successCount > 0) {
+      toast.success(`${successCount} contatos excluídos com sucesso!`);
+    }
+    if (errorCount > 0) {
+      toast.error(`${errorCount} contatos falharam ao excluir`);
+    }
+  };
+
+  const toggleContactSelection = (contactId: string) => {
+    setSelectedContactIds(prev => 
+      prev.includes(contactId) 
+        ? prev.filter(id => id !== contactId)
+        : [...prev, contactId]
+    );
+  };
+
+  const toggleAllContacts = () => {
+    if (selectedContactIds.length === filteredContacts.length) {
+      setSelectedContactIds([]);
+    } else {
+      setSelectedContactIds(filteredContacts.map(c => c.id));
+    }
   };
 
   const openViewDialog = (contact: Contact) => {
@@ -425,12 +496,55 @@ export default function Contatos() {
           <Filter className="w-4 h-4" />
           Filtrar
         </Button>
+        {selectedContactIds.length > 0 && (
+          <Button 
+            variant="destructive" 
+            className="gap-2"
+            onClick={() => setIsBulkDeleteDialogOpen(true)}
+            disabled={!canEdit}
+          >
+            <Trash2 className="w-4 h-4" />
+            Excluir ({selectedContactIds.length})
+          </Button>
+        )}
       </div>
+
+      {/* Bulk Selection Bar */}
+      {selectedContactIds.length > 0 && (
+        <div className="flex items-center gap-4 p-3 bg-muted rounded-lg">
+          <span className="text-sm font-medium">
+            {selectedContactIds.length} de {filteredContacts.length} selecionados
+          </span>
+          <Button variant="ghost" size="sm" onClick={toggleAllContacts}>
+            {selectedContactIds.length === filteredContacts.length ? (
+              <>
+                <X className="w-4 h-4 mr-1" />
+                Desmarcar todos
+              </>
+            ) : (
+              <>
+                <CheckSquare className="w-4 h-4 mr-1" />
+                Selecionar todos
+              </>
+            )}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setSelectedContactIds([])}>
+            Limpar seleção
+          </Button>
+        </div>
+      )}
 
       <div className="table-container">
         <Table>
           <TableHeader>
             <TableRow>
+              <TableHead className="w-10">
+                <Checkbox 
+                  checked={selectedContactIds.length === filteredContacts.length && filteredContacts.length > 0}
+                  onCheckedChange={toggleAllContacts}
+                  disabled={!canEdit}
+                />
+              </TableHead>
               <TableHead>Contato</TableHead>
               <TableHead>Telefone</TableHead>
               <TableHead>Tags</TableHead>
@@ -442,13 +556,20 @@ export default function Contatos() {
           <TableBody>
             {filteredContacts.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+                <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                   {searchQuery ? "Nenhum contato encontrado" : "Nenhum contato cadastrado"}
                 </TableCell>
               </TableRow>
             ) : (
               filteredContacts.map((contact) => (
-                <TableRow key={contact.id}>
+                <TableRow key={contact.id} className={selectedContactIds.includes(contact.id) ? "bg-muted/50" : ""}>
+                  <TableCell>
+                    <Checkbox 
+                      checked={selectedContactIds.includes(contact.id)}
+                      onCheckedChange={() => toggleContactSelection(contact.id)}
+                      disabled={!canEdit}
+                    />
+                  </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-3">
                       <Avatar className="w-10 h-10">
@@ -865,6 +986,29 @@ export default function Contatos() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog open={isBulkDeleteDialogOpen} onOpenChange={setIsBulkDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir {selectedContactIds.length} contatos?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir {selectedContactIds.length} contatos selecionados? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isBulkDeleting}>Cancelar</AlertDialogCancel>
+            <Button 
+              variant="destructive" 
+              onClick={handleBulkDelete}
+              disabled={isBulkDeleting}
+            >
+              {isBulkDeleting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Excluir {selectedContactIds.length} contatos
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

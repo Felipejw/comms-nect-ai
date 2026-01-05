@@ -229,7 +229,7 @@ export default function Kanban() {
           >
             {/* Unassigned column */}
             {getUnassignedConversations().length > 0 && (
-              <div className="kanban-column min-w-[320px] flex-shrink-0 opacity-70">
+              <div className="kanban-column w-[320px] flex-shrink-0 opacity-70">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-muted" />
@@ -276,7 +276,7 @@ export default function Kanban() {
             )}
 
             {columns.map((column) => (
-              <div key={column.id} className="kanban-column min-w-[320px] flex-shrink-0">
+              <div key={column.id} className="kanban-column w-[320px] flex-shrink-0">
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full" style={{ backgroundColor: column.color }} />

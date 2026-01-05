@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, Image, X, Tag, LayoutGrid, List } from "lucide-react";
+import { useState, useRef } from "react";
+import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, Image, X, Tag, LayoutGrid, List, FileText, Upload, ClipboardPaste } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -41,17 +41,62 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
+import {
+  RadioGroup,
+  RadioGroupItem,
+} from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign, useAddContactsToCampaign, Campaign } from "@/hooks/useCampaigns";
-import { useContacts } from "@/hooks/useContacts";
+import { useContacts, useCreateContact } from "@/hooks/useContacts";
 import { useTags } from "@/hooks/useTags";
 import { format } from "date-fns";
 import { CampaignMetricsDashboard } from "@/components/campanhas/CampaignMetricsDashboard";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
+
+// Helper to extract phone numbers from text
+const extractPhoneNumbers = (text: string): string[] => {
+  const lines = text.split(/[\n,;]+/);
+  const phones: string[] = [];
+  
+  for (const line of lines) {
+    // Clean the line and extract digits
+    const cleaned = line.trim().replace(/[^\d+]/g, '');
+    if (cleaned.length >= 8 && cleaned.length <= 15) {
+      phones.push(cleaned);
+    }
+  }
+  
+  return [...new Set(phones)]; // Remove duplicates
+};
+
+// Parse CSV for phone import
+const parseCSVForPhones = (content: string): { headers: string[]; rows: string[][] } => {
+  const lines = content.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+  const rows = lines.slice(1).map(line => {
+    const values: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    values.push(current.trim());
+    return values;
+  });
+  return { headers, rows };
+};
 
 const statusConfig = {
   draft: { label: "Rascunho", className: "bg-muted text-muted-foreground" },
@@ -79,6 +124,16 @@ export default function Campanhas() {
   const [scheduledAt, setScheduledAt] = useState("");
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  
+  // Contact source selection
+  const [contactSource, setContactSource] = useState<"list" | "paste" | "file">("list");
+  const [pastedNumbers, setPastedNumbers] = useState("");
+  const [parsedNumbers, setParsedNumbers] = useState<string[]>([]);
+  const [csvData, setCsvData] = useState<{ headers: string[]; rows: string[][] } | null>(null);
+  const [phoneColumnIndex, setPhoneColumnIndex] = useState<number>(-1);
+  const [nameColumnIndex, setNameColumnIndex] = useState<number>(-1);
+  const [createContactsFromImport, setCreateContactsFromImport] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: campaigns = [], isLoading } = useCampaigns();
   const { data: contacts = [] } = useContacts();
@@ -87,6 +142,7 @@ export default function Campanhas() {
   const updateCampaign = useUpdateCampaign();
   const deleteCampaign = useDeleteCampaign();
   const addContacts = useAddContactsToCampaign();
+  const createContact = useCreateContact();
 
   const filteredCampaigns = campaigns.filter((c) =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -107,6 +163,13 @@ export default function Campanhas() {
     setScheduledAt("");
     setSelectedContactIds([]);
     setSelectedTagIds([]);
+    setContactSource("list");
+    setPastedNumbers("");
+    setParsedNumbers([]);
+    setCsvData(null);
+    setPhoneColumnIndex(-1);
+    setNameColumnIndex(-1);
+    setCreateContactsFromImport(true);
   };
 
   const handleCreateCampaign = async () => {
@@ -120,16 +183,99 @@ export default function Campanhas() {
       scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
     });
 
-    // Add selected contacts to campaign
-    if (selectedContactIds.length > 0 && campaign) {
+    let contactIdsToAdd = [...selectedContactIds];
+
+    // Handle pasted/imported numbers
+    if (contactSource === "paste" && parsedNumbers.length > 0) {
+      if (createContactsFromImport) {
+        // Create contacts for each number
+        for (const phone of parsedNumbers) {
+          const existingContact = contacts.find(c => c.phone?.replace(/\D/g, '') === phone.replace(/\D/g, ''));
+          if (existingContact) {
+            contactIdsToAdd.push(existingContact.id);
+          } else {
+            try {
+              const newContact = await createContact.mutateAsync({
+                name: `Contato ${phone}`,
+                phone,
+              });
+              if (newContact?.id) {
+                contactIdsToAdd.push(newContact.id);
+              }
+            } catch (error) {
+              console.error('Error creating contact:', error);
+            }
+          }
+        }
+      }
+    } else if (contactSource === "file" && csvData && phoneColumnIndex >= 0) {
+      for (const row of csvData.rows) {
+        const phone = row[phoneColumnIndex]?.trim();
+        if (!phone) continue;
+        
+        const existingContact = contacts.find(c => c.phone?.replace(/\D/g, '') === phone.replace(/\D/g, ''));
+        if (existingContact) {
+          contactIdsToAdd.push(existingContact.id);
+        } else if (createContactsFromImport) {
+          try {
+            const contactName = nameColumnIndex >= 0 ? row[nameColumnIndex]?.trim() : undefined;
+            const newContact = await createContact.mutateAsync({
+              name: contactName || `Contato ${phone}`,
+              phone,
+            });
+            if (newContact?.id) {
+              contactIdsToAdd.push(newContact.id);
+            }
+          } catch (error) {
+            console.error('Error creating contact:', error);
+          }
+        }
+      }
+    }
+
+    // Add contacts to campaign
+    if (contactIdsToAdd.length > 0 && campaign) {
       await addContacts.mutateAsync({
         campaignId: campaign.id,
-        contactIds: selectedContactIds,
+        contactIds: [...new Set(contactIdsToAdd)], // Remove duplicates
       });
     }
 
     resetForm();
     setIsDialogOpen(false);
+  };
+
+  const handlePastedNumbersChange = (text: string) => {
+    setPastedNumbers(text);
+    const numbers = extractPhoneNumbers(text);
+    setParsedNumbers(numbers);
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      const parsed = parseCSVForPhones(content);
+      setCsvData(parsed);
+      
+      // Auto-map phone column
+      const phoneIndex = parsed.headers.findIndex(h => 
+        h.toLowerCase().includes('telefone') || 
+        h.toLowerCase().includes('phone') || 
+        h.toLowerCase().includes('celular') ||
+        h.toLowerCase().includes('whatsapp')
+      );
+      const nameIndex = parsed.headers.findIndex(h => 
+        h.toLowerCase().includes('nome') || h.toLowerCase().includes('name')
+      );
+      
+      setPhoneColumnIndex(phoneIndex);
+      setNameColumnIndex(nameIndex);
+    };
+    reader.readAsText(file);
   };
 
   const handleUpdateStatus = async (campaignId: string, status: "active" | "paused" | "completed") => {
@@ -465,76 +611,242 @@ export default function Campanhas() {
             </TabsContent>
 
             <TabsContent value="contacts" className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label>Filtrar por Tags</Label>
-                <div className="flex flex-wrap gap-2">
-                  {tags.map((tag) => (
-                    <Badge
-                      key={tag.id}
-                      variant={selectedTagIds.includes(tag.id) ? "default" : "outline"}
-                      className="cursor-pointer"
-                      style={selectedTagIds.includes(tag.id) ? { backgroundColor: tag.color } : {}}
-                      onClick={() => toggleTag(tag.id)}
-                    >
-                      <Tag className="w-3 h-3 mr-1" />
-                      {tag.name}
-                    </Badge>
-                  ))}
-                </div>
+              <div className="space-y-4">
+                <Label>Origem dos Contatos</Label>
+                <RadioGroup value={contactSource} onValueChange={(v) => setContactSource(v as "list" | "paste" | "file")} className="grid grid-cols-3 gap-4">
+                  <Label 
+                    htmlFor="source-list" 
+                    className={`flex flex-col items-center gap-2 p-4 border rounded-lg cursor-pointer hover:bg-muted transition-colors ${contactSource === "list" ? "border-primary bg-primary/5" : ""}`}
+                  >
+                    <RadioGroupItem value="list" id="source-list" className="sr-only" />
+                    <Users className="w-6 h-6" />
+                    <span className="text-sm font-medium">Lista de Contatos</span>
+                  </Label>
+                  <Label 
+                    htmlFor="source-paste" 
+                    className={`flex flex-col items-center gap-2 p-4 border rounded-lg cursor-pointer hover:bg-muted transition-colors ${contactSource === "paste" ? "border-primary bg-primary/5" : ""}`}
+                  >
+                    <RadioGroupItem value="paste" id="source-paste" className="sr-only" />
+                    <ClipboardPaste className="w-6 h-6" />
+                    <span className="text-sm font-medium">Colar Números</span>
+                  </Label>
+                  <Label 
+                    htmlFor="source-file" 
+                    className={`flex flex-col items-center gap-2 p-4 border rounded-lg cursor-pointer hover:bg-muted transition-colors ${contactSource === "file" ? "border-primary bg-primary/5" : ""}`}
+                  >
+                    <RadioGroupItem value="file" id="source-file" className="sr-only" />
+                    <Upload className="w-6 h-6" />
+                    <span className="text-sm font-medium">Importar Arquivo</span>
+                  </Label>
+                </RadioGroup>
               </div>
 
-              <div className="flex items-center justify-between">
-                <Label>Selecionar Contatos ({selectedContactIds.length} selecionados)</Label>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={selectAllContacts}>
-                    Selecionar todos
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={deselectAllContacts}>
-                    Limpar
-                  </Button>
-                </div>
-              </div>
-
-              <ScrollArea className="h-[300px] border rounded-lg p-2">
-                {filteredContacts.length === 0 ? (
-                  <div className="flex items-center justify-center h-full text-muted-foreground">
-                    Nenhum contato encontrado
-                  </div>
-                ) : (
+              {contactSource === "list" && (
+                <>
                   <div className="space-y-2">
-                    {filteredContacts.map((contact) => (
-                      <div 
-                        key={contact.id}
-                        className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer"
-                        onClick={() => toggleContact(contact.id)}
-                      >
-                        <Checkbox 
-                          checked={selectedContactIds.includes(contact.id)}
-                          onCheckedChange={() => toggleContact(contact.id)}
-                        />
-                        <div className="flex-1">
-                          <p className="font-medium text-sm">{contact.name}</p>
-                          <p className="text-xs text-muted-foreground">{contact.phone || contact.email || "Sem contato"}</p>
-                        </div>
-                        {contact.tags && contact.tags.length > 0 && (
-                          <div className="flex gap-1">
-                            {contact.tags.slice(0, 2).map((tag) => (
-                              <Badge 
-                                key={tag.id} 
-                                variant="secondary" 
-                                className="text-xs"
-                                style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
-                              >
-                                {tag.name}
-                              </Badge>
-                            ))}
+                    <Label>Filtrar por Tags</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {tags.map((tag) => (
+                        <Badge
+                          key={tag.id}
+                          variant={selectedTagIds.includes(tag.id) ? "default" : "outline"}
+                          className="cursor-pointer"
+                          style={selectedTagIds.includes(tag.id) ? { backgroundColor: tag.color } : {}}
+                          onClick={() => toggleTag(tag.id)}
+                        >
+                          <Tag className="w-3 h-3 mr-1" />
+                          {tag.name}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <Label>Selecionar Contatos ({selectedContactIds.length} selecionados)</Label>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={selectAllContacts}>
+                        Selecionar todos
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={deselectAllContacts}>
+                        Limpar
+                      </Button>
+                    </div>
+                  </div>
+
+                  <ScrollArea className="h-[300px] border rounded-lg p-2">
+                    {filteredContacts.length === 0 ? (
+                      <div className="flex items-center justify-center h-full text-muted-foreground">
+                        Nenhum contato encontrado
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {filteredContacts.map((contact) => (
+                          <div 
+                            key={contact.id}
+                            className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer"
+                            onClick={() => toggleContact(contact.id)}
+                          >
+                            <Checkbox 
+                              checked={selectedContactIds.includes(contact.id)}
+                              onCheckedChange={() => toggleContact(contact.id)}
+                            />
+                            <div className="flex-1">
+                              <p className="font-medium text-sm">{contact.name}</p>
+                              <p className="text-xs text-muted-foreground">{contact.phone || contact.email || "Sem contato"}</p>
+                            </div>
+                            {contact.tags && contact.tags.length > 0 && (
+                              <div className="flex gap-1">
+                                {contact.tags.slice(0, 2).map((tag) => (
+                                  <Badge 
+                                    key={tag.id} 
+                                    variant="secondary" 
+                                    className="text-xs"
+                                    style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                                  >
+                                    {tag.name}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
                           </div>
+                        ))}
+                      </div>
+                    )}
+                  </ScrollArea>
+                </>
+              )}
+
+              {contactSource === "paste" && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Cole os números de telefone</Label>
+                    <Textarea 
+                      placeholder="Cole números separados por linha, vírgula ou ponto-e-vírgula...&#10;&#10;Exemplo:&#10;5511999998888&#10;5521988887777, 5531977776666&#10;+55 41 96666-5555"
+                      rows={6}
+                      value={pastedNumbers}
+                      onChange={(e) => handlePastedNumbersChange(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Aceita números no formato nacional ou internacional
+                    </p>
+                  </div>
+                  
+                  {parsedNumbers.length > 0 && (
+                    <div className="p-3 bg-muted rounded-lg space-y-2">
+                      <p className="text-sm font-medium">{parsedNumbers.length} números detectados</p>
+                      <div className="flex flex-wrap gap-1 max-h-24 overflow-auto">
+                        {parsedNumbers.slice(0, 20).map((phone, i) => (
+                          <Badge key={i} variant="secondary" className="text-xs">
+                            {phone}
+                          </Badge>
+                        ))}
+                        {parsedNumbers.length > 20 && (
+                          <Badge variant="outline" className="text-xs">
+                            +{parsedNumbers.length - 20} mais
+                          </Badge>
                         )}
                       </div>
-                    ))}
+                    </div>
+                  )}
+                  
+                  <div className="flex items-center gap-2">
+                    <Checkbox 
+                      id="create-contacts-paste"
+                      checked={createContactsFromImport}
+                      onCheckedChange={(v) => setCreateContactsFromImport(!!v)}
+                    />
+                    <Label htmlFor="create-contacts-paste" className="text-sm">
+                      Criar contatos automaticamente para números novos
+                    </Label>
                   </div>
-                )}
-              </ScrollArea>
+                </div>
+              )}
+
+              {contactSource === "file" && (
+                <div className="space-y-4">
+                  {!csvData ? (
+                    <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
+                      <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-muted-foreground mb-4">
+                        Selecione um arquivo CSV ou TXT com números de telefone
+                      </p>
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept=".csv,.txt"
+                        onChange={handleFileUpload}
+                        className="hidden"
+                      />
+                      <Button onClick={() => fileInputRef.current?.click()}>
+                        Selecionar Arquivo
+                      </Button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium">{csvData.rows.length} linhas encontradas</p>
+                        <Button variant="ghost" size="sm" onClick={() => setCsvData(null)}>
+                          <X className="w-4 h-4 mr-1" />
+                          Remover
+                        </Button>
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Coluna do Telefone *</Label>
+                          <select
+                            value={phoneColumnIndex}
+                            onChange={(e) => setPhoneColumnIndex(parseInt(e.target.value))}
+                            className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          >
+                            <option value={-1}>Selecione...</option>
+                            {csvData.headers.map((header, index) => (
+                              <option key={index} value={index}>{header}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Coluna do Nome (opcional)</Label>
+                          <select
+                            value={nameColumnIndex}
+                            onChange={(e) => setNameColumnIndex(parseInt(e.target.value))}
+                            className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                          >
+                            <option value={-1}>Nenhuma</option>
+                            {csvData.headers.map((header, index) => (
+                              <option key={index} value={index}>{header}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      
+                      <div className="border rounded-lg p-4 bg-muted/50 max-h-40 overflow-auto">
+                        <p className="text-sm font-medium mb-2">Preview</p>
+                        {csvData.rows.slice(0, 5).map((row, i) => (
+                          <div key={i} className="py-1 text-sm border-b border-border last:border-0">
+                            {phoneColumnIndex >= 0 && <span className="font-mono">{row[phoneColumnIndex]}</span>}
+                            {nameColumnIndex >= 0 && row[nameColumnIndex] && <span className="text-muted-foreground ml-2">- {row[nameColumnIndex]}</span>}
+                          </div>
+                        ))}
+                        {csvData.rows.length > 5 && (
+                          <p className="text-muted-foreground text-sm pt-2">... e mais {csvData.rows.length - 5} linhas</p>
+                        )}
+                      </div>
+                      
+                      <div className="flex items-center gap-2">
+                        <Checkbox 
+                          id="create-contacts-file"
+                          checked={createContactsFromImport}
+                          onCheckedChange={(v) => setCreateContactsFromImport(!!v)}
+                        />
+                        <Label htmlFor="create-contacts-file" className="text-sm">
+                          Criar contatos automaticamente para números novos
+                        </Label>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </TabsContent>
 
             <TabsContent value="schedule" className="space-y-4 pt-4">
@@ -559,7 +871,13 @@ export default function Campanhas() {
                   </div>
                   <div>
                     <span className="text-muted-foreground">Contatos:</span>
-                    <p className="font-medium">{selectedContactIds.length}</p>
+                    <p className="font-medium">
+                      {contactSource === "list" 
+                        ? selectedContactIds.length 
+                        : contactSource === "paste" 
+                          ? parsedNumbers.length 
+                          : csvData?.rows.length || 0}
+                    </p>
                   </div>
                   <div>
                     <span className="text-muted-foreground">Mídia:</span>

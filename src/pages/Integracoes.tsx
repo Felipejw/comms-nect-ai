@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
-import { Plug, Calendar, Eye, EyeOff, ExternalLink, Check, Loader2, RefreshCw, LogOut, ChevronDown } from "lucide-react";
+import { Plug, Eye, EyeOff, ExternalLink, Check, Loader2, RefreshCw, LogOut, ChevronDown } from "lucide-react";
+import googleCalendarLogo from "@/assets/google-calendar-logo.png";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -333,8 +334,12 @@ export default function Integracoes() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-lg bg-blue-500/10 flex items-center justify-center">
-                <Calendar className="w-5 h-5 text-blue-500" />
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden">
+                <img 
+                  src={googleCalendarLogo} 
+                  alt="Google Agenda" 
+                  className="w-10 h-10 object-contain"
+                />
               </div>
               <div>
                 <CardTitle className="text-lg">Google Agenda</CardTitle>
@@ -512,7 +517,7 @@ export default function Integracoes() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Calendar className="w-5 h-5 text-blue-500" />
+              <img src={googleCalendarLogo} alt="Google Agenda" className="w-5 h-5 object-contain" />
               Configurar Google Agenda
             </DialogTitle>
             <DialogDescription>

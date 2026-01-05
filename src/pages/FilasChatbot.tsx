@@ -217,10 +217,6 @@ export default function FilasChatbot() {
                       <span className="text-sm text-muted-foreground">Atribuição automática</span>
                       <Badge variant="secondary">{queue.auto_assign ? "Sim" : "Não"}</Badge>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Máx. atendimentos simultâneos</span>
-                      <span className="text-sm font-medium">{queue.max_concurrent || 5}</span>
-                    </div>
                   </CardContent>
                 </Card>
               ))}

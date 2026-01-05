@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Shield, Edit, Trash2, Key, Loader2, Lock } from "lucide-react";
+import { Plus, Search, Filter, MoreHorizontal, Shield, Edit, Trash2, Key, Loader2, Lock, Copy, Check } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
   DialogTitle,
   DialogTrigger,
   DialogFooter,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
@@ -61,10 +62,18 @@ export default function Usuarios() {
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<{ id: string; name: string } | null>(null);
   
+  // Reset password modal state
+  const [isResetPasswordOpen, setIsResetPasswordOpen] = useState(false);
+  const [resetPasswordUser, setResetPasswordUser] = useState<{ id: string; name: string } | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [generatedPassword, setGeneratedPassword] = useState("");
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+  const [passwordCopied, setPasswordCopied] = useState(false);
+  
   // Form state
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "atendente">("atendente");
   const [newPermissions, setNewPermissions] = useState<Record<string, PermissionState>>(getDefaultPermissions());
 
@@ -75,7 +84,7 @@ export default function Usuarios() {
   );
 
   const handleCreateUser = async () => {
-    if (!newName.trim() || !newEmail.trim() || !newPassword.trim()) {
+    if (!newName.trim() || !newEmail.trim() || !newUserPassword.trim()) {
       toast.error("Preencha todos os campos");
       return;
     }
@@ -94,7 +103,7 @@ export default function Usuarios() {
       const { error } = await supabase.functions.invoke("create-user", {
         body: {
           email: newEmail.trim(),
-          password: newPassword,
+          password: newUserPassword,
           name: newName.trim(),
           role: newRole,
           permissions: permissionsArray,
@@ -107,7 +116,7 @@ export default function Usuarios() {
       setIsDialogOpen(false);
       setNewName("");
       setNewEmail("");
-      setNewPassword("");
+      setNewUserPassword("");
       setNewRole("atendente");
       setNewPermissions(getDefaultPermissions());
       refetch();
@@ -125,6 +134,55 @@ export default function Usuarios() {
   const handleOpenPermissions = (userId: string, userName: string) => {
     setSelectedUser({ id: userId, name: userName });
     setPermissionsOpen(true);
+  };
+
+  const handleOpenResetPassword = (userId: string, userName: string) => {
+    setResetPasswordUser({ id: userId, name: userName });
+    setNewPassword("");
+    setGeneratedPassword("");
+    setPasswordCopied(false);
+    setIsResetPasswordOpen(true);
+  };
+
+  const handleResetPassword = async (generateRandom: boolean) => {
+    if (!resetPasswordUser) return;
+    
+    if (!generateRandom && newPassword.length < 6) {
+      toast.error("A senha deve ter pelo menos 6 caracteres");
+      return;
+    }
+
+    setIsResettingPassword(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("reset-user-password", {
+        body: {
+          userId: resetPasswordUser.id,
+          newPassword: generateRandom ? undefined : newPassword,
+          generateRandom,
+        },
+      });
+
+      if (error) throw error;
+
+      if (data?.newPassword) {
+        setGeneratedPassword(data.newPassword);
+        toast.success("Senha gerada com sucesso! Copie e envie ao usuário.");
+      } else {
+        toast.success("Senha redefinida com sucesso!");
+        setIsResetPasswordOpen(false);
+      }
+    } catch (error) {
+      toast.error("Erro ao redefinir senha: " + (error as Error).message);
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
+
+  const copyPassword = () => {
+    navigator.clipboard.writeText(generatedPassword);
+    setPasswordCopied(true);
+    toast.success("Senha copiada!");
+    setTimeout(() => setPasswordCopied(false), 2000);
   };
 
   const formatDate = (dateString: string | null) => {
@@ -201,8 +259,8 @@ export default function Usuarios() {
                 <Input 
                   type="password" 
                   placeholder="••••••••" 
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
+                  value={newUserPassword}
+                  onChange={(e) => setNewUserPassword(e.target.value)}
                 />
               </div>
               <div className="space-y-2">
@@ -385,7 +443,7 @@ export default function Usuarios() {
                             <Edit className="w-4 h-4 mr-2" />
                             Editar
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleOpenResetPassword(user.id, user.name)}>
                             <Key className="w-4 h-4 mr-2" />
                             Redefinir senha
                           </DropdownMenuItem>
@@ -413,6 +471,75 @@ export default function Usuarios() {
           userName={selectedUser.name}
         />
       )}
+
+      {/* Reset Password Dialog */}
+      <Dialog open={isResetPasswordOpen} onOpenChange={setIsResetPasswordOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Key className="w-5 h-5" />
+              Redefinir Senha
+            </DialogTitle>
+            <DialogDescription>
+              Redefina a senha de {resetPasswordUser?.name}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            {generatedPassword ? (
+              <div className="space-y-4">
+                <div className="p-4 bg-muted rounded-lg space-y-2">
+                  <Label className="text-sm text-muted-foreground">Nova senha gerada:</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 p-2 bg-background rounded border font-mono text-sm">
+                      {generatedPassword}
+                    </code>
+                    <Button variant="outline" size="icon" onClick={copyPassword}>
+                      {passwordCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Copie e envie esta senha ao usuário. Ela não será exibida novamente.
+                  </p>
+                </div>
+                <Button className="w-full" onClick={() => setIsResetPasswordOpen(false)}>
+                  Fechar
+                </Button>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <Label>Nova Senha</Label>
+                  <Input 
+                    type="password" 
+                    placeholder="Digite a nova senha (mínimo 6 caracteres)"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    className="flex-1" 
+                    onClick={() => handleResetPassword(false)}
+                    disabled={isResettingPassword || newPassword.length < 6}
+                  >
+                    {isResettingPassword && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Definir Senha
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    className="flex-1" 
+                    onClick={() => handleResetPassword(true)}
+                    disabled={isResettingPassword}
+                  >
+                    {isResettingPassword && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                    Gerar Aleatória
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
