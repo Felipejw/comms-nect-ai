@@ -1186,6 +1186,34 @@ export default function Atendimento() {
               </TabsTrigger>
             </TabsList>
           </Tabs>
+          
+          {/* Quick Sector Filter */}
+          {queues && queues.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-thin pb-1">
+              <Badge 
+                variant={queueFilter === 'all' ? 'default' : 'outline'}
+                className="cursor-pointer shrink-0 text-xs px-2 py-0.5"
+                onClick={() => setQueueFilter('all')}
+              >
+                Todos
+              </Badge>
+              {queues.map(queue => (
+                <Badge 
+                  key={queue.id}
+                  variant={queueFilter === queue.id ? 'default' : 'outline'}
+                  className="cursor-pointer shrink-0 text-xs px-2 py-0.5 gap-1"
+                  style={queueFilter === queue.id ? { backgroundColor: queue.color || '#6366f1' } : { borderColor: queue.color || '#6366f1', color: queue.color || '#6366f1' }}
+                  onClick={() => setQueueFilter(queueFilter === queue.id ? 'all' : queue.id)}
+                >
+                  <div 
+                    className="w-2 h-2 rounded-full shrink-0" 
+                    style={{ backgroundColor: queueFilter === queue.id ? 'white' : queue.color || '#6366f1' }}
+                  />
+                  {queue.name}
+                </Badge>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Bulk Selection Bar */}
@@ -1343,16 +1371,51 @@ export default function Atendimento() {
                     </p>
                     
                     <div className="flex items-center gap-1 flex-wrap">
-                      {/* Queue/Sector */}
-                      {conversation.queue && (
-                        <Badge 
-                          style={{ backgroundColor: conversation.queue.color || '#6366f1' }}
-                          className="text-white text-[9px] px-1.5 py-0 h-4"
-                        >
-                          <Building className="w-2.5 h-2.5 mr-0.5" />
-                          {conversation.queue.name}
-                        </Badge>
-                      )}
+                      {/* Queue/Sector Dropdown */}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                          <Badge 
+                            style={{ backgroundColor: conversation.queue?.color || '#6366f1' }}
+                            className="text-white text-[9px] px-1.5 py-0 h-4 cursor-pointer hover:opacity-80"
+                          >
+                            <Building className="w-2.5 h-2.5 mr-0.5" />
+                            {conversation.queue?.name || 'Setor'}
+                            <ChevronDown className="w-2.5 h-2.5 ml-0.5" />
+                          </Badge>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" className="w-40 bg-popover z-50">
+                          <DropdownMenuItem 
+                            className="text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              updateConversation.mutate({ id: conversation.id, queue_id: null });
+                            }}
+                          >
+                            <X className="w-3 h-3 mr-2" />
+                            Sem setor
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          {queues?.map(queue => (
+                            <DropdownMenuItem 
+                              key={queue.id}
+                              className="text-xs"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                updateConversation.mutate({ id: conversation.id, queue_id: queue.id });
+                              }}
+                            >
+                              <div 
+                                className="w-3 h-3 rounded-full mr-2 shrink-0" 
+                                style={{ backgroundColor: queue.color || '#6366f1' }}
+                              />
+                              {queue.name}
+                              {conversation.queue_id === queue.id && (
+                                <Check className="w-3 h-3 ml-auto" />
+                              )}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                       
                       {/* Tags */}
                       {conversation.tags && conversation.tags.slice(0, 2).map(tag => (
