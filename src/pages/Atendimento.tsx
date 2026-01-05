@@ -1343,6 +1343,17 @@ export default function Atendimento() {
                     </p>
                     
                     <div className="flex items-center gap-1 flex-wrap">
+                      {/* Queue/Sector */}
+                      {conversation.queue && (
+                        <Badge 
+                          style={{ backgroundColor: conversation.queue.color || '#6366f1' }}
+                          className="text-white text-[9px] px-1.5 py-0 h-4"
+                        >
+                          <Building className="w-2.5 h-2.5 mr-0.5" />
+                          {conversation.queue.name}
+                        </Badge>
+                      )}
+                      
                       {/* Tags */}
                       {conversation.tags && conversation.tags.slice(0, 2).map(tag => (
                         <Badge 

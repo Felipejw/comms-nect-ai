@@ -34,6 +34,12 @@ export interface ConversationKanbanColumn {
   color: string | null;
 }
 
+export interface ConversationQueue {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
 export interface Conversation {
   id: string;
   contact_id: string;
@@ -64,6 +70,7 @@ export interface Conversation {
   tags?: ConversationTag[];
   connection?: ConversationConnection | null;
   kanban_column?: ConversationKanbanColumn | null;
+  queue?: ConversationQueue | null;
 }
 
 export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | 'archived') {
@@ -101,7 +108,8 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
           *,
           contact:contacts (id, name, email, phone, avatar_url),
           connection:connections (id, name, color),
-          kanban_column:kanban_columns (id, name, color)
+          kanban_column:kanban_columns (id, name, color),
+          queue:queues (id, name, color)
         `)
         .order('last_message_at', { ascending: false });
 
@@ -154,6 +162,7 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         tags: tagsMap.get(conv.id) || [],
         connection: conv.connection || null,
         kanban_column: conv.kanban_column || null,
+        queue: conv.queue || null,
       })) as Conversation[];
     },
   });
