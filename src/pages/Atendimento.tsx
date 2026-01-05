@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download } from "lucide-react";
+import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw } from "lucide-react";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { useConversations, useMessages, useSendMessage, useUpdateConversation, useDeleteConversation, useMarkConversationAsRead, Conversation, Message } from "@/hooks/useConversations";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -175,6 +176,13 @@ export default function Atendimento() {
   const [selectedBulkTags, setSelectedBulkTags] = useState<Set<string>>(new Set());
   const [exportFormat, setExportFormat] = useState<'csv' | 'pdf'>('csv');
   
+  // Pull-to-refresh state
+  const [isPulling, setIsPulling] = useState(false);
+  const [pullDistance, setPullDistance] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const pullStartY = useRef<number>(0);
+  const conversationListRef = useRef<HTMLDivElement>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messageSearchInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -184,7 +192,8 @@ export default function Atendimento() {
   
   const { user, profile } = useAuth();
   const { toast } = useToast();
-  const { data: conversations, isLoading: conversationsLoading } = useConversations();
+  const queryClient = useQueryClient();
+  const { data: conversations, isLoading: conversationsLoading, refetch: refetchConversations } = useConversations();
   const { data: messages, isLoading: messagesLoading } = useMessages(selectedConversation?.id || "");
   const sendMessage = useSendMessage();
   const updateConversation = useUpdateConversation();
@@ -790,6 +799,60 @@ export default function Atendimento() {
     setShowMobileChat(true);
   };
 
+  // Pull-to-refresh handlers
+  const PULL_THRESHOLD = 80;
+  
+  const handleTouchStart = (e: ReactTouchEvent<HTMLDivElement>) => {
+    const container = conversationListRef.current;
+    if (container && container.scrollTop === 0) {
+      pullStartY.current = e.touches[0].clientY;
+      setIsPulling(true);
+    }
+  };
+
+  const handleTouchMove = (e: ReactTouchEvent<HTMLDivElement>) => {
+    if (!isPulling || isRefreshing) return;
+    
+    const container = conversationListRef.current;
+    if (!container || container.scrollTop > 0) {
+      setIsPulling(false);
+      setPullDistance(0);
+      return;
+    }
+
+    const currentY = e.touches[0].clientY;
+    const distance = Math.max(0, Math.min((currentY - pullStartY.current) * 0.5, PULL_THRESHOLD + 20));
+    setPullDistance(distance);
+  };
+
+  const handleTouchEnd = async () => {
+    if (!isPulling) return;
+    
+    if (pullDistance >= PULL_THRESHOLD && !isRefreshing) {
+      setIsRefreshing(true);
+      setPullDistance(PULL_THRESHOLD);
+      
+      try {
+        await refetchConversations();
+        toast({
+          title: "Atualizado",
+          description: "Lista de conversas atualizada",
+        });
+      } catch {
+        toast({
+          title: "Erro",
+          description: "Falha ao atualizar conversas",
+          variant: "destructive",
+        });
+      } finally {
+        setIsRefreshing(false);
+      }
+    }
+    
+    setIsPulling(false);
+    setPullDistance(0);
+  };
+
   const handleTextChange = (value: string) => {
     setMessageText(value);
     
@@ -1004,8 +1067,9 @@ export default function Atendimento() {
 
       {/* Contact List */}
       <div className={cn(
-        "w-full md:w-80 lg:w-96 border-r border-border flex flex-col",
-        showMobileChat && "hidden md:flex"
+        "w-full md:w-80 lg:w-96 border-r border-border flex flex-col transition-all duration-300 ease-out",
+        showMobileChat && "hidden md:flex",
+        !showMobileChat && "animate-fade-in md:animate-none"
       )}>
         <div className="p-3 sm:p-4 border-b border-border space-y-3">
           {/* Search */}
@@ -1310,21 +1374,56 @@ export default function Atendimento() {
           </div>
         )}
 
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {/* Pull-to-refresh indicator */}
+        <div 
+          className={cn(
+            "flex items-center justify-center overflow-hidden transition-all duration-200 md:hidden",
+            pullDistance > 0 ? "opacity-100" : "opacity-0"
+          )}
+          style={{ height: pullDistance > 0 ? pullDistance : 0 }}
+        >
+          <RefreshCw 
+            className={cn(
+              "w-5 h-5 text-primary transition-transform",
+              isRefreshing && "animate-spin",
+              pullDistance >= PULL_THRESHOLD && !isRefreshing && "text-green-500"
+            )}
+            style={{ 
+              transform: `rotate(${Math.min(pullDistance * 3, 360)}deg)` 
+            }}
+          />
+          <span className="ml-2 text-xs text-muted-foreground">
+            {isRefreshing 
+              ? "Atualizando..." 
+              : pullDistance >= PULL_THRESHOLD 
+                ? "Solte para atualizar" 
+                : "Puxe para atualizar"
+            }
+          </span>
+        </div>
+
+        <div 
+          ref={conversationListRef}
+          className="flex-1 overflow-y-auto scrollbar-thin"
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+        >
           {filteredConversations.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
               Nenhuma conversa encontrada
             </div>
           ) : (
-            filteredConversations.map((conversation) => (
+            filteredConversations.map((conversation, index) => (
               <div
                 key={conversation.id}
                 onClick={() => !bulkSelectionMode && handleSelectConversation(conversation)}
                 className={cn(
-                  "flex items-stretch border-b border-border cursor-pointer hover:bg-muted/50 transition-colors",
+                  "flex items-stretch border-b border-border cursor-pointer hover:bg-muted/50 transition-all duration-200 animate-fade-in",
                   selectedConversation?.id === conversation.id && !bulkSelectionMode && "bg-primary/5 hover:bg-primary/10",
                   selectedConversationIds.has(conversation.id) && "bg-primary/5"
                 )}
+                style={{ animationDelay: `${index * 30}ms` }}
               >
                 {/* Connection color line */}
                 <div 
@@ -1468,8 +1567,9 @@ export default function Atendimento() {
       {/* Chat Area */}
       {selectedConversation ? (
         <div className={cn(
-          "flex-1 flex flex-col min-w-0",
-          !showMobileChat && "hidden md:flex"
+          "flex-1 flex flex-col min-w-0 transition-all duration-300 ease-out",
+          !showMobileChat && "hidden md:flex",
+          showMobileChat && "animate-slide-in-right md:animate-none"
         )}>
           {/* Chat Header */}
           <div className="border-b border-border px-3 sm:px-4 py-2">
