@@ -970,14 +970,14 @@ export default function Atendimento() {
 
   if (conversationsLoading) {
     return (
-      <div className="flex items-center justify-center h-[calc(100vh-7rem)]">
+      <div className="flex items-center justify-center h-full">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] bg-card rounded-xl border border-border overflow-hidden shadow-sm">
+    <div className="flex h-[calc(100vh-3rem)] -m-6 bg-card border border-border overflow-hidden shadow-sm">
       {/* Hidden file inputs */}
       <input
         ref={imageInputRef}
