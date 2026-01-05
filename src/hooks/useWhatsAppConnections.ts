@@ -11,6 +11,7 @@ export interface WhatsAppConnection {
   qr_code: string | null;
   is_default: boolean;
   session_data: { instanceName?: string } | null;
+  color: string | null;
   created_at: string;
   updated_at: string;
 }
