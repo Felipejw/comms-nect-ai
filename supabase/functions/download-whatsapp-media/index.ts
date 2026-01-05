@@ -42,10 +42,12 @@ serve(async (req) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const payload: DownloadMediaPayload = await req.json();
 
-    console.log('Downloading media:', {
+    console.log('[download-whatsapp-media] Downloading media:', {
       instanceName: payload.instanceName,
       messageId: payload.messageKey.id,
-      mediaType: payload.mediaType
+      mediaType: payload.mediaType,
+      remoteJid: payload.messageKey.remoteJid,
+      fromMe: payload.messageKey.fromMe
     });
 
     // Call Evolution API to get base64 media
@@ -74,10 +76,14 @@ serve(async (req) => {
     }
 
     const mediaData = await evolutionResponse.json();
-    console.log('Evolution API response received, base64 length:', mediaData.base64?.length || 0);
+    console.log('[download-whatsapp-media] Evolution API response received:', {
+      base64Length: mediaData.base64?.length || 0,
+      mimetype: mediaData.mimetype,
+      hasBase64: !!mediaData.base64
+    });
 
     if (!mediaData.base64) {
-      console.error('No base64 data in response:', mediaData);
+      console.error('[download-whatsapp-media] No base64 data in response:', JSON.stringify(mediaData).substring(0, 500));
       throw new Error('No media data received from Evolution API');
     }
 
@@ -86,13 +92,28 @@ serve(async (req) => {
     let mimeType = 'application/octet-stream';
 
     if (payload.mediaType === 'audio') {
+      // Default to ogg for WhatsApp audio (ptt - push to talk)
       extension = 'ogg';
       mimeType = 'audio/ogg';
-      // Check if it was converted to mp4
-      if (mediaData.mimetype?.includes('mp4') || mediaData.mimetype?.includes('mpeg')) {
-        extension = 'mp3';
-        mimeType = 'audio/mpeg';
+      
+      // Check actual mimetype from Evolution API
+      if (mediaData.mimetype) {
+        if (mediaData.mimetype.includes('mp4') || mediaData.mimetype.includes('m4a')) {
+          extension = 'm4a';
+          mimeType = 'audio/mp4';
+        } else if (mediaData.mimetype.includes('mpeg') || mediaData.mimetype.includes('mp3')) {
+          extension = 'mp3';
+          mimeType = 'audio/mpeg';
+        } else if (mediaData.mimetype.includes('opus') || mediaData.mimetype.includes('ogg')) {
+          extension = 'ogg';
+          mimeType = 'audio/ogg';
+        } else if (mediaData.mimetype.includes('webm')) {
+          extension = 'webm';
+          mimeType = 'audio/webm';
+        }
       }
+      
+      console.log('[download-whatsapp-media] Audio format detected:', { extension, mimeType, originalMimetype: mediaData.mimetype });
     } else if (payload.mediaType === 'image') {
       extension = 'jpg';
       mimeType = 'image/jpeg';
@@ -160,7 +181,7 @@ serve(async (req) => {
       .from('whatsapp-media')
       .getPublicUrl(filePath);
 
-    console.log('Media uploaded successfully:', publicUrlData.publicUrl);
+    console.log('[download-whatsapp-media] Media uploaded successfully:', { url: publicUrlData.publicUrl, mimeType, path: filePath });
 
     return new Response(
       JSON.stringify({
