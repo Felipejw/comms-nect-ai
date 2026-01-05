@@ -1373,17 +1373,19 @@ export default function Atendimento() {
                     <div className="flex items-center gap-1 flex-wrap">
                       {/* Queue/Sector Dropdown */}
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenuTrigger asChild>
                           <Badge 
                             style={{ backgroundColor: conversation.queue?.color || '#6366f1' }}
                             className="text-white text-[9px] px-1.5 py-0 h-4 cursor-pointer hover:opacity-80"
+                            onPointerDown={(e) => e.stopPropagation()}
+                            onClick={(e) => e.stopPropagation()}
                           >
                             <Building className="w-2.5 h-2.5 mr-0.5" />
                             {conversation.queue?.name || 'Setor'}
                             <ChevronDown className="w-2.5 h-2.5 ml-0.5" />
                           </Badge>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-40 bg-popover z-50">
+                        <DropdownMenuContent align="start" className="w-40 bg-popover z-[60]" onClick={(e) => e.stopPropagation()}>
                           <DropdownMenuItem 
                             className="text-xs"
                             onClick={(e) => {
