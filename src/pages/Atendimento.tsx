@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
 import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download } from "lucide-react";
+import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -581,7 +582,11 @@ export default function Atendimento() {
     
     try {
       setIsUploading(true);
-      const audioFile = new File([audioBlob], `audio_${Date.now()}.webm`, { type: 'audio/webm' });
+      // Determine file extension based on blob type
+      const blobType = audioBlob.type || 'audio/webm';
+      const extension = blobType.includes('mp4') ? 'mp4' : blobType.includes('ogg') ? 'ogg' : 'webm';
+      const audioFile = new File([audioBlob], `audio_${Date.now()}.${extension}`, { type: blobType });
+      console.log('[Atendimento] Sending audio with type:', blobType, 'extension:', extension);
       const mediaUrl = await uploadFile.mutateAsync(audioFile);
       setIsUploading(false);
 
@@ -928,9 +933,7 @@ export default function Atendimento() {
             </a>
           )}
           {message.message_type === "audio" && message.media_url && (
-            <audio controls className="max-w-full mb-2">
-              <source src={message.media_url} />
-            </audio>
+            <AudioPlayer src={message.media_url} className="mb-2" />
           )}
           {message.message_type === "video" && message.media_url && (
             <video 
