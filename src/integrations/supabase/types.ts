@@ -336,6 +336,7 @@ export type Database = {
       }
       connections: {
         Row: {
+          color: string | null
           created_at: string
           disconnect_requested: boolean | null
           id: string
@@ -349,6 +350,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          color?: string | null
           created_at?: string
           disconnect_requested?: boolean | null
           id?: string
@@ -362,6 +364,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          color?: string | null
           created_at?: string
           disconnect_requested?: boolean | null
           id?: string

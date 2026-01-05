@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, Bell, BellOff, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download } from "lucide-react";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -977,7 +977,7 @@ export default function Atendimento() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-7rem)] bg-card rounded-xl border border-border overflow-hidden shadow-sm">
+    <div className="flex h-[calc(100vh-4rem)] bg-card rounded-xl border border-border overflow-hidden shadow-sm">
       {/* Hidden file inputs */}
       <input
         ref={imageInputRef}
@@ -1115,18 +1115,6 @@ export default function Atendimento() {
                 <X className="w-4 h-4" />
               ) : (
                 <CheckSquare className="w-4 h-4" />
-              )}
-            </Button>
-            <Button
-              variant={permission === 'granted' ? 'outline' : 'default'}
-              size="sm"
-              onClick={requestPermission}
-              title={permission === 'granted' ? 'Notificações ativadas' : 'Ativar notificações'}
-            >
-              {permission === 'granted' ? (
-                <Bell className="w-4 h-4 text-accent" />
-              ) : (
-                <BellOff className="w-4 h-4" />
               )}
             </Button>
           </div>
@@ -1304,38 +1292,59 @@ export default function Atendimento() {
                 key={conversation.id}
                 onClick={() => !bulkSelectionMode && handleSelectConversation(conversation)}
                 className={cn(
-                  "conversation-item border-b border-border cursor-pointer p-3 sm:p-4",
-                  selectedConversation?.id === conversation.id && !bulkSelectionMode && "conversation-item-active",
+                  "flex items-stretch border-b border-border cursor-pointer hover:bg-muted/50 transition-colors",
+                  selectedConversation?.id === conversation.id && !bulkSelectionMode && "bg-primary/5 hover:bg-primary/10",
                   selectedConversationIds.has(conversation.id) && "bg-primary/5"
                 )}
               >
-                {bulkSelectionMode && (
-                  <Checkbox
-                    checked={selectedConversationIds.has(conversation.id)}
-                    onCheckedChange={() => toggleConversationSelection(conversation.id)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="mr-2 shrink-0"
-                  />
-                )}
-                <Avatar className="w-10 h-10 sm:w-12 sm:h-12 shrink-0">
-                  <AvatarImage src={conversation.contact?.avatar_url || undefined} />
-                  <AvatarFallback className="bg-primary/10 text-primary font-medium text-sm">
-                    {getInitials(conversation.contact)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1 gap-2">
-                    <p className="font-medium text-sm truncate">{getDisplayName(conversation.contact)}</p>
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {formatRelativeTime(conversation.last_message_at)}
-                    </span>
+                {/* Connection color line */}
+                <div 
+                  className="w-1 shrink-0 rounded-l"
+                  style={{ backgroundColor: conversation.connection?.color || '#22c55e' }}
+                />
+                
+                <div className="flex items-center gap-3 p-3 flex-1 min-w-0">
+                  {bulkSelectionMode && (
+                    <Checkbox
+                      checked={selectedConversationIds.has(conversation.id)}
+                      onCheckedChange={() => toggleConversationSelection(conversation.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0"
+                    />
+                  )}
+                  
+                  <div className="relative shrink-0">
+                    <Avatar className="w-10 h-10">
+                      <AvatarImage src={conversation.contact?.avatar_url || undefined} />
+                      <AvatarFallback className="bg-primary/10 text-primary font-medium text-sm">
+                        {getInitials(conversation.contact)}
+                      </AvatarFallback>
+                    </Avatar>
+                    {conversation.is_bot_active && (
+                      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-primary rounded-full flex items-center justify-center">
+                        <Bot className="w-2.5 h-2.5 text-primary-foreground" />
+                      </span>
+                    )}
                   </div>
-                  <p className="text-sm text-muted-foreground truncate mb-1">
-                    {conversation.subject || "Nova conversa"}
-                  </p>
-                  {conversation.tags && conversation.tags.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {conversation.tags.slice(0, 3).map(tag => (
+                  
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <p className="font-medium text-sm truncate">{getDisplayName(conversation.contact)}</p>
+                      <span className="text-[10px] text-muted-foreground shrink-0">
+                        {conversation.last_message_at 
+                          ? format(new Date(conversation.last_message_at), "HH:mm", { locale: ptBR })
+                          : ""
+                        }
+                      </span>
+                    </div>
+                    
+                    <p className="text-xs text-muted-foreground truncate mb-1.5">
+                      {conversation.subject || "Nova conversa"}
+                    </p>
+                    
+                    <div className="flex items-center gap-1 flex-wrap">
+                      {/* Tags */}
+                      {conversation.tags && conversation.tags.slice(0, 2).map(tag => (
                         <Badge 
                           key={tag.id}
                           style={{ backgroundColor: tag.color }}
@@ -1344,36 +1353,31 @@ export default function Atendimento() {
                           {tag.name}
                         </Badge>
                       ))}
-                      {conversation.tags.length > 3 && (
-                        <Badge variant="secondary" className="text-[9px] px-1.5 py-0 h-4">
-                          +{conversation.tags.length - 3}
+                      
+                      {/* Kanban Column (CRM Stage) */}
+                      {conversation.kanban_column && (
+                        <Badge 
+                          variant="outline"
+                          style={{ borderColor: conversation.kanban_column.color || '#3B82F6', color: conversation.kanban_column.color || '#3B82F6' }}
+                          className="text-[9px] px-1.5 py-0 h-4"
+                        >
+                          {conversation.kanban_column.name}
                         </Badge>
                       )}
+                      
+                      {/* Assignee */}
+                      {conversation.assignee && (
+                        <span className="text-[9px] text-muted-foreground flex items-center gap-0.5">
+                          <User className="w-2.5 h-2.5" />
+                          {conversation.assignee.name.split(' ')[0]}
+                        </span>
+                      )}
                     </div>
-                  )}
-                </div>
-                <div className="flex flex-col items-end gap-1 shrink-0">
-                  <div className="flex items-center gap-1">
-                    {conversation.is_bot_active && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger>
-                            <Badge variant="outline" className="p-0.5 h-5 w-5 flex items-center justify-center border-primary/50">
-                              <Bot className="w-3 h-3 text-primary" />
-                            </Badge>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>Atendido pelo Chatbot</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    )}
-                    <Badge className={cn("text-[10px] px-1.5 py-0.5", statusConfig[conversation.status].className)}>
-                      {statusConfig[conversation.status].label}
-                    </Badge>
                   </div>
+                  
+                  {/* Unread count */}
                   {conversation.unread_count > 0 && (
-                    <Badge className="bg-accent text-accent-foreground w-5 h-5 p-0 flex items-center justify-center rounded-full text-xs">
+                    <Badge className="bg-accent text-accent-foreground w-5 h-5 p-0 flex items-center justify-center rounded-full text-xs shrink-0">
                       {conversation.unread_count}
                     </Badge>
                   )}
