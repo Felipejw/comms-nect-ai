@@ -345,8 +345,8 @@ export default function Usuarios() {
         </Button>
       </div>
 
-      <div className="table-container">
-        <Table>
+      <div className="table-container overflow-x-auto">
+        <Table className="min-w-[700px]">
           <TableHeader>
             <TableRow>
               <TableHead>Atendente</TableHead>

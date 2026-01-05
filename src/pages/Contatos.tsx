@@ -534,8 +534,8 @@ export default function Contatos() {
         </div>
       )}
 
-      <div className="table-container">
-        <Table>
+      <div className="table-container overflow-x-auto">
+        <Table className="min-w-[800px]">
           <TableHeader>
             <TableRow>
               <TableHead className="w-10">
