@@ -143,10 +143,14 @@ export function useWhatsAppConnections() {
   });
 
   const updateConnection = useMutation({
-    mutationFn: async ({ connectionId, name }: { connectionId: string; name: string }) => {
+    mutationFn: async ({ connectionId, name, color }: { connectionId: string; name?: string; color?: string }) => {
+      const updates: { name?: string; color?: string; updated_at: string } = { updated_at: new Date().toISOString() };
+      if (name !== undefined) updates.name = name;
+      if (color !== undefined) updates.color = color;
+      
       const { data, error } = await supabase
         .from("connections")
-        .update({ name, updated_at: new Date().toISOString() })
+        .update(updates)
         .eq("id", connectionId)
         .select()
         .single();
@@ -156,9 +160,10 @@ export function useWhatsAppConnections() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connections"] });
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
       toast({
         title: "Conexão atualizada",
-        description: "Nome da conexão alterado com sucesso",
+        description: "Alterações salvas com sucesso",
       });
     },
     onError: (error: Error) => {

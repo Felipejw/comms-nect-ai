@@ -34,6 +34,17 @@ import {
 import { WhatsAppConnection } from "@/hooks/useWhatsAppConnections";
 import { cn } from "@/lib/utils";
 
+const CONNECTION_COLORS = [
+  { value: '#22c55e', label: 'Verde' },
+  { value: '#3b82f6', label: 'Azul' },
+  { value: '#8b5cf6', label: 'Roxo' },
+  { value: '#f97316', label: 'Laranja' },
+  { value: '#ec4899', label: 'Rosa' },
+  { value: '#06b6d4', label: 'Ciano' },
+  { value: '#eab308', label: 'Amarelo' },
+  { value: '#ef4444', label: 'Vermelho' },
+];
+
 interface ConnectionCardProps {
   connection: WhatsAppConnection;
   isPolling: boolean;
@@ -42,6 +53,7 @@ interface ConnectionCardProps {
   onRefreshQr: (connection: WhatsAppConnection) => void;
   onViewQr: (connection: WhatsAppConnection) => void;
   onUpdateName: (id: string, name: string) => void;
+  onUpdateColor: (id: string, color: string) => void;
   isDisconnecting: boolean;
   isRecreating: boolean;
   isDeleting: boolean;
@@ -72,19 +84,20 @@ export function ConnectionCard({
   onRefreshQr,
   onViewQr,
   onUpdateName,
+  onUpdateColor,
   isDisconnecting,
   isRecreating,
   isDeleting,
   isUpdating,
 }: ConnectionCardProps) {
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingColor, setIsEditingColor] = useState(false);
   const [editName, setEditName] = useState(connection.name);
   const [prevStatus, setPrevStatus] = useState(connection.status);
   const [statusChanged, setStatusChanged] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const initial = connection.name.charAt(0).toUpperCase();
-  const avatarColor = getAvatarColor(connection.name);
   
   const formattedDate = connection.created_at 
     ? format(new Date(connection.created_at), "dd/MM/yyyy HH:mm", { locale: ptBR })
@@ -225,17 +238,30 @@ export function ConnectionCard({
     }
   };
 
+  const handleColorChange = (color: string) => {
+    onUpdateColor(connection.id, color);
+    setIsEditingColor(false);
+  };
+
+  const connectionColor = connection.color || '#22c55e';
+
   return (
     <Card className="overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 animate-fade-in">
+      {/* Color indicator bar */}
+      <div 
+        className="h-1.5 w-full" 
+        style={{ backgroundColor: connectionColor }}
+      />
       <CardContent className="p-5">
         {/* Header */}
         <div className="flex items-start justify-between mb-4">
           <div className="flex items-center gap-3 flex-1 min-w-0">
-            <div className={cn(
-              "w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0 transition-transform duration-300",
-              avatarColor,
-              statusChanged && "animate-scale-in"
-            )}>
+            <div 
+              className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg flex-shrink-0 transition-transform duration-300 cursor-pointer hover:scale-105"
+              style={{ backgroundColor: connectionColor }}
+              onClick={() => setIsEditingColor(!isEditingColor)}
+              title="Clique para mudar a cor"
+            >
               {initial}
             </div>
             <div className="flex-1 min-w-0">
@@ -281,6 +307,27 @@ export function ConnectionCard({
             </Badge>
           )}
         </div>
+
+        {/* Color Picker */}
+        {isEditingColor && (
+          <div className="mb-4 p-3 bg-muted/50 rounded-lg animate-fade-in">
+            <p className="text-xs text-muted-foreground mb-2">Selecione uma cor:</p>
+            <div className="flex flex-wrap gap-2">
+              {CONNECTION_COLORS.map((c) => (
+                <button
+                  key={c.value}
+                  onClick={() => handleColorChange(c.value)}
+                  className={cn(
+                    "w-8 h-8 rounded-full transition-all hover:scale-110 border-2",
+                    connectionColor === c.value ? "border-foreground scale-110" : "border-transparent"
+                  )}
+                  style={{ backgroundColor: c.value }}
+                  title={c.label}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Status */}
         <div className="mb-4">
