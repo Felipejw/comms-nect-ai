@@ -1,13 +1,24 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Play, Pause, Volume2, VolumeX, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
 import { cn } from "@/lib/utils";
 
 interface AudioPlayerProps {
   src: string;
   className?: string;
 }
+
+// Generate random waveform bars (simulated since we can't do real audio analysis cross-origin)
+const generateWaveformBars = (count: number): number[] => {
+  const bars: number[] = [];
+  for (let i = 0; i < count; i++) {
+    // Create a natural-looking waveform pattern
+    const base = 0.3 + Math.random() * 0.4;
+    const wave = Math.sin(i * 0.3) * 0.2;
+    bars.push(Math.min(1, Math.max(0.15, base + wave)));
+  }
+  return bars;
+};
 
 export function AudioPlayer({ src, className }: AudioPlayerProps) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -17,6 +28,9 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  
+  // Generate waveform bars once per audio source
+  const waveformBars = useMemo(() => generateWaveformBars(32), [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -82,13 +96,17 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
     }
   };
 
-  const handleProgressChange = (value: number[]) => {
+  const handleWaveformClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const audio = audioRef.current;
-    if (!audio || !audio.duration) return;
+    if (!audio || !audio.duration || isLoading) return;
     
-    const newTime = (value[0] / 100) * audio.duration;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = (clickX / rect.width) * 100;
+    const newTime = (percentage / 100) * audio.duration;
+    
     audio.currentTime = newTime;
-    setProgress(value[0]);
+    setProgress(percentage);
   };
 
   const toggleMute = () => {
@@ -124,7 +142,7 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
   }
 
   return (
-    <div className={cn("flex items-center gap-2 p-2 bg-muted/50 rounded-lg min-w-[200px]", className)}>
+    <div className={cn("flex items-center gap-2 p-2 bg-muted/50 rounded-lg min-w-[240px]", className)}>
       {/* Hidden audio element with multiple source types */}
       <audio ref={audioRef} preload="metadata">
         <source src={src} type="audio/ogg" />
@@ -138,48 +156,78 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 shrink-0"
+        className="h-9 w-9 shrink-0 rounded-full bg-primary/10 hover:bg-primary/20"
         onClick={togglePlay}
         disabled={isLoading}
       >
         {isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
+          <Loader2 className="h-4 w-4 animate-spin text-primary" />
         ) : isPlaying ? (
-          <Pause className="h-4 w-4" />
+          <Pause className="h-4 w-4 text-primary" />
         ) : (
-          <Play className="h-4 w-4" />
+          <Play className="h-4 w-4 text-primary ml-0.5" />
         )}
       </Button>
 
-      {/* Progress bar */}
-      <div className="flex-1 flex items-center gap-2">
-        <span className="text-[10px] text-muted-foreground w-8 shrink-0">
-          {formatTime(currentTime)}
-        </span>
-        <Slider
-          value={[progress]}
-          onValueChange={handleProgressChange}
-          max={100}
-          step={0.1}
-          className="flex-1"
-          disabled={isLoading}
-        />
-        <span className="text-[10px] text-muted-foreground w-8 shrink-0 text-right">
-          {formatTime(duration)}
-        </span>
+      {/* Waveform visualization */}
+      <div className="flex-1 flex flex-col gap-1">
+        <div 
+          className="relative h-8 flex items-center gap-[2px] cursor-pointer group"
+          onClick={handleWaveformClick}
+        >
+          {waveformBars.map((height, index) => {
+            const barProgress = (index / waveformBars.length) * 100;
+            const isPlayed = barProgress < progress;
+            const isActive = Math.abs(barProgress - progress) < (100 / waveformBars.length);
+            
+            return (
+              <div
+                key={index}
+                className={cn(
+                  "flex-1 rounded-full transition-all duration-150",
+                  isPlayed ? "bg-primary" : "bg-muted-foreground/30",
+                  isActive && isPlaying && "animate-pulse",
+                  "group-hover:opacity-80"
+                )}
+                style={{
+                  height: `${height * 100}%`,
+                  minHeight: '4px',
+                  transform: isPlaying && isActive ? 'scaleY(1.2)' : 'scaleY(1)',
+                  transition: 'transform 0.1s ease, background-color 0.15s ease'
+                }}
+              />
+            );
+          })}
+          
+          {/* Progress indicator line */}
+          <div 
+            className="absolute top-0 bottom-0 w-0.5 bg-primary shadow-sm pointer-events-none transition-all duration-100"
+            style={{ left: `${progress}%` }}
+          />
+        </div>
+        
+        {/* Time display */}
+        <div className="flex justify-between px-0.5">
+          <span className="text-[10px] text-muted-foreground">
+            {formatTime(currentTime)}
+          </span>
+          <span className="text-[10px] text-muted-foreground">
+            {formatTime(duration)}
+          </span>
+        </div>
       </div>
 
       {/* Mute button */}
       <Button
         variant="ghost"
         size="icon"
-        className="h-6 w-6 shrink-0"
+        className="h-7 w-7 shrink-0"
         onClick={toggleMute}
       >
         {isMuted ? (
-          <VolumeX className="h-3 w-3" />
+          <VolumeX className="h-3.5 w-3.5 text-muted-foreground" />
         ) : (
-          <Volume2 className="h-3 w-3" />
+          <Volume2 className="h-3.5 w-3.5 text-muted-foreground" />
         )}
       </Button>
     </div>
