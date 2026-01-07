@@ -67,6 +67,7 @@ import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 import { ChatConnectionIndicator } from "@/components/atendimento/ChatConnectionIndicator";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
+import { useContactDisplayName, formatPhoneForDisplay as formatPhone } from "@/hooks/useContactDisplayName";
 import {
   Tooltip,
   TooltipContent,
@@ -276,32 +277,13 @@ export default function Atendimento() {
     );
   }, [messages, messageSearchQuery]);
 
-  // Helper para obter nome de exibição (nome > telefone > "Contato")
-  const getDisplayName = (contact?: Conversation['contact']) => {
-    if (!contact) return "Contato";
-    return contact.name || contact.phone || "Contato";
-  };
+  // Use centralized display name hook
+  const { getDisplayName, getInitials } = useContactDisplayName();
 
   // Helper para formatar telefone para exibição
   const formatPhoneDisplay = (phone?: string | null) => {
     if (!phone) return null;
-    const cleaned = phone.replace(/\D/g, '');
-    if (cleaned.length === 13) {
-      return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9)}`;
-    } else if (cleaned.length === 12) {
-      return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-    }
-    return phone;
-  };
-
-  // Helper para obter iniciais
-  const getInitials = (contact?: Conversation['contact']) => {
-    const name = getDisplayName(contact);
-    if (name === "Contato") return "?";
-    if (/^\d+$/.test(name.replace(/\D/g, '')) && name.replace(/\D/g, '').length > 2) {
-      return name.replace(/\D/g, '').slice(-2);
-    }
-    return name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase();
+    return formatPhone(phone);
   };
 
   const filteredConversations = useMemo(() => {
