@@ -800,7 +800,110 @@ serve(async (req) => {
 
       case "messages.update": {
         // Message status update (delivered, read, etc.)
-        console.log("[Webhook] Message status update:", data);
+        console.log("[Webhook] Processing message status update:", data);
+        
+        const updates = Array.isArray(data) ? data : [data];
+        
+        for (const update of updates) {
+          const messageId = update?.key?.id;
+          const remoteJid = update?.key?.remoteJid;
+          const fromMe = update?.key?.fromMe;
+          const status = update?.update?.status;
+          
+          // Only process messages sent by us (campaigns/system)
+          if (!fromMe || !messageId) {
+            console.log(`[Webhook] Skipping status update - fromMe: ${fromMe}, messageId: ${messageId}`);
+            continue;
+          }
+          
+          // Status codes: 2=sent, 3=delivered, 4=read, 5=played (audio)
+          if (status !== 3 && status !== 4 && status !== 5) {
+            console.log(`[Webhook] Skipping status ${status} - only processing 3 (delivered), 4 (read), 5 (played)`);
+            continue;
+          }
+          
+          // Extract phone from remoteJid
+          const phone = remoteJid
+            ?.replace("@s.whatsapp.net", "")
+            ?.replace("@lid", "")
+            ?.split(":")[0];
+          
+          if (!phone) {
+            console.log(`[Webhook] Could not extract phone from remoteJid: ${remoteJid}`);
+            continue;
+          }
+          
+          console.log(`[Webhook] Looking for contact with phone/lid: ${phone}, status: ${status}`);
+          
+          // Find contact by phone or LID
+          const { data: contacts } = await supabaseClient
+            .from("contacts")
+            .select("id")
+            .or(`phone.eq.${phone},whatsapp_lid.eq.${phone}`);
+          
+          if (!contacts || contacts.length === 0) {
+            console.log(`[Webhook] No contact found for phone: ${phone}`);
+            continue;
+          }
+          
+          const contactId = contacts[0].id;
+          
+          // Find campaign_contact with status "sent" (most recent)
+          const { data: campaignContacts } = await supabaseClient
+            .from("campaign_contacts")
+            .select("id, campaign_id, delivered_at")
+            .eq("contact_id", contactId)
+            .eq("status", "sent")
+            .order("sent_at", { ascending: false })
+            .limit(1);
+          
+          if (!campaignContacts || campaignContacts.length === 0) {
+            console.log(`[Webhook] No pending campaign_contact found for contact: ${contactId}`);
+            continue;
+          }
+          
+          const campaignContact = campaignContacts[0];
+          console.log(`[Webhook] Found campaign_contact: ${campaignContact.id}, updating status ${status}`);
+          
+          if (status === 3) {
+            // DELIVERED
+            await supabaseClient
+              .from("campaign_contacts")
+              .update({ 
+                status: "delivered",
+                delivered_at: new Date().toISOString() 
+              })
+              .eq("id", campaignContact.id);
+            
+            // Increment delivered_count
+            await supabaseClient.rpc("increment_campaign_delivered", { 
+              campaign_id: campaignContact.campaign_id 
+            });
+            
+            console.log(`[Webhook] Campaign contact ${campaignContact.id} marked as DELIVERED`);
+            
+          } else if (status === 4 || status === 5) {
+            // READ or PLAYED
+            const wasDelivered = !!campaignContact.delivered_at;
+            
+            await supabaseClient
+              .from("campaign_contacts")
+              .update({ 
+                status: "read",
+                read_at: new Date().toISOString(),
+                delivered_at: campaignContact.delivered_at || new Date().toISOString()
+              })
+              .eq("id", campaignContact.id);
+            
+            // Increment read_count (and delivered if wasn't already)
+            await supabaseClient.rpc("increment_campaign_read", { 
+              campaign_id: campaignContact.campaign_id,
+              was_delivered: wasDelivered
+            });
+            
+            console.log(`[Webhook] Campaign contact ${campaignContact.id} marked as READ (wasDelivered: ${wasDelivered})`);
+          }
+        }
         break;
       }
 
