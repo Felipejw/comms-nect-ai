@@ -1798,14 +1798,6 @@ export default function Atendimento() {
             </div>
           )}
 
-          {/* LID Contact Indicator */}
-          {isLidOnlyContact(selectedConversation?.contact) && (
-            <LidContactIndicator 
-              contact={selectedConversation?.contact} 
-              conversationId={selectedConversation?.id}
-              className="mx-3 sm:mx-4 mt-3"
-            />
-          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 bg-muted/30 scrollbar-thin">
