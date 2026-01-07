@@ -10,7 +10,7 @@ export interface WhatsAppConnection {
   phone_number: string | null;
   qr_code: string | null;
   is_default: boolean;
-  session_data: { instanceName?: string } | null;
+  session_data: { sessionName?: string; token?: string; instanceName?: string } | null;
   color: string | null;
   created_at: string;
   updated_at: string;
@@ -36,7 +36,7 @@ export function useWhatsAppConnections() {
 
   const createConnection = useMutation({
     mutationFn: async (instanceName: string) => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "create", instanceName },
       });
 
@@ -62,7 +62,7 @@ export function useWhatsAppConnections() {
 
   const getQrCode = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "getQrCode", connectionId },
       });
 
@@ -77,7 +77,7 @@ export function useWhatsAppConnections() {
 
   const checkStatus = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "status", connectionId },
       });
 
@@ -92,7 +92,7 @@ export function useWhatsAppConnections() {
 
   const disconnect = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "disconnect", connectionId },
       });
 
@@ -118,7 +118,7 @@ export function useWhatsAppConnections() {
 
   const deleteConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "delete", connectionId },
       });
 
@@ -177,7 +177,7 @@ export function useWhatsAppConnections() {
 
   const recreateConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "recreate", connectionId },
       });
 
@@ -189,7 +189,7 @@ export function useWhatsAppConnections() {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connections"] });
       toast({
         title: "Reconectando",
-        description: "Nova instância criada, escaneie o QR Code",
+        description: "Nova sessão criada, escaneie o QR Code",
       });
     },
     onError: (error: Error) => {
@@ -203,7 +203,7 @@ export function useWhatsAppConnections() {
 
   const checkServerHealth = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "serverHealth" },
       });
 
@@ -215,7 +215,7 @@ export function useWhatsAppConnections() {
 
   const cleanupOrphaned = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("evolution-instance", {
+      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
         body: { action: "cleanupOrphanedInstances" },
       });
 
@@ -227,12 +227,12 @@ export function useWhatsAppConnections() {
       if (data.deleted?.length > 0) {
         toast({
           title: "Limpeza concluída",
-          description: `${data.deleted.length} instância(s) órfã(s) removida(s)`,
+          description: `${data.deleted.length} sessão(ões) órfã(s) removida(s)`,
         });
       } else {
         toast({
           title: "Nenhuma limpeza necessária",
-          description: "Todas as instâncias estão sincronizadas",
+          description: "Todas as sessões estão sincronizadas",
         });
       }
     },

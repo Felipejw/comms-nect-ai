@@ -5,9 +5,19 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// WPPConnect API configuration
+const WPPCONNECT_API_URL = Deno.env.get("WPPCONNECT_API_URL") || Deno.env.get("EVOLUTION_API_URL");
+const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY") || Deno.env.get("EVOLUTION_API_KEY");
+
 interface ResolveLidPayload {
   contactId: string;
   whatsappLid?: string;
+}
+
+interface SessionData {
+  sessionName?: string;
+  token?: string;
+  instanceName?: string;
 }
 
 Deno.serve(async (req) => {
@@ -18,13 +28,11 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
 
-    if (!evolutionApiUrl || !evolutionApiKey) {
-      console.error("Evolution API credentials not configured");
+    if (!WPPCONNECT_API_URL) {
+      console.error("WPPConnect API URL not configured");
       return new Response(
-        JSON.stringify({ success: false, error: "Evolution API não configurada" }),
+        JSON.stringify({ success: false, error: "WPPConnect API não configurada" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -40,7 +48,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Resolving LID for contact ${contactId}, LID: ${whatsappLid}`);
+    console.log(`[resolve-lid] Resolving LID for contact ${contactId}, LID: ${whatsappLid}`);
 
     // Get contact from database
     const { data: contact, error: contactError } = await supabaseAdmin
@@ -66,9 +74,9 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Clean LID - remove any non-numeric characters except for specific patterns
+    // Clean LID
     const cleanLid = lidToResolve.replace(/[@:]/g, '').replace(/lid/gi, '').replace(/\D/g, '');
-    console.log(`Clean LID: ${cleanLid}`);
+    console.log(`[resolve-lid] Clean LID: ${cleanLid}`);
 
     // Get active WhatsApp connection
     const { data: connection, error: connError } = await supabaseAdmin
@@ -88,146 +96,140 @@ Deno.serve(async (req) => {
       );
     }
 
-    const instanceName = (connection.session_data as any)?.instanceName || connection.name;
-    console.log(`Using instance ${instanceName} to resolve LID`);
+    const sessionData = connection.session_data as SessionData;
+    const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name;
+    const sessionToken = sessionData?.token || WPPCONNECT_SECRET_KEY;
+
+    console.log(`[resolve-lid] Using session ${sessionName} to resolve LID`);
 
     let realPhone: string | null = null;
 
-    // Method 1: Try findContact endpoint with LID
+    // WPPConnect has a dedicated endpoint for resolving LIDs
+    // Try the pn-lid endpoint first
     try {
-      console.log(`Trying findContact for LID ${cleanLid}...`);
-      const findResponse = await fetch(`${evolutionApiUrl}/chat/findContact/${instanceName}`, {
-        method: "POST",
+      console.log(`[resolve-lid] Trying WPPConnect pn-lid endpoint...`);
+      const pnLidResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/contact/pn-lid/${cleanLid}`, {
+        method: "GET",
         headers: {
-          "Content-Type": "application/json",
-          "apikey": evolutionApiKey,
+          "Authorization": `Bearer ${sessionToken}`,
         },
-        body: JSON.stringify({
-          numbers: [`${cleanLid}@lid`]
-        }),
       });
       
-      console.log(`findContact response status: ${findResponse.status}`);
+      console.log(`[resolve-lid] pn-lid response status: ${pnLidResponse.status}`);
       
-      if (findResponse.ok) {
-        const findData = await findResponse.json();
-        console.log(`findContact response:`, JSON.stringify(findData));
+      if (pnLidResponse.ok) {
+        const pnLidData = await pnLidResponse.json();
+        console.log(`[resolve-lid] pn-lid response:`, JSON.stringify(pnLidData));
         
-        const foundContact = Array.isArray(findData) ? findData[0] : findData;
-        if (foundContact?.jid && foundContact.jid.includes("@s.whatsapp.net")) {
-          const phone = foundContact.jid.replace("@s.whatsapp.net", "");
-          if (phone.length >= 10 && phone.length <= 15) {
-            realPhone = phone;
-            console.log(`Found real phone via findContact: ${realPhone}`);
-          }
+        // Extract real phone from response
+        const phone = pnLidData.phone || pnLidData.number || pnLidData.wid?.replace('@c.us', '');
+        if (phone && phone.length >= 10 && phone.length <= 15) {
+          realPhone = phone;
+          console.log(`[resolve-lid] Found real phone via pn-lid: ${realPhone}`);
         }
       }
-    } catch (findErr) {
-      console.error("Error in findContact:", findErr);
+    } catch (pnLidErr) {
+      console.error("[resolve-lid] Error in pn-lid:", pnLidErr);
     }
 
-    // Method 2: Fetch all contacts and search for LID
+    // Method 2: Try to get contact info
     if (!realPhone) {
       try {
-        console.log(`Trying fetchAllContacts endpoint...`);
-        const contactsResponse = await fetch(`${evolutionApiUrl}/chat/fetchAllContacts/${instanceName}`, {
-          method: "POST",
+        console.log(`[resolve-lid] Trying get-contact endpoint...`);
+        const contactResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/contact/${cleanLid}@c.us`, {
+          method: "GET",
           headers: {
-            "Content-Type": "application/json",
-            "apikey": evolutionApiKey,
+            "Authorization": `Bearer ${sessionToken}`,
           },
-          body: JSON.stringify({}),
         });
         
-        console.log(`fetchAllContacts response status: ${contactsResponse.status}`);
+        console.log(`[resolve-lid] get-contact response status: ${contactResponse.status}`);
         
-        if (contactsResponse.ok) {
-          const contactsData = await contactsResponse.json();
-          const contactsArray = Array.isArray(contactsData) ? contactsData : contactsData?.contacts || [];
+        if (contactResponse.ok) {
+          const contactData = await contactResponse.json();
+          console.log(`[resolve-lid] get-contact response:`, JSON.stringify(contactData));
           
-          console.log(`Fetched ${contactsArray.length} contacts from Evolution API`);
-          
-          // Find contact by LID
-          const lidContact = contactsArray.find((c: any) => {
-            const remoteJid = c.remoteJid || c.id || "";
-            const remoteLid = remoteJid.replace("@lid", "").replace("@s.whatsapp.net", "").split(":")[0];
-            return remoteLid === cleanLid || remoteJid.includes(cleanLid);
-          });
-          
-          if (lidContact) {
-            console.log(`Found LID contact in Evolution:`, JSON.stringify(lidContact));
-            
-            // Check if has remoteJidAlt with real phone
-            if (lidContact.remoteJidAlt && lidContact.remoteJidAlt.includes("@s.whatsapp.net")) {
-              const phone = lidContact.remoteJidAlt.replace("@s.whatsapp.net", "");
-              if (phone.length >= 10 && phone.length <= 15) {
-                realPhone = phone;
-                console.log(`Found real phone via remoteJidAlt: ${realPhone}`);
-              }
-            }
-            
-            // Try pushName match
-            if (!realPhone && lidContact.pushName) {
-              console.log(`Trying pushName match for "${lidContact.pushName}"...`);
-              const matchingContact = contactsArray.find((c: any) => 
-                c.pushName === lidContact.pushName && 
-                c.remoteJid?.includes("@s.whatsapp.net") &&
-                !c.remoteJid?.includes("@lid")
-              );
-              
-              if (matchingContact) {
-                const phone = matchingContact.remoteJid.replace("@s.whatsapp.net", "");
-                if (phone.length >= 10 && phone.length <= 15) {
-                  realPhone = phone;
-                  console.log(`Found real phone via pushName match: ${realPhone}`);
-                }
-              }
-            }
+          const phone = contactData.id?.replace('@c.us', '') || contactData.number;
+          if (phone && phone.length >= 10 && phone.length <= 15 && !phone.includes('lid')) {
+            realPhone = phone;
+            console.log(`[resolve-lid] Found real phone via get-contact: ${realPhone}`);
           }
         }
-      } catch (fetchErr) {
-        console.error("Error fetching contacts from Evolution:", fetchErr);
+      } catch (contactErr) {
+        console.error("[resolve-lid] Error in get-contact:", contactErr);
       }
     }
 
-    // Method 3: Try to get profile picture (which only works with real numbers)
-    // This can help verify if a potential number is valid
+    // Method 3: Check if the LID itself is a valid phone number
     if (!realPhone) {
       try {
-        // Check if the LID might be a phone in disguise (10-15 digits)
         if (cleanLid.length >= 10 && cleanLid.length <= 15) {
-          console.log(`LID length suggests it might be a phone number, checking...`);
+          console.log(`[resolve-lid] LID might be a phone, checking validity...`);
           
-          const checkResponse = await fetch(`${evolutionApiUrl}/chat/whatsappNumbers/${instanceName}`, {
-            method: "POST",
+          const checkResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/check-number-status/${cleanLid}`, {
+            method: "GET",
             headers: {
-              "Content-Type": "application/json",
-              "apikey": evolutionApiKey,
+              "Authorization": `Bearer ${sessionToken}`,
             },
-            body: JSON.stringify({
-              numbers: [cleanLid]
-            }),
           });
           
           if (checkResponse.ok) {
             const checkData = await checkResponse.json();
-            console.log(`whatsappNumbers response:`, JSON.stringify(checkData));
+            console.log(`[resolve-lid] check-number-status response:`, JSON.stringify(checkData));
             
-            const validNumber = Array.isArray(checkData) && checkData[0]?.exists;
-            if (validNumber) {
+            if (checkData.numberExists || checkData.status === 200 || checkData.canReceiveMessage) {
               realPhone = cleanLid;
-              console.log(`LID is actually a valid WhatsApp number: ${realPhone}`);
+              console.log(`[resolve-lid] LID is a valid WhatsApp number: ${realPhone}`);
             }
           }
         }
       } catch (checkErr) {
-        console.error("Error checking number validity:", checkErr);
+        console.error("[resolve-lid] Error checking number validity:", checkErr);
+      }
+    }
+
+    // Method 4: Fetch all contacts and search
+    if (!realPhone) {
+      try {
+        console.log(`[resolve-lid] Trying get-all-contacts endpoint...`);
+        const allContactsResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/all-contacts`, {
+          method: "GET",
+          headers: {
+            "Authorization": `Bearer ${sessionToken}`,
+          },
+        });
+        
+        if (allContactsResponse.ok) {
+          const allContacts = await allContactsResponse.json();
+          const contactsArray = Array.isArray(allContacts) ? allContacts : allContacts.contacts || [];
+          
+          console.log(`[resolve-lid] Fetched ${contactsArray.length} contacts`);
+          
+          // Find contact by LID
+          const lidContact = contactsArray.find((c: any) => {
+            const cid = c.id || c.jid || "";
+            const cleanCid = cid.replace('@c.us', '').replace('@lid', '').split(':')[0];
+            return cleanCid === cleanLid || cid.includes(cleanLid);
+          });
+          
+          if (lidContact) {
+            console.log(`[resolve-lid] Found LID contact:`, JSON.stringify(lidContact));
+            
+            const phone = lidContact.id?.replace('@c.us', '') || lidContact.number;
+            if (phone && phone.length >= 10 && phone.length <= 15 && !phone.includes('lid')) {
+              realPhone = phone;
+              console.log(`[resolve-lid] Found real phone via all-contacts: ${realPhone}`);
+            }
+          }
+        }
+      } catch (allContactsErr) {
+        console.error("[resolve-lid] Error fetching all contacts:", allContactsErr);
       }
     }
 
     // If we found a real phone, update the contact
     if (realPhone) {
-      console.log(`Updating contact ${contactId} with real phone: ${realPhone}`);
+      console.log(`[resolve-lid] Updating contact ${contactId} with real phone: ${realPhone}`);
       
       const { error: updateError } = await supabaseAdmin
         .from("contacts")
@@ -235,9 +237,9 @@ Deno.serve(async (req) => {
         .eq("id", contactId);
       
       if (updateError) {
-        console.error("Error updating contact:", updateError);
+        console.error("[resolve-lid] Error updating contact:", updateError);
       } else {
-        console.log(`Contact ${contactId} updated successfully`);
+        console.log(`[resolve-lid] Contact ${contactId} updated successfully`);
       }
       
       return new Response(
@@ -250,7 +252,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Could not find real phone for LID ${cleanLid}`);
+    console.log(`[resolve-lid] Could not find real phone for LID ${cleanLid}`);
     return new Response(
       JSON.stringify({ 
         success: false, 
@@ -260,7 +262,7 @@ Deno.serve(async (req) => {
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error) {
-    console.error("Error in resolve-lid-contact:", error);
+    console.error("[resolve-lid] Error:", error);
     return new Response(
       JSON.stringify({ 
         success: false, 
