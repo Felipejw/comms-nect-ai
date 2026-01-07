@@ -183,22 +183,43 @@ async function getSessionInfo(supabaseClient: any, connectionId: string): Promis
 async function generateToken(instanceUrl: string, sessionName: string): Promise<string | null> {
   try {
     console.log(`[WPPConnect] Generating token for session: ${sessionName} on ${instanceUrl}`);
-    const response = await fetch(`${instanceUrl}/api/${sessionName}/${WPPCONNECT_SECRET_KEY}/generate-token`, {
+    
+    // WPPConnect uses POST /api/:session/generate-token with secretkey in body
+    const response = await fetch(`${instanceUrl}/api/${sessionName}/generate-token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ secretkey: WPPCONNECT_SECRET_KEY }),
     });
 
     if (!response.ok) {
-      console.error(`[WPPConnect] Failed to generate token: ${response.status}`);
-      return null;
+      const errorText = await response.text();
+      console.error(`[WPPConnect] Failed to generate token: ${response.status} - ${errorText}`);
+      
+      // Fallback: try legacy route format
+      console.log(`[WPPConnect] Trying legacy token route...`);
+      const legacyResponse = await fetch(`${instanceUrl}/api/${sessionName}/${WPPCONNECT_SECRET_KEY}/generate-token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      
+      if (legacyResponse.ok) {
+        const legacyData = await legacyResponse.json();
+        console.log(`[WPPConnect] Token generated (legacy):`, legacyData);
+        return legacyData.token || legacyData.full || WPPCONNECT_SECRET_KEY;
+      }
+      
+      // If both fail, use SECRET_KEY as token (some WPPConnect versions work this way)
+      console.log(`[WPPConnect] Using SECRET_KEY as token fallback`);
+      return WPPCONNECT_SECRET_KEY || null;
     }
 
     const data = await response.json();
     console.log(`[WPPConnect] Token generated:`, data);
-    return data.token || data.full || null;
+    return data.token || data.full || WPPCONNECT_SECRET_KEY || null;
   } catch (e) {
     console.error(`[WPPConnect] Error generating token:`, e);
-    return null;
+    // Fallback to SECRET_KEY
+    return WPPCONNECT_SECRET_KEY || null;
   }
 }
 
