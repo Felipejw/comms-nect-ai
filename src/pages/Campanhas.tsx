@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, List } from "lucide-react";
+import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, List, Tag } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +23,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -52,47 +53,6 @@ import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 
-// Helper to extract phone numbers from text
-const extractPhoneNumbers = (text: string): string[] => {
-  const lines = text.split(/[\n,;]+/);
-  const phones: string[] = [];
-  
-  for (const line of lines) {
-    // Clean the line and extract digits
-    const cleaned = line.trim().replace(/[^\d+]/g, '');
-    if (cleaned.length >= 8 && cleaned.length <= 15) {
-      phones.push(cleaned);
-    }
-  }
-  
-  return [...new Set(phones)]; // Remove duplicates
-};
-
-// Parse CSV for phone import
-const parseCSVForPhones = (content: string): { headers: string[]; rows: string[][] } => {
-  const lines = content.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-  const rows = lines.slice(1).map(line => {
-    const values: string[] = [];
-    let current = '';
-    let inQuotes = false;
-    for (let i = 0; i < line.length; i++) {
-      const char = line[i];
-      if (char === '"') {
-        inQuotes = !inQuotes;
-      } else if (char === ',' && !inQuotes) {
-        values.push(current.trim());
-        current = '';
-      } else {
-        current += char;
-      }
-    }
-    values.push(current.trim());
-    return values;
-  });
-  return { headers, rows };
-};
-
 const statusConfig = {
   draft: { label: "Rascunho", className: "bg-muted text-muted-foreground" },
   active: { label: "Ativa", className: "bg-success/10 text-success" },
@@ -111,33 +71,16 @@ export default function Campanhas() {
   const [selectedCampaign, setSelectedCampaign] = useState<Campaign | null>(null);
   const [activeTab, setActiveTab] = useState<"campaigns" | "metrics">("campaigns");
   
-  // Form state
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [message, setMessage] = useState("");
-  const [mediaUrl, setMediaUrl] = useState("");
-  const [scheduledAt, setScheduledAt] = useState("");
+  // State for add contacts dialog
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  
-  // Contact source selection
-  const [contactSource, setContactSource] = useState<"list" | "paste" | "file">("list");
-  const [pastedNumbers, setPastedNumbers] = useState("");
-  const [parsedNumbers, setParsedNumbers] = useState<string[]>([]);
-  const [csvData, setCsvData] = useState<{ headers: string[]; rows: string[][] } | null>(null);
-  const [phoneColumnIndex, setPhoneColumnIndex] = useState<number>(-1);
-  const [nameColumnIndex, setNameColumnIndex] = useState<number>(-1);
-  const [createContactsFromImport, setCreateContactsFromImport] = useState(true);
-  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: campaigns = [], isLoading } = useCampaigns();
   const { data: contacts = [] } = useContacts();
   const { data: tags = [] } = useTags();
-  const createCampaign = useCreateCampaign();
   const updateCampaign = useUpdateCampaign();
   const deleteCampaign = useDeleteCampaign();
   const addContacts = useAddContactsToCampaign();
-  const createContact = useCreateContact();
 
   const filteredCampaigns = campaigns.filter((c) =>
     c.name.toLowerCase().includes(searchQuery.toLowerCase())
@@ -149,129 +92,6 @@ export default function Campanhas() {
         contact.tags?.some(tag => selectedTagIds.includes(tag.id))
       )
     : contacts;
-
-  const resetForm = () => {
-    setName("");
-    setDescription("");
-    setMessage("");
-    setMediaUrl("");
-    setScheduledAt("");
-    setSelectedContactIds([]);
-    setSelectedTagIds([]);
-    setContactSource("list");
-    setPastedNumbers("");
-    setParsedNumbers([]);
-    setCsvData(null);
-    setPhoneColumnIndex(-1);
-    setNameColumnIndex(-1);
-    setCreateContactsFromImport(true);
-  };
-
-  const handleCreateCampaign = async () => {
-    if (!name.trim() || !message.trim()) return;
-
-    const campaign = await createCampaign.mutateAsync({
-      name: name.trim(),
-      description: description.trim() || undefined,
-      message: message.trim(),
-      media_url: mediaUrl.trim() || undefined,
-      scheduled_at: scheduledAt ? new Date(scheduledAt).toISOString() : undefined,
-    });
-
-    let contactIdsToAdd = [...selectedContactIds];
-
-    // Handle pasted/imported numbers
-    if (contactSource === "paste" && parsedNumbers.length > 0) {
-      if (createContactsFromImport) {
-        // Create contacts for each number
-        for (const phone of parsedNumbers) {
-          const existingContact = contacts.find(c => c.phone?.replace(/\D/g, '') === phone.replace(/\D/g, ''));
-          if (existingContact) {
-            contactIdsToAdd.push(existingContact.id);
-          } else {
-            try {
-              const newContact = await createContact.mutateAsync({
-                name: `Contato ${phone}`,
-                phone,
-              });
-              if (newContact?.id) {
-                contactIdsToAdd.push(newContact.id);
-              }
-            } catch (error) {
-              console.error('Error creating contact:', error);
-            }
-          }
-        }
-      }
-    } else if (contactSource === "file" && csvData && phoneColumnIndex >= 0) {
-      for (const row of csvData.rows) {
-        const phone = row[phoneColumnIndex]?.trim();
-        if (!phone) continue;
-        
-        const existingContact = contacts.find(c => c.phone?.replace(/\D/g, '') === phone.replace(/\D/g, ''));
-        if (existingContact) {
-          contactIdsToAdd.push(existingContact.id);
-        } else if (createContactsFromImport) {
-          try {
-            const contactName = nameColumnIndex >= 0 ? row[nameColumnIndex]?.trim() : undefined;
-            const newContact = await createContact.mutateAsync({
-              name: contactName || `Contato ${phone}`,
-              phone,
-            });
-            if (newContact?.id) {
-              contactIdsToAdd.push(newContact.id);
-            }
-          } catch (error) {
-            console.error('Error creating contact:', error);
-          }
-        }
-      }
-    }
-
-    // Add contacts to campaign
-    if (contactIdsToAdd.length > 0 && campaign) {
-      await addContacts.mutateAsync({
-        campaignId: campaign.id,
-        contactIds: [...new Set(contactIdsToAdd)], // Remove duplicates
-      });
-    }
-
-    resetForm();
-    setIsDialogOpen(false);
-  };
-
-  const handlePastedNumbersChange = (text: string) => {
-    setPastedNumbers(text);
-    const numbers = extractPhoneNumbers(text);
-    setParsedNumbers(numbers);
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      const parsed = parseCSVForPhones(content);
-      setCsvData(parsed);
-      
-      // Auto-map phone column
-      const phoneIndex = parsed.headers.findIndex(h => 
-        h.toLowerCase().includes('telefone') || 
-        h.toLowerCase().includes('phone') || 
-        h.toLowerCase().includes('celular') ||
-        h.toLowerCase().includes('whatsapp')
-      );
-      const nameIndex = parsed.headers.findIndex(h => 
-        h.toLowerCase().includes('nome') || h.toLowerCase().includes('name')
-      );
-      
-      setPhoneColumnIndex(phoneIndex);
-      setNameColumnIndex(nameIndex);
-    };
-    reader.readAsText(file);
-  };
 
   const handleUpdateStatus = async (campaignId: string, status: "active" | "paused" | "completed") => {
     await updateCampaign.mutateAsync({ id: campaignId, status });
@@ -329,10 +149,6 @@ export default function Campanhas() {
 
   const deselectAllContacts = () => {
     setSelectedContactIds([]);
-  };
-
-  const insertVariable = (variable: string) => {
-    setMessage(prev => prev + `{{${variable}}}`);
   };
 
   if (isLoading) {
@@ -529,388 +345,34 @@ export default function Campanhas() {
       </Tabs>
 
       {/* Create Campaign Dialog */}
-      <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Novo Disparo em Massa</DialogTitle>
-          </DialogHeader>
-          <Tabs defaultValue="message" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
-              <TabsTrigger value="message">Mensagem</TabsTrigger>
-              <TabsTrigger value="contacts">Contatos</TabsTrigger>
-              <TabsTrigger value="schedule">Agendamento</TabsTrigger>
-            </TabsList>
-            
-            <TabsContent value="message" className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label>Nome do Disparo *</Label>
-                <Input 
-                  placeholder="Ex: Promoção de Verão" 
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Descrição</Label>
-                <Input 
-                  placeholder="Descreva o objetivo do disparo"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label>Mensagem *</Label>
-                  <div className="flex gap-1">
-                    <Button 
-                      type="button" 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => insertVariable("nome")}
-                    >
-                      {"{{nome}}"}
-                    </Button>
-                    <Button 
-                      type="button" 
-                      variant="outline" 
-                      size="sm"
-                      onClick={() => insertVariable("telefone")}
-                    >
-                      {"{{telefone}}"}
-                    </Button>
-                  </div>
-                </div>
-                <Textarea 
-                  placeholder="Digite a mensagem do disparo. Use {{nome}} para personalizar."
-                  rows={6}
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Variáveis disponíveis: {"{{nome}}"}, {"{{telefone}}"}, {"{{email}}"}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <Label>URL da Mídia (opcional)</Label>
-                <div className="flex gap-2">
-                  <Input 
-                    placeholder="https://exemplo.com/imagem.jpg"
-                    value={mediaUrl}
-                    onChange={(e) => setMediaUrl(e.target.value)}
-                  />
-                  <Button variant="outline" size="icon">
-                    <Image className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </TabsContent>
+      <CampaignDialog open={isDialogOpen} onOpenChange={setIsDialogOpen} />
 
-            <TabsContent value="contacts" className="space-y-4 pt-4">
-              <div className="space-y-4">
-                <Label>Origem dos Contatos</Label>
-                <RadioGroup value={contactSource} onValueChange={(v) => setContactSource(v as "list" | "paste" | "file")} className="grid grid-cols-3 gap-4">
-                  <Label 
-                    htmlFor="source-list" 
-                    className={`flex flex-col items-center gap-2 p-4 border rounded-lg cursor-pointer hover:bg-muted transition-colors ${contactSource === "list" ? "border-primary bg-primary/5" : ""}`}
-                  >
-                    <RadioGroupItem value="list" id="source-list" className="sr-only" />
-                    <Users className="w-6 h-6" />
-                    <span className="text-sm font-medium">Lista de Contatos</span>
-                  </Label>
-                  <Label 
-                    htmlFor="source-paste" 
-                    className={`flex flex-col items-center gap-2 p-4 border rounded-lg cursor-pointer hover:bg-muted transition-colors ${contactSource === "paste" ? "border-primary bg-primary/5" : ""}`}
-                  >
-                    <RadioGroupItem value="paste" id="source-paste" className="sr-only" />
-                    <ClipboardPaste className="w-6 h-6" />
-                    <span className="text-sm font-medium">Colar Números</span>
-                  </Label>
-                  <Label 
-                    htmlFor="source-file" 
-                    className={`flex flex-col items-center gap-2 p-4 border rounded-lg cursor-pointer hover:bg-muted transition-colors ${contactSource === "file" ? "border-primary bg-primary/5" : ""}`}
-                  >
-                    <RadioGroupItem value="file" id="source-file" className="sr-only" />
-                    <Upload className="w-6 h-6" />
-                    <span className="text-sm font-medium">Importar Arquivo</span>
-                  </Label>
-                </RadioGroup>
-              </div>
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir campanha?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir a campanha "{selectedCampaign?.name}"? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
-              {contactSource === "list" && (
-                <>
-                  <div className="space-y-2">
-                    <Label>Filtrar por Tags</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {tags.map((tag) => (
-                        <Badge
-                          key={tag.id}
-                          variant={selectedTagIds.includes(tag.id) ? "default" : "outline"}
-                          className="cursor-pointer"
-                          style={selectedTagIds.includes(tag.id) ? { backgroundColor: tag.color } : {}}
-                          onClick={() => toggleTag(tag.id)}
-                        >
-                          <Tag className="w-3 h-3 mr-1" />
-                          {tag.name}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <Label>Selecionar Contatos ({selectedContactIds.length} selecionados)</Label>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={selectAllContacts}>
-                        Selecionar todos
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={deselectAllContacts}>
-                        Limpar
-                      </Button>
-                    </div>
-                  </div>
-
-                  <ScrollArea className="h-[300px] border rounded-lg p-2">
-                    {filteredContacts.length === 0 ? (
-                      <div className="flex items-center justify-center h-full text-muted-foreground">
-                        Nenhum contato encontrado
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        {filteredContacts.map((contact) => (
-                          <div 
-                            key={contact.id}
-                            className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer"
-                            onClick={() => toggleContact(contact.id)}
-                          >
-                            <Checkbox 
-                              checked={selectedContactIds.includes(contact.id)}
-                              onCheckedChange={() => toggleContact(contact.id)}
-                            />
-                            <div className="flex-1">
-                              <p className="font-medium text-sm">{contact.name}</p>
-                              <p className="text-xs text-muted-foreground">{contact.phone || contact.email || "Sem contato"}</p>
-                            </div>
-                            {contact.tags && contact.tags.length > 0 && (
-                              <div className="flex gap-1">
-                                {contact.tags.slice(0, 2).map((tag) => (
-                                  <Badge 
-                                    key={tag.id} 
-                                    variant="secondary" 
-                                    className="text-xs"
-                                    style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
-                                  >
-                                    {tag.name}
-                                  </Badge>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </ScrollArea>
-                </>
-              )}
-
-              {contactSource === "paste" && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Cole os números de telefone</Label>
-                    <Textarea 
-                      placeholder="Cole números separados por linha, vírgula ou ponto-e-vírgula...&#10;&#10;Exemplo:&#10;5511999998888&#10;5521988887777, 5531977776666&#10;+55 41 96666-5555"
-                      rows={6}
-                      value={pastedNumbers}
-                      onChange={(e) => handlePastedNumbersChange(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Aceita números no formato nacional ou internacional
-                    </p>
-                  </div>
-                  
-                  {parsedNumbers.length > 0 && (
-                    <div className="p-3 bg-muted rounded-lg space-y-2">
-                      <p className="text-sm font-medium">{parsedNumbers.length} números detectados</p>
-                      <div className="flex flex-wrap gap-1 max-h-24 overflow-auto">
-                        {parsedNumbers.slice(0, 20).map((phone, i) => (
-                          <Badge key={i} variant="secondary" className="text-xs">
-                            {phone}
-                          </Badge>
-                        ))}
-                        {parsedNumbers.length > 20 && (
-                          <Badge variant="outline" className="text-xs">
-                            +{parsedNumbers.length - 20} mais
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  
-                  <div className="flex items-center gap-2">
-                    <Checkbox 
-                      id="create-contacts-paste"
-                      checked={createContactsFromImport}
-                      onCheckedChange={(v) => setCreateContactsFromImport(!!v)}
-                    />
-                    <Label htmlFor="create-contacts-paste" className="text-sm">
-                      Criar contatos automaticamente para números novos
-                    </Label>
-                  </div>
-                </div>
-              )}
-
-              {contactSource === "file" && (
-                <div className="space-y-4">
-                  {!csvData ? (
-                    <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
-                      <Upload className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
-                      <p className="text-muted-foreground mb-4">
-                        Selecione um arquivo CSV ou TXT com números de telefone
-                      </p>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept=".csv,.txt"
-                        onChange={handleFileUpload}
-                        className="hidden"
-                      />
-                      <Button onClick={() => fileInputRef.current?.click()}>
-                        Selecionar Arquivo
-                      </Button>
-                    </div>
-                  ) : (
-                    <>
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium">{csvData.rows.length} linhas encontradas</p>
-                        <Button variant="ghost" size="sm" onClick={() => setCsvData(null)}>
-                          <X className="w-4 h-4 mr-1" />
-                          Remover
-                        </Button>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label>Coluna do Telefone *</Label>
-                          <select
-                            value={phoneColumnIndex}
-                            onChange={(e) => setPhoneColumnIndex(parseInt(e.target.value))}
-                            className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          >
-                            <option value={-1}>Selecione...</option>
-                            {csvData.headers.map((header, index) => (
-                              <option key={index} value={index}>{header}</option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Coluna do Nome (opcional)</Label>
-                          <select
-                            value={nameColumnIndex}
-                            onChange={(e) => setNameColumnIndex(parseInt(e.target.value))}
-                            className="w-full h-10 rounded-md border border-input bg-background px-3 py-2 text-sm"
-                          >
-                            <option value={-1}>Nenhuma</option>
-                            {csvData.headers.map((header, index) => (
-                              <option key={index} value={index}>{header}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </div>
-                      
-                      <div className="border rounded-lg p-4 bg-muted/50 max-h-40 overflow-auto">
-                        <p className="text-sm font-medium mb-2">Preview</p>
-                        {csvData.rows.slice(0, 5).map((row, i) => (
-                          <div key={i} className="py-1 text-sm border-b border-border last:border-0">
-                            {phoneColumnIndex >= 0 && <span className="font-mono">{row[phoneColumnIndex]}</span>}
-                            {nameColumnIndex >= 0 && row[nameColumnIndex] && <span className="text-muted-foreground ml-2">- {row[nameColumnIndex]}</span>}
-                          </div>
-                        ))}
-                        {csvData.rows.length > 5 && (
-                          <p className="text-muted-foreground text-sm pt-2">... e mais {csvData.rows.length - 5} linhas</p>
-                        )}
-                      </div>
-                      
-                      <div className="flex items-center gap-2">
-                        <Checkbox 
-                          id="create-contacts-file"
-                          checked={createContactsFromImport}
-                          onCheckedChange={(v) => setCreateContactsFromImport(!!v)}
-                        />
-                        <Label htmlFor="create-contacts-file" className="text-sm">
-                          Criar contatos automaticamente para números novos
-                        </Label>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </TabsContent>
-
-            <TabsContent value="schedule" className="space-y-4 pt-4">
-              <div className="space-y-2">
-                <Label>Agendar Envio (opcional)</Label>
-                <Input 
-                  type="datetime-local"
-                  value={scheduledAt}
-                  onChange={(e) => setScheduledAt(e.target.value)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Deixe em branco para enviar imediatamente ao iniciar
-                </p>
-              </div>
-
-              <div className="bg-muted/50 rounded-lg p-4 space-y-3">
-                <h4 className="font-medium">Resumo do Disparo</h4>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-muted-foreground">Nome:</span>
-                    <p className="font-medium">{name || "-"}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Contatos:</span>
-                    <p className="font-medium">
-                      {contactSource === "list" 
-                        ? selectedContactIds.length 
-                        : contactSource === "paste" 
-                          ? parsedNumbers.length 
-                          : csvData?.rows.length || 0}
-                    </p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Mídia:</span>
-                    <p className="font-medium">{mediaUrl ? "Sim" : "Não"}</p>
-                  </div>
-                  <div>
-                    <span className="text-muted-foreground">Agendado:</span>
-                    <p className="font-medium">
-                      {scheduledAt ? format(new Date(scheduledAt), "dd/MM/yyyy HH:mm", { locale: ptBR }) : "Não"}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { resetForm(); setIsDialogOpen(false); }}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={handleCreateCampaign}
-              disabled={createCampaign.isPending || !name.trim() || !message.trim()}
-            >
-              {createCampaign.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Criar Disparo
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Contacts Dialog */}
+      {/* Add Contacts to Campaign Dialog */}
       <Dialog open={isContactsDialogOpen} onOpenChange={setIsContactsDialogOpen}>
-        <DialogContent>
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Adicionar Contatos ao Disparo</DialogTitle>
+            <DialogTitle>Adicionar Contatos à Campanha</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
+          
+          <div className="space-y-4">
             <div className="space-y-2">
               <Label>Filtrar por Tags</Label>
               <div className="flex flex-wrap gap-2">
@@ -922,73 +384,83 @@ export default function Campanhas() {
                     style={selectedTagIds.includes(tag.id) ? { backgroundColor: tag.color } : {}}
                     onClick={() => toggleTag(tag.id)}
                   >
+                    <Tag className="w-3 h-3 mr-1" />
                     {tag.name}
                   </Badge>
                 ))}
               </div>
             </div>
 
-            <ScrollArea className="h-[300px] border rounded-lg p-2">
-              <div className="space-y-2">
-                {filteredContacts.map((contact) => (
-                  <div 
-                    key={contact.id}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer"
-                    onClick={() => toggleContact(contact.id)}
-                  >
-                    <Checkbox 
-                      checked={selectedContactIds.includes(contact.id)}
-                    />
-                    <div>
-                      <p className="font-medium text-sm">{contact.name}</p>
-                      <p className="text-xs text-muted-foreground">{contact.phone || "-"}</p>
-                    </div>
-                  </div>
-                ))}
+            <div className="flex items-center justify-between">
+              <Label>Selecionar Contatos ({selectedContactIds.length} selecionados)</Label>
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={selectAllContacts}>
+                  Selecionar todos
+                </Button>
+                <Button variant="outline" size="sm" onClick={deselectAllContacts}>
+                  Limpar
+                </Button>
               </div>
-            </ScrollArea>
+            </div>
 
-            <p className="text-sm text-muted-foreground">
-              {selectedContactIds.length} contatos selecionados
-            </p>
+            <ScrollArea className="h-[300px] border rounded-lg p-2">
+              {filteredContacts.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Nenhum contato encontrado
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {filteredContacts.map((contact) => (
+                    <div 
+                      key={contact.id}
+                      className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted cursor-pointer"
+                      onClick={() => toggleContact(contact.id)}
+                    >
+                      <Checkbox 
+                        checked={selectedContactIds.includes(contact.id)}
+                        onCheckedChange={() => toggleContact(contact.id)}
+                      />
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">{contact.name}</p>
+                        <p className="text-xs text-muted-foreground">{contact.phone || contact.email || "Sem contato"}</p>
+                      </div>
+                      {contact.tags && contact.tags.length > 0 && (
+                        <div className="flex gap-1">
+                          {contact.tags.slice(0, 2).map((tag) => (
+                            <Badge 
+                              key={tag.id} 
+                              variant="secondary" 
+                              className="text-xs"
+                              style={{ backgroundColor: `${tag.color}20`, color: tag.color }}
+                            >
+                              {tag.name}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
           </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsContactsDialogOpen(false)}>
               Cancelar
             </Button>
             <Button 
               onClick={handleAddContactsToCampaign}
-              disabled={addContacts.isPending || selectedContactIds.length === 0}
+              disabled={selectedContactIds.length === 0 || addContacts.isPending}
             >
-              {addContacts.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Adicionar
+              {addContacts.isPending ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : null}
+              Adicionar {selectedContactIds.length} contatos
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir disparo?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja excluir o disparo "{selectedCampaign?.name}"? Esta ação não pode ser desfeita.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <Button 
-              variant="destructive" 
-              onClick={handleDelete}
-              disabled={deleteCampaign.isPending}
-            >
-              {deleteCampaign.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Excluir
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
