@@ -260,9 +260,11 @@ services:
       SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
       DENO_JOBS: 4
       
-      # Evolution API
-      EVOLUTION_API_URL: ${EVOLUTION_API_URL:-http://evolution:8080}
-      EVOLUTION_API_KEY: ${EVOLUTION_API_KEY:-}
+      # WPPConnect (Multi-Instância)
+      WPPCONNECT_API_URL: ${WPPCONNECT_API_URL:-http://wppconnect-1:21465}
+      WPPCONNECT_SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-}
+      WPPCONNECT_API_URL_2: ${WPPCONNECT_API_URL_2:-}
+      WPPCONNECT_API_URL_3: ${WPPCONNECT_API_URL_3:-}
       
       # Google Calendar (opcional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}

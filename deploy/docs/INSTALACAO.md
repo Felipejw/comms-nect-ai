@@ -2,6 +2,24 @@
 
 Sistema de atendimento WhatsApp self-hosted com Supabase + WPPConnect Server.
 
+## Gerando o Pacote de Instalação
+
+Antes de instalar na VPS, você precisa gerar o pacote no ambiente de desenvolvimento:
+
+```bash
+# No diretório raiz do projeto (onde está o package.json)
+cd deploy
+chmod +x scripts/*.sh
+./scripts/package.sh
+```
+
+Isso irá:
+1. Compilar o frontend (`npm run build`)
+2. Copiar todos os arquivos necessários
+3. Gerar dois arquivos em `releases/`:
+   - `sistema-atendimento-vX.X.X.zip` - Instalação completa
+   - `sistema-atendimento-vX.X.X-update.zip` - Apenas atualização
+
 ## Requisitos Mínimos
 
 | Recurso | Mínimo | Recomendado | Alta Disponibilidade |

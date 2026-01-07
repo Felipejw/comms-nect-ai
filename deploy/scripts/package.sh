@@ -100,15 +100,15 @@ rm -rf "$PACKAGE_DIR"
 mkdir -p "$PACKAGE_DIR"
 
 # Copiar arquivos necessários
-cp -r docker-compose.yml "$PACKAGE_DIR/"
-cp -r .env.example "$PACKAGE_DIR/"
+cp docker-compose.yml "$PACKAGE_DIR/"
+cp .env.example "$PACKAGE_DIR/"
 cp -r nginx "$PACKAGE_DIR/"
 cp -r scripts "$PACKAGE_DIR/"
 cp -r supabase "$PACKAGE_DIR/"
 cp -r docs "$PACKAGE_DIR/"
 cp -r frontend "$PACKAGE_DIR/"
 cp VERSION "$PACKAGE_DIR/"
-cp CHANGELOG.md "$PACKAGE_DIR/"
+cp CHANGELOG.md "$PACKAGE_DIR/" 2>/dev/null || true
 
 # Criar estrutura de diretórios vazios
 mkdir -p "$PACKAGE_DIR/volumes/db/data"
