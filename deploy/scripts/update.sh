@@ -30,9 +30,16 @@ if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
+# Detectar comando do Docker Compose
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
 # Ler versões
 OLD_VERSION=$(cat VERSION.old 2>/dev/null || echo "desconhecida")
-NEW_VERSION=$(cat VERSION 2>/dev/null || echo "1.0.0")
+NEW_VERSION=$(cat VERSION 2>/dev/null || echo "2.0.0")
 
 echo -e "${BLUE}"
 echo "============================================"
@@ -73,7 +80,7 @@ fi
 # ==========================================
 log_info "Parando containers..."
 
-docker-compose down || docker compose down || true
+$DOCKER_COMPOSE down || true
 
 log_success "Containers parados"
 
@@ -82,7 +89,7 @@ log_success "Containers parados"
 # ==========================================
 log_info "Atualizando imagens Docker..."
 
-docker-compose pull 2>/dev/null || docker compose pull 2>/dev/null || {
+$DOCKER_COMPOSE pull 2>/dev/null || {
     log_warning "Não foi possível atualizar imagens. Usando versões existentes."
 }
 
@@ -94,13 +101,13 @@ log_success "Imagens verificadas"
 log_info "Verificando migrations..."
 
 # Iniciar apenas o banco de dados
-docker-compose up -d db || docker compose up -d db
+$DOCKER_COMPOSE up -d db
 
 # Aguardar banco estar pronto
 max_attempts=30
 attempt=0
 log_info "Aguardando banco de dados..."
-while ! docker-compose exec -T db pg_isready -U postgres &>/dev/null; do
+while ! $DOCKER_COMPOSE exec -T db pg_isready -U postgres &>/dev/null; do
     attempt=$((attempt + 1))
     if [ $attempt -ge $max_attempts ]; then
         log_error "Banco de dados não iniciou a tempo"
@@ -113,7 +120,7 @@ done
 if [ -f "supabase/migrations_update.sql" ]; then
     log_info "Executando migrations de atualização..."
     
-    docker-compose exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} \
+    $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} \
         -f /docker-entrypoint-initdb.d/migrations_update.sql || {
         log_warning "Algumas migrations podem ter falhado (normal se já executadas)"
     }
@@ -134,7 +141,7 @@ if [ -d "supabase/migrations_update" ] && [ "$(ls -A supabase/migrations_update 
     for migration in supabase/migrations_update/*.sql; do
         if [ -f "$migration" ]; then
             log_info "  - $(basename $migration)"
-            docker-compose exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} -f "/docker-entrypoint-initdb.d/$(basename $migration)" || {
+            $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} -f "/docker-entrypoint-initdb.d/$(basename $migration)" || {
                 log_warning "    Falhou (pode já ter sido aplicada)"
             }
         fi
@@ -152,7 +159,7 @@ fi
 # ==========================================
 log_info "Iniciando containers..."
 
-docker-compose up -d || docker compose up -d
+$DOCKER_COMPOSE up -d
 
 log_success "Containers iniciados"
 
@@ -167,9 +174,7 @@ sleep 20
 services_ok=true
 
 for service in db auth rest storage nginx; do
-    if docker-compose ps 2>/dev/null | grep "$service" | grep -q "Up\|running"; then
-        log_success "Serviço $service: OK"
-    elif docker compose ps 2>/dev/null | grep "$service" | grep -q "Up\|running"; then
+    if $DOCKER_COMPOSE ps 2>/dev/null | grep "$service" | grep -q "Up\|running"; then
         log_success "Serviço $service: OK"
     else
         log_error "Serviço $service: FALHOU"
@@ -178,7 +183,30 @@ for service in db auth rest storage nginx; do
 done
 
 # ==========================================
-# 8. Limpar Recursos
+# 8. Verificar Saúde do WPPConnect
+# ==========================================
+log_info "Verificando WPPConnect Server..."
+
+MAX_RETRIES=20
+RETRY=0
+while [ $RETRY -lt $MAX_RETRIES ]; do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/health 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+        log_success "WPPConnect Server: OK (HTTP $HTTP_CODE)"
+        break
+    fi
+    RETRY=$((RETRY + 1))
+    echo -n "."
+    sleep 3
+done
+
+if [ $RETRY -eq $MAX_RETRIES ]; then
+    log_warning "WPPConnect pode ainda estar inicializando"
+    log_info "Verifique com: $DOCKER_COMPOSE logs wppconnect"
+fi
+
+# ==========================================
+# 9. Limpar Recursos
 # ==========================================
 log_info "Limpando recursos não utilizados..."
 
@@ -187,12 +215,12 @@ docker system prune -f 2>/dev/null || true
 log_success "Limpeza concluída"
 
 # ==========================================
-# 9. Atualizar Registro de Versão
+# 10. Atualizar Registro de Versão
 # ==========================================
 cp VERSION VERSION.old 2>/dev/null || true
 
 # ==========================================
-# 10. Resumo
+# 11. Resumo
 # ==========================================
 echo ""
 if [ "$services_ok" = true ]; then
@@ -210,8 +238,8 @@ else
     echo "Alguns serviços podem não ter iniciado corretamente."
     echo ""
     echo "Comandos para diagnóstico:"
-    echo "  docker-compose logs -f"
-    echo "  docker-compose ps"
+    echo "  $DOCKER_COMPOSE logs -f"
+    echo "  $DOCKER_COMPOSE ps"
     echo ""
     echo "Para restaurar backup:"
     echo "  ./scripts/restore.sh backups/backup-XXXXXX.tar.gz"

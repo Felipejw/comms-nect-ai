@@ -30,6 +30,13 @@ if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
+# Detectar comando do Docker Compose
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
 echo -e "${BLUE}"
 echo "============================================"
 echo "  Backup do Sistema de Atendimento"
@@ -47,7 +54,7 @@ log_info "Fazendo backup do banco de dados..."
 
 BACKUP_FILE="$BACKUP_DIR/db_backup_$DATE.sql"
 
-docker-compose exec -T db pg_dump -U postgres -d ${POSTGRES_DB:-postgres} \
+$DOCKER_COMPOSE exec -T db pg_dump -U postgres -d ${POSTGRES_DB:-postgres} \
     --clean \
     --if-exists \
     --no-owner \
@@ -89,17 +96,17 @@ tar -czf "$CONFIG_BACKUP" \
 log_success "Configurações: config_backup_$DATE.tar.gz"
 
 # ==========================================
-# 4. Backup do Evolution (sessões WhatsApp)
+# 4. Backup do WPPConnect (sessões WhatsApp)
 # ==========================================
 log_info "Fazendo backup das sessões do WhatsApp..."
 
-EVOLUTION_BACKUP="$BACKUP_DIR/evolution_backup_$DATE.tar.gz"
+WPPCONNECT_BACKUP="$BACKUP_DIR/wppconnect_backup_$DATE.tar.gz"
 
-if [ -d "volumes/evolution" ]; then
-    tar -czf "$EVOLUTION_BACKUP" -C volumes evolution
-    log_success "Evolution: evolution_backup_$DATE.tar.gz"
+if [ -d "volumes/wppconnect" ]; then
+    tar -czf "$WPPCONNECT_BACKUP" -C volumes wppconnect
+    log_success "WPPConnect: wppconnect_backup_$DATE.tar.gz"
 else
-    log_info "Pasta evolution não encontrada, pulando..."
+    log_info "Pasta wppconnect não encontrada, pulando..."
 fi
 
 # ==========================================

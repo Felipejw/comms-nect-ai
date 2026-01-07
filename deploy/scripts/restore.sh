@@ -30,6 +30,13 @@ if [ -f .env ]; then
     export $(cat .env | grep -v '^#' | xargs)
 fi
 
+# Detectar comando do Docker Compose
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
 echo -e "${BLUE}"
 echo "============================================"
 echo "  Restauração do Sistema de Atendimento"
@@ -87,7 +94,7 @@ fi
 # ==========================================
 log_info "Parando serviços..."
 
-docker-compose stop auth rest storage functions nginx evolution 2>/dev/null || true
+$DOCKER_COMPOSE stop auth rest storage functions nginx wppconnect 2>/dev/null || true
 
 log_success "Serviços parados"
 
@@ -100,7 +107,7 @@ log_info "Restaurando banco de dados..."
 gunzip -c "$DB_BACKUP" > /tmp/db_restore.sql
 
 # Restaurar
-docker-compose exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} < /tmp/db_restore.sql
+$DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} < /tmp/db_restore.sql
 
 rm /tmp/db_restore.sql
 
@@ -123,19 +130,19 @@ else
 fi
 
 # ==========================================
-# 6. Restaurar Evolution (se disponível)
+# 6. Restaurar WPPConnect (se disponível)
 # ==========================================
-EVOLUTION_BACKUP="$BACKUP_DIR/evolution_backup_$BACKUP_DATE.tar.gz"
+WPPCONNECT_BACKUP="$BACKUP_DIR/wppconnect_backup_$BACKUP_DATE.tar.gz"
 
-if [ -f "$EVOLUTION_BACKUP" ]; then
+if [ -f "$WPPCONNECT_BACKUP" ]; then
     log_info "Restaurando sessões do WhatsApp..."
     
-    rm -rf volumes/evolution/*
-    tar -xzf "$EVOLUTION_BACKUP" -C volumes/
+    rm -rf volumes/wppconnect/*
+    tar -xzf "$WPPCONNECT_BACKUP" -C volumes/
     
     log_success "Sessões do WhatsApp restauradas"
 else
-    log_warning "Backup do Evolution não encontrado para esta data"
+    log_warning "Backup do WPPConnect não encontrado para esta data"
 fi
 
 # ==========================================
@@ -143,7 +150,7 @@ fi
 # ==========================================
 log_info "Reiniciando serviços..."
 
-docker-compose up -d
+$DOCKER_COMPOSE up -d
 
 log_success "Serviços reiniciados"
 
@@ -156,11 +163,25 @@ sleep 20
 
 # Verificar saúde
 for service in db auth rest storage nginx; do
-    if docker-compose ps | grep "$service" | grep -q "Up"; then
+    if $DOCKER_COMPOSE ps 2>/dev/null | grep "$service" | grep -q "Up\|running"; then
         log_success "Serviço $service: OK"
     else
         log_error "Serviço $service: FALHOU"
     fi
+done
+
+# Verificar WPPConnect
+log_info "Verificando WPPConnect..."
+MAX_RETRIES=15
+RETRY=0
+while [ $RETRY -lt $MAX_RETRIES ]; do
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/health 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+        log_success "WPPConnect Server: OK"
+        break
+    fi
+    RETRY=$((RETRY + 1))
+    sleep 3
 done
 
 # ==========================================

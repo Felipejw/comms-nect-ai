@@ -2,7 +2,7 @@
 
 # ============================================
 # Script de Instalação - Sistema de Atendimento
-# Self-Hosted com Supabase + Evolution API
+# Self-Hosted com Supabase + WPPConnect Server
 # Distribuição via arquivo (sem Git)
 # ============================================
 
@@ -28,13 +28,13 @@ DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$DEPLOY_DIR"
 
 # Ler versão
-VERSION=$(cat VERSION 2>/dev/null || echo "1.0.0")
+VERSION=$(cat VERSION 2>/dev/null || echo "2.0.0")
 
 # Banner
 echo -e "${BLUE}"
 echo "============================================"
 echo "  Sistema de Atendimento - Instalação"
-echo "  Self-Hosted com Supabase + WhatsApp"
+echo "  Self-Hosted com Supabase + WPPConnect"
 echo "  Versão: $VERSION"
 echo "============================================"
 echo -e "${NC}"
@@ -73,6 +73,13 @@ if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/
     log_success "Docker Compose instalado"
 else
     log_success "Docker Compose encontrado"
+fi
+
+# Detectar comando do Docker Compose
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
 fi
 
 # ==========================================
@@ -146,9 +153,9 @@ ANON_KEY=$(generate_jwt_key "anon")
 SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
 log_success "Chaves JWT geradas"
 
-# Gerar chave da Evolution API
-EVOLUTION_API_KEY=$(openssl rand -hex 24)
-log_success "Chave da Evolution API gerada"
+# Gerar chave do WPPConnect
+WPPCONNECT_SECRET_KEY=$(openssl rand -hex 24)
+log_success "Chave do WPPConnect gerada"
 
 # Atualizar .env
 sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
@@ -159,9 +166,9 @@ sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
 sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
 sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
-sed -i "s|^EVOLUTION_API_KEY=.*|EVOLUTION_API_KEY=$EVOLUTION_API_KEY|" .env
-sed -i "s|^EVOLUTION_SERVER_URL=.*|EVOLUTION_SERVER_URL=https://$DOMAIN:8080|" .env
-sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=https://$DOMAIN/functions/v1/evolution-webhook|" .env
+sed -i "s|^WPPCONNECT_SECRET_KEY=.*|WPPCONNECT_SECRET_KEY=$WPPCONNECT_SECRET_KEY|" .env
+sed -i "s|^WPPCONNECT_SERVER_URL=.*|WPPCONNECT_SERVER_URL=https://$DOMAIN:21465|" .env
+sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=https://$DOMAIN/functions/v1/wppconnect-webhook|" .env
 sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
 sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
 
@@ -176,7 +183,8 @@ mkdir -p volumes/db/data
 mkdir -p volumes/db/init
 mkdir -p volumes/storage
 mkdir -p volumes/kong
-mkdir -p volumes/evolution
+mkdir -p volumes/wppconnect/tokens
+mkdir -p volumes/wppconnect/userDataDir
 mkdir -p nginx/ssl
 mkdir -p backups
 
@@ -429,10 +437,10 @@ fi
 log_info "Iniciando containers Docker..."
 
 # Parar containers existentes
-docker-compose down 2>/dev/null || docker compose down 2>/dev/null || true
+$DOCKER_COMPOSE down 2>/dev/null || true
 
 # Iniciar serviços em background
-docker-compose up -d || docker compose up -d
+$DOCKER_COMPOSE up -d
 
 log_success "Containers iniciados"
 
@@ -446,7 +454,7 @@ sleep 30
 # Verificar se banco está pronto
 max_attempts=30
 attempt=0
-while ! docker-compose exec -T db pg_isready -U postgres &>/dev/null && ! docker compose exec -T db pg_isready -U postgres &>/dev/null; do
+while ! $DOCKER_COMPOSE exec -T db pg_isready -U postgres &>/dev/null; do
     attempt=$((attempt + 1))
     if [ $attempt -ge $max_attempts ]; then
         log_error "Banco de dados não iniciou a tempo"
@@ -458,20 +466,63 @@ done
 log_success "Banco de dados pronto"
 
 # ==========================================
-# 11. Executar Migrations
+# 11. Verificar Saúde do WPPConnect
+# ==========================================
+check_wppconnect_health() {
+    local max_retries=30
+    local retry_count=0
+    local wait_time=5
+    
+    log_info "Verificando WPPConnect Server (pode levar até 2 minutos)..."
+    
+    while [ $retry_count -lt $max_retries ]; do
+        # Verificar se container está rodando
+        if ! $DOCKER_COMPOSE ps wppconnect 2>/dev/null | grep -q "Up\|running"; then
+            log_warning "Container WPPConnect não está rodando. Tentando reiniciar..."
+            $DOCKER_COMPOSE up -d wppconnect
+            sleep 10
+        fi
+        
+        # Tentar health check via curl
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/health 2>/dev/null || echo "000")
+        
+        # 200 = OK, 401 = Não autorizado (mas servidor está funcionando)
+        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+            log_success "WPPConnect Server está funcionando (HTTP $HTTP_CODE)"
+            return 0
+        fi
+        
+        retry_count=$((retry_count + 1))
+        remaining=$((max_retries - retry_count))
+        echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
+        sleep $wait_time
+    done
+    
+    return 1
+}
+
+if check_wppconnect_health; then
+    log_success "WPPConnect Server verificado com sucesso"
+else
+    log_warning "WPPConnect pode ainda estar inicializando"
+    log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect"
+    log_info "Teste: curl http://localhost:21465/api/health"
+fi
+
+# ==========================================
+# 12. Executar Migrations
 # ==========================================
 log_info "Executando migrations do banco de dados..."
 
 if [ -f "volumes/db/init/init.sql" ]; then
-    docker-compose exec -T db psql -U postgres -d postgres -f /docker-entrypoint-initdb.d/init.sql 2>/dev/null || \
-    docker compose exec -T db psql -U postgres -d postgres -f /docker-entrypoint-initdb.d/init.sql 2>/dev/null || {
+    $DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -f /docker-entrypoint-initdb.d/init.sql 2>/dev/null || {
         log_warning "Algumas migrations podem ter falhado (normal se já executadas)"
     }
     log_success "Migrations executadas"
 fi
 
 # ==========================================
-# 12. Criar Usuário Admin
+# 13. Criar Usuário Admin
 # ==========================================
 echo ""
 log_info "Criar usuário administrador inicial"
@@ -492,48 +543,40 @@ USER_ID=$(echo $RESPONSE | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 if [ -n "$USER_ID" ]; then
     # Atualizar role para admin
-    docker-compose exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null || \
-    docker compose exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null
+    $DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null || true
     log_success "Usuário admin criado com sucesso!"
 else
     log_warning "Não foi possível criar usuário automaticamente. Crie manualmente após a instalação."
 fi
 
-# Salvar versão instalada
-cp VERSION VERSION.old 2>/dev/null || true
-
 # ==========================================
-# 13. Resumo Final
+# 14. Resumo Final
 # ==========================================
 echo ""
 echo -e "${GREEN}============================================${NC}"
 echo -e "${GREEN}  Instalação Concluída com Sucesso!${NC}"
 echo -e "${GREEN}============================================${NC}"
 echo ""
-echo -e "${BLUE}Informações de Acesso:${NC}"
+echo "  URL do Sistema: https://$DOMAIN"
 echo ""
-echo "  URL do Sistema:     https://$DOMAIN"
-echo "  URL do Studio:      https://$DOMAIN/studio/"
-echo "  Evolution API:      https://$DOMAIN:8080"
+echo "  Credenciais do Admin:"
+echo "    Email: $ADMIN_EMAIL"
+echo "    Senha: (a que você digitou)"
 echo ""
-echo -e "${BLUE}Credenciais:${NC}"
+echo "  Serviços:"
+echo "    Frontend:    https://$DOMAIN"
+echo "    API:         https://$DOMAIN/rest/v1/"
+echo "    WPPConnect:  http://localhost:21465"
 echo ""
-echo "  Admin Email:        $ADMIN_EMAIL"
-echo "  Banco de Dados:     $POSTGRES_PASSWORD"
-echo "  Evolution API Key:  $EVOLUTION_API_KEY"
+echo -e "${YELLOW}  IMPORTANTE:${NC}"
+echo "    - Guarde a senha do banco de dados em local seguro"
+echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
+echo "    - O WPPConnect resolve automaticamente números LID"
 echo ""
-echo -e "${YELLOW}IMPORTANTE:${NC}"
-echo "  1. Salve as credenciais em local seguro"
-echo "  2. Configure o webhook no Evolution: https://$DOMAIN/functions/v1/evolution-webhook"
-echo "  3. Acesse o sistema e configure as conexões WhatsApp"
+echo "  Comandos úteis:"
+echo "    Ver logs:     $DOCKER_COMPOSE logs -f"
+echo "    Reiniciar:    $DOCKER_COMPOSE restart"
+echo "    Parar:        $DOCKER_COMPOSE down"
+echo "    Backup:       ./scripts/backup.sh"
 echo ""
-echo -e "${BLUE}Comandos úteis:${NC}"
-echo ""
-echo "  Ver logs:           docker-compose logs -f"
-echo "  Reiniciar:          docker-compose restart"
-echo "  Parar:              docker-compose down"
-echo "  Backup:             ./scripts/backup.sh"
-echo "  Atualizar:          ./scripts/update.sh"
-echo ""
-echo -e "${BLUE}Versão instalada: $VERSION${NC}"
-echo ""
+echo -e "${GREEN}============================================${NC}"
