@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck, Plus, MessageSquare } from "lucide-react";
+import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck, Plus, MessageSquare, ArrowLeft, Menu } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -22,6 +22,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface TeamMember {
   id: string;
@@ -38,7 +40,9 @@ export default function ChatInterno() {
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [isNewChatDialogOpen, setIsNewChatDialogOpen] = useState(false);
+  const [isMemberListOpen, setIsMemberListOpen] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
 
   const { data: messages = [], isLoading: messagesLoading } = useChatMessages(
     user?.id || "",
@@ -118,6 +122,7 @@ export default function ChatInterno() {
   const handleSelectMember = (member: TeamMember) => {
     setSelectedMember(member);
     setIsNewChatDialogOpen(false);
+    setIsMemberListOpen(false);
   };
 
   if (usersLoading) {
@@ -128,89 +133,109 @@ export default function ChatInterno() {
     );
   }
 
-  return (
-    <div className="flex h-[calc(100vh-7rem)] bg-card rounded-xl border border-border overflow-hidden">
-      {/* Members List */}
-      <div className="w-80 border-r border-border flex flex-col">
-        <div className="p-4 border-b border-border">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold">Chat da Equipe</h3>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button 
-                    variant="ghost" 
-                    size="icon" 
-                    className="w-8 h-8"
-                    onClick={() => setIsNewChatDialogOpen(true)}
-                  >
-                    <Plus className="w-4 h-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Iniciar nova conversa</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar atendente..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 input-search"
-            />
-          </div>
+  // Member list component for reuse
+  const MemberList = () => (
+    <>
+      <div className="p-4 border-b border-border">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="font-semibold">Chat da Equipe</h3>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="w-8 h-8"
+                  onClick={() => setIsNewChatDialogOpen(true)}
+                >
+                  <Plus className="w-4 h-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Iniciar nova conversa</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
-
-        <div className="flex-1 overflow-y-auto scrollbar-thin">
-          {filteredMembers.length === 0 ? (
-            <div className="p-4 text-center text-muted-foreground text-sm">
-              Nenhum atendente encontrado
-            </div>
-          ) : (
-            filteredMembers.map((member) => (
-              <div
-                key={member.id}
-                onClick={() => setSelectedMember(member)}
-                className={cn(
-                  "flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/50 transition-colors border-b border-border",
-                  selectedMember?.id === member.id && "bg-muted"
-                )}
-              >
-                <div className="relative">
-                  <Avatar className="w-10 h-10">
-                    <AvatarImage src={member.avatar_url || undefined} />
-                    <AvatarFallback className="bg-primary/10 text-primary">
-                      {member.name.split(" ").map((n) => n[0]).join("")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span
-                    className={cn(
-                      "absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card",
-                      member.online ? "bg-green-500" : "bg-muted"
-                    )}
-                  />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between mb-1">
-                    <p className="font-medium text-sm truncate">{member.name}</p>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-muted-foreground truncate">{member.role}</p>
-                    {unreadCounts[member.id] > 0 && (
-                      <span className="w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs rounded-full">
-                        {unreadCounts[member.id]}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))
-          )}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Buscar atendente..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-9 input-search"
+          />
         </div>
       </div>
+
+      <div className="flex-1 overflow-y-auto scrollbar-thin">
+        {filteredMembers.length === 0 ? (
+          <div className="p-4 text-center text-muted-foreground text-sm">
+            Nenhum atendente encontrado
+          </div>
+        ) : (
+          filteredMembers.map((member) => (
+            <div
+              key={member.id}
+              onClick={() => handleSelectMember(member)}
+              className={cn(
+                "flex items-center gap-3 p-4 cursor-pointer hover:bg-muted/50 transition-colors border-b border-border",
+                selectedMember?.id === member.id && "bg-muted"
+              )}
+            >
+              <div className="relative">
+                <Avatar className="w-10 h-10">
+                  <AvatarImage src={member.avatar_url || undefined} />
+                  <AvatarFallback className="bg-primary/10 text-primary">
+                    {member.name.split(" ").map((n) => n[0]).join("")}
+                  </AvatarFallback>
+                </Avatar>
+                <span
+                  className={cn(
+                    "absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-card",
+                    member.online ? "bg-green-500" : "bg-muted"
+                  )}
+                />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-1">
+                  <p className="font-medium text-sm truncate">{member.name}</p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground truncate">{member.role}</p>
+                  {unreadCounts[member.id] > 0 && (
+                    <span className="w-5 h-5 flex items-center justify-center bg-primary text-primary-foreground text-xs rounded-full">
+                      {unreadCounts[member.id]}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex h-[calc(100vh-7rem)] bg-card rounded-xl border border-border overflow-hidden">
+      {/* Members List - Desktop */}
+      {!isMobile && (
+        <div className="w-80 border-r border-border flex flex-col">
+          <MemberList />
+        </div>
+      )}
+
+      {/* Members List - Mobile Sheet */}
+      {isMobile && (
+        <Sheet open={isMemberListOpen} onOpenChange={setIsMemberListOpen}>
+          <SheetContent side="left" className="p-0 w-80">
+            <div className="flex flex-col h-full">
+              <MemberList />
+            </div>
+          </SheetContent>
+        </Sheet>
+      )}
 
       {/* Chat Area */}
       {selectedMember ? (
@@ -218,6 +243,16 @@ export default function ChatInterno() {
           {/* Header */}
           <div className="h-16 border-b border-border flex items-center justify-between px-4">
             <div className="flex items-center gap-3">
+              {isMobile && (
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="w-8 h-8 mr-1"
+                  onClick={() => setIsMemberListOpen(true)}
+                >
+                  <Menu className="w-5 h-5" />
+                </Button>
+              )}
               <div className="relative">
                 <Avatar className="w-10 h-10">
                   <AvatarImage src={selectedMember.avatar_url || undefined} />
@@ -345,20 +380,32 @@ export default function ChatInterno() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4">
+        <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4 p-4">
           <MessageSquare className="w-16 h-16 text-muted-foreground/30" />
           <div className="text-center">
             <p className="font-medium">Selecione um membro da equipe</p>
             <p className="text-sm">ou inicie uma nova conversa</p>
           </div>
-          <Button 
-            variant="outline" 
-            className="gap-2"
-            onClick={() => setIsNewChatDialogOpen(true)}
-          >
-            <Plus className="w-4 h-4" />
-            Nova Conversa
-          </Button>
+          <div className="flex flex-col sm:flex-row gap-2">
+            {isMobile && (
+              <Button 
+                variant="outline" 
+                className="gap-2"
+                onClick={() => setIsMemberListOpen(true)}
+              >
+                <Menu className="w-4 h-4" />
+                Ver Membros
+              </Button>
+            )}
+            <Button 
+              variant="outline" 
+              className="gap-2"
+              onClick={() => setIsNewChatDialogOpen(true)}
+            >
+              <Plus className="w-4 h-4" />
+              Nova Conversa
+            </Button>
+          </div>
         </div>
       )}
 
