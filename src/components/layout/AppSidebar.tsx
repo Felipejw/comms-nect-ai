@@ -12,6 +12,7 @@ import {
   ChevronRight,
   FileText,
   Activity,
+  HeartPulse,
   Send,
   UserCog,
   Bot,
@@ -71,6 +72,7 @@ const navSections: NavSection[] = [
       { title: "Setores", href: "/filas-chatbot", icon: Building2, module: "setores" },
       { title: "Integrações", href: "/integracoes", icon: Plug, module: "integracoes" },
       { title: "Conexões", href: "/conexoes", icon: QrCode, module: "conexoes" },
+      { title: "Diagnóstico", href: "/diagnostico", icon: HeartPulse, module: "conexoes" },
     ],
   },
 ];
