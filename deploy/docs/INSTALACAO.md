@@ -11,64 +11,34 @@ Sistema de atendimento WhatsApp self-hosted com Supabase + Evolution API.
 | Disco | 40GB SSD | 80GB SSD |
 | Sistema | Ubuntu 22.04 / Debian 12 | Ubuntu 22.04 LTS |
 
-## Instalação Rápida
+## Instalação
+
+### Passo 1: Baixar o Pacote
+
+Baixe o arquivo `sistema-atendimento-vX.X.X.zip` fornecido pelo desenvolvedor.
+
+### Passo 2: Extrair e Instalar
 
 ```bash
-# 1. Clone o repositório
-git clone <seu-repositorio> sistema-atendimento
-cd sistema-atendimento/deploy
+# Extrair o pacote
+unzip sistema-atendimento-vX.X.X.zip
+cd sistema-atendimento-vX.X.X
 
-# 2. Execute o instalador
+# Dar permissão aos scripts
 chmod +x scripts/*.sh
+
+# Executar instalação
 ./scripts/install.sh
 ```
 
-## Instalação Manual
+### Passo 3: Seguir o Assistente
 
-### 1. Instalar Dependências
-
-```bash
-# Docker
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-
-# Node.js 20
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-```
-
-### 2. Configurar Ambiente
-
-```bash
-cd deploy
-cp .env.example .env
-nano .env  # Edite as configurações
-```
-
-### 3. Gerar Chaves JWT
-
-```bash
-# Gerar JWT_SECRET
-openssl rand -hex 32
-
-# As chaves ANON_KEY e SERVICE_ROLE_KEY serão geradas pelo install.sh
-```
-
-### 4. Build do Frontend
-
-```bash
-cd ..  # Voltar para raiz do projeto
-npm install
-npm run build
-cp -r dist/* deploy/frontend/dist/
-```
-
-### 5. Iniciar Sistema
-
-```bash
-cd deploy
-docker-compose up -d
-```
+O script de instalação irá:
+1. Verificar e instalar Docker se necessário
+2. Solicitar seu domínio/IP
+3. Gerar certificados SSL
+4. Configurar o banco de dados
+5. Criar usuário administrador
 
 ## Pós-Instalação
 
@@ -77,49 +47,114 @@ docker-compose up -d
 3. Vá em **Conexões** e adicione uma instância WhatsApp
 4. Escaneie o QR Code com seu celular
 
+---
+
+## Atualizações
+
+### Como Atualizar
+
+1. **Faça backup antes de atualizar:**
+   ```bash
+   ./scripts/backup.sh
+   ```
+
+2. **Baixe o pacote de atualização** fornecido pelo desenvolvedor
+   (arquivo `sistema-atendimento-vX.X-update.zip`)
+
+3. **Extraia sobre a instalação existente:**
+   ```bash
+   cd /caminho/da/sua/instalacao
+   unzip -o /caminho/do/sistema-atendimento-vX.X-update.zip
+   ```
+
+4. **Execute o script de atualização:**
+   ```bash
+   ./scripts/update.sh
+   ```
+
+5. **Verifique se está funcionando:**
+   ```bash
+   docker-compose ps
+   docker-compose logs -f
+   ```
+
+### Em Caso de Problemas
+
+Se algo der errado após a atualização, restaure o backup:
+
+```bash
+./scripts/restore.sh backups/backup-XXXXXX.tar.gz
+```
+
+---
+
 ## Comandos Úteis
 
 ```bash
-# Ver logs
+# Ver logs em tempo real
 docker-compose logs -f
 
-# Reiniciar serviços
+# Ver logs de um serviço específico
+docker-compose logs -f nginx
+docker-compose logs -f db
+docker-compose logs -f evolution
+
+# Reiniciar todos os serviços
 docker-compose restart
 
-# Parar tudo
+# Reiniciar um serviço específico
+docker-compose restart nginx
+
+# Parar todos os serviços
 docker-compose down
 
-# Backup
+# Iniciar serviços
+docker-compose up -d
+
+# Ver status dos containers
+docker-compose ps
+
+# Backup manual
 ./scripts/backup.sh
 
-# Atualizar
-./scripts/update.sh
-
-# Restaurar
-./scripts/restore.sh
+# Restaurar backup
+./scripts/restore.sh backups/nome-do-backup.tar.gz
 ```
+
+---
 
 ## Estrutura de Arquivos
 
 ```
-deploy/
+sistema-atendimento/
 ├── docker-compose.yml     # Orquestração principal
+├── .env                   # Configurações (gerado na instalação)
 ├── .env.example           # Template de configuração
+├── VERSION                # Versão instalada
+├── CHANGELOG.md           # Histórico de alterações
 ├── nginx/
-│   └── nginx.conf         # Proxy reverso
+│   ├── nginx.conf         # Configuração do proxy reverso
+│   └── ssl/               # Certificados SSL
 ├── scripts/
 │   ├── install.sh         # Instalação automática
 │   ├── backup.sh          # Backup
 │   ├── update.sh          # Atualização
 │   └── restore.sh         # Restauração
+├── frontend/
+│   └── dist/              # Frontend compilado
+├── supabase/
+│   └── init.sql           # Migrations do banco
 ├── volumes/
 │   ├── db/                # Dados PostgreSQL
 │   ├── storage/           # Arquivos enviados
 │   ├── kong/              # Config API Gateway
 │   └── evolution/         # Sessões WhatsApp
+├── backups/               # Backups automáticos
 └── docs/
     └── INSTALACAO.md      # Esta documentação
 ```
+
+---
 
 ## Troubleshooting
 
@@ -134,14 +169,33 @@ docker-compose restart db
 2. Verifique os logs: `docker-compose logs evolution`
 3. Confirme webhook configurado no .env
 
+### Frontend não carrega
+1. Verifique nginx: `docker-compose logs nginx`
+2. Verifique se frontend/dist existe e tem arquivos
+3. Reinicie nginx: `docker-compose restart nginx`
+
 ### Certificado SSL
 ```bash
-# Renovar Let's Encrypt
+# Para domínios públicos, renovar Let's Encrypt
 sudo certbot renew
-cp /etc/letsencrypt/live/$DOMAIN/* deploy/nginx/ssl/
+cp /etc/letsencrypt/live/$DOMAIN/* nginx/ssl/
 docker-compose restart nginx
 ```
+
+### Verificar versão instalada
+```bash
+cat VERSION
+```
+
+### Ver changelog
+```bash
+cat CHANGELOG.md
+```
+
+---
 
 ## Suporte
 
 Para dúvidas e suporte, entre em contato com o desenvolvedor.
+
+**Versão da documentação:** 1.0.0
