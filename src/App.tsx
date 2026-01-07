@@ -27,6 +27,7 @@ import Conexoes from "./pages/Conexoes";
 import Relatorios from "./pages/Relatorios";
 import Painel from "./pages/Painel";
 import Configuracoes from "./pages/Configuracoes";
+import Diagnostico from "./pages/Diagnostico";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -62,6 +63,7 @@ const App = () => (
                 <Route path="/filas-chatbot" element={<ProtectedRoute module="setores"><FilasChatbot /></ProtectedRoute>} />
                 <Route path="/integracoes" element={<ProtectedRoute module="integracoes"><Integracoes /></ProtectedRoute>} />
                 <Route path="/conexoes" element={<ProtectedRoute module="conexoes"><Conexoes /></ProtectedRoute>} />
+                <Route path="/diagnostico" element={<ProtectedRoute module="conexoes"><Diagnostico /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
               </Route>
               
