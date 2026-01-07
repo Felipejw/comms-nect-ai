@@ -426,10 +426,7 @@ export function CampaignDialog({ open, onOpenChange }: CampaignDialogProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center justify-between">
-            <span>Novo Disparo em Massa</span>
-            {getRiskBadge()}
-          </DialogTitle>
+          <DialogTitle>Novo Disparo em Massa</DialogTitle>
         </DialogHeader>
         
         <Tabs defaultValue="message" className="w-full">
