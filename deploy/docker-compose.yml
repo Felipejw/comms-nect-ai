@@ -347,7 +347,7 @@ services:
   # EVOLUTION API - WhatsApp (opcional)
   # ==========================================
   evolution:
-    image: atendai/evolution-api:v2.3.1
+    image: atendai/evolution-api:v2.3.7
     container_name: evolution-api
     restart: unless-stopped
     ports:

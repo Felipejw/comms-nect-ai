@@ -804,7 +804,43 @@ serve(async (req) => {
           apiUrl: EVOLUTION_API_URL,
           hasApiKey: !!EVOLUTION_API_KEY,
           timestamp: new Date().toISOString(),
+          recommendedVersion: "v2.3.7",
         };
+
+        // Try to get API version
+        try {
+          const versionResponse = await fetch(`${EVOLUTION_API_URL}/`, {
+            method: "GET",
+            headers: evolutionHeaders,
+          });
+          
+          if (versionResponse.ok) {
+            const versionData = await versionResponse.json();
+            health.version = versionData.version || versionData.v || "unknown";
+            health.apiName = versionData.name || versionData.title || "Evolution API";
+            
+            // Check if version is outdated
+            const currentVersion = String(health.version).replace(/^v/, '');
+            const recommendedVersion = "2.3.7";
+            const currentParts = currentVersion.split('.').map(Number);
+            const recommendedParts = recommendedVersion.split('.').map(Number);
+            
+            let isOutdated = false;
+            for (let i = 0; i < 3; i++) {
+              if ((currentParts[i] || 0) < (recommendedParts[i] || 0)) {
+                isOutdated = true;
+                break;
+              } else if ((currentParts[i] || 0) > (recommendedParts[i] || 0)) {
+                break;
+              }
+            }
+            health.isOutdated = isOutdated;
+            health.versionStatus = isOutdated ? "outdated" : "up_to_date";
+          }
+        } catch (e) {
+          console.log("[Evolution Instance] Could not fetch version:", e);
+          health.version = "unknown";
+        }
 
         try {
           const response = await fetch(`${EVOLUTION_API_URL}/instance/fetchInstances`, {
