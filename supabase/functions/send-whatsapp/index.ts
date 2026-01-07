@@ -250,16 +250,22 @@ Deno.serve(async (req) => {
         console.log("No connected WhatsApp instance found for LID lookup");
       }
       
-      // If we still don't have a real phone, we can't send
-      if (!phoneToSend) {
-        console.log(`Could not find real phone for LID ${whatsappLid}`);
+      // Fallback: If we still don't have a real phone, try to send directly to LID
+      if (!phoneToSend && whatsappLid) {
+        console.log(`[Fallback] No real phone found, attempting to send directly to LID: ${whatsappLid}`);
+        phoneToSend = whatsappLid;
+        sendAsLid = true;
         
-        // Provide helpful error with contact name
+        // Note: We'll try to send, but if it fails, we'll return a helpful error
+      }
+      
+      // If we still don't have anything to send to
+      if (!phoneToSend) {
         const contactName = contact?.name || "este contato";
         return new Response(
           JSON.stringify({ 
             success: false, 
-            error: `Não foi possível enviar mensagem para ${contactName}. Este contato foi identificado apenas pelo ID interno do WhatsApp (LID: ${whatsappLid.slice(-6)}) e não possui número de telefone real cadastrado. O contato precisa enviar uma nova mensagem para que o sistema capture o número correto.`,
+            error: `Não foi possível enviar mensagem para ${contactName}. Este contato foi identificado apenas pelo ID interno do WhatsApp (LID: ${whatsappLid?.slice(-6)}) e não possui número de telefone real cadastrado. O contato precisa enviar uma nova mensagem para que o sistema capture o número correto.`,
             needsReconnection: false,
             isLidContact: true
           }),

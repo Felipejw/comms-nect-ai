@@ -78,6 +78,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { useUsers } from "@/hooks/useUsers";
+import { supabase } from "@/integrations/supabase/client";
 
 // Template variable replacement helper
 const replaceTemplateVariables = (
@@ -766,6 +767,64 @@ export default function Atendimento() {
         ? `A conversa foi movida para "${selectedQueue.name}"` 
         : "A conversa foi removida do setor",
     });
+  };
+
+  // Function to resolve LID contact number
+  const [isResolvingLid, setIsResolvingLid] = useState(false);
+  
+  const handleResolveLidContact = async (contactId?: string) => {
+    if (!contactId || isResolvingLid) return;
+    
+    setIsResolvingLid(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast({
+          title: "Erro",
+          description: "Sessão expirada. Faça login novamente.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      const response = await supabase.functions.invoke('resolve-lid-contact', {
+        body: { contactId },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message || 'Erro ao resolver contato');
+      }
+
+      const result = response.data;
+      
+      if (result.success && result.realPhone) {
+        toast({
+          title: "Número encontrado!",
+          description: `O número ${result.realPhone} foi associado ao contato.`,
+        });
+        // Refresh queries
+        queryClient.invalidateQueries({ queryKey: ['contacts'] });
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        if (selectedConversation) {
+          queryClient.invalidateQueries({ queryKey: ['conversation', selectedConversation.id] });
+        }
+      } else {
+        toast({
+          title: "Número não encontrado",
+          description: result.message || "Não foi possível localizar o número real. O contato precisa enviar uma nova mensagem.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Error resolving LID:', error);
+      toast({
+        title: "Erro",
+        description: error instanceof Error ? error.message : "Erro ao tentar localizar o número.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsResolvingLid(false);
+    }
   };
 
   const handleDeleteConversation = async () => {
@@ -1624,6 +1683,26 @@ export default function Atendimento() {
                         </Badge>
                         <ChatConnectionIndicator connectionId={selectedConversation.connection_id} />
                       </div>
+                    )}
+                    {/* LID Contact Warning Button */}
+                    {isLidOnlyContact(selectedConversation.contact) && (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 px-1.5 text-yellow-500 hover:text-yellow-600 hover:bg-yellow-100/50"
+                              onClick={() => handleResolveLidContact(selectedConversation.contact?.id)}
+                            >
+                              <AlertTriangle className="w-3.5 h-3.5" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom">
+                            <p className="text-xs">Contato sem número identificado. Clique para tentar localizar.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                   </div>
                 </div>
