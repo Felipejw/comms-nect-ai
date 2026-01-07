@@ -344,14 +344,16 @@ services:
       - supabase-network
 
   # ==========================================
-  # WPPCONNECT SERVER - WhatsApp
+  # WPPCONNECT SERVERS - WhatsApp (Multi-Instance)
   # ==========================================
-  wppconnect:
+  
+  # Instance 1 (Primary)
+  wppconnect-1:
     image: wppconnect/server-cli:latest
-    container_name: wppconnect-server
+    container_name: wppconnect-server-1
     restart: unless-stopped
     ports:
-      - "${WPPCONNECT_PORT:-21465}:21465"
+      - "${WPPCONNECT_PORT_1:-21465}:21465"
     environment:
       SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
       HOST: "0.0.0.0"
@@ -364,10 +366,113 @@ services:
       WEBHOOK_LISTEN_ACKS: "true"
       WEBHOOK_ON_PRESENCE_CHANGED: "true"
     volumes:
-      - ./volumes/wppconnect/tokens:/home/node/tokens
-      - ./volumes/wppconnect/userDataDir:/home/node/userDataDir
+      - ./volumes/wppconnect-1/tokens:/home/node/tokens
+      - ./volumes/wppconnect-1/userDataDir:/home/node/userDataDir
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:21465/api/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     networks:
       - supabase-network
+    labels:
+      - "wppconnect.instance=1"
+      - "wppconnect.priority=primary"
+
+  # Instance 2 (Secondary - Optional, enable by setting WPPCONNECT_MULTI_INSTANCE=true)
+  wppconnect-2:
+    image: wppconnect/server-cli:latest
+    container_name: wppconnect-server-2
+    restart: unless-stopped
+    profiles:
+      - multi-instance
+    ports:
+      - "${WPPCONNECT_PORT_2:-21466}:21465"
+    environment:
+      SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
+      HOST: "0.0.0.0"
+      PORT: "21465"
+      START_ALL_SESSION: "true"
+      TOKEN_STORE_TYPE: "file"
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_AUTO_DOWNLOAD: "true"
+      WEBHOOK_READ_MESSAGE: "true"
+      WEBHOOK_LISTEN_ACKS: "true"
+      WEBHOOK_ON_PRESENCE_CHANGED: "true"
+    volumes:
+      - ./volumes/wppconnect-2/tokens:/home/node/tokens
+      - ./volumes/wppconnect-2/userDataDir:/home/node/userDataDir
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:21465/api/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - supabase-network
+    labels:
+      - "wppconnect.instance=2"
+      - "wppconnect.priority=secondary"
+
+  # Instance 3 (Tertiary - Optional)
+  wppconnect-3:
+    image: wppconnect/server-cli:latest
+    container_name: wppconnect-server-3
+    restart: unless-stopped
+    profiles:
+      - multi-instance
+      - high-availability
+    ports:
+      - "${WPPCONNECT_PORT_3:-21467}:21465"
+    environment:
+      SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
+      HOST: "0.0.0.0"
+      PORT: "21465"
+      START_ALL_SESSION: "true"
+      TOKEN_STORE_TYPE: "file"
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_AUTO_DOWNLOAD: "true"
+      WEBHOOK_READ_MESSAGE: "true"
+      WEBHOOK_LISTEN_ACKS: "true"
+      WEBHOOK_ON_PRESENCE_CHANGED: "true"
+    volumes:
+      - ./volumes/wppconnect-3/tokens:/home/node/tokens
+      - ./volumes/wppconnect-3/userDataDir:/home/node/userDataDir
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:21465/api/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - supabase-network
+    labels:
+      - "wppconnect.instance=3"
+      - "wppconnect.priority=tertiary"
+
+  # ==========================================
+  # NGINX LOAD BALANCER - WPPConnect (Optional)
+  # ==========================================
+  wppconnect-lb:
+    image: nginx:alpine
+    container_name: wppconnect-loadbalancer
+    restart: unless-stopped
+    profiles:
+      - multi-instance
+    ports:
+      - "${WPPCONNECT_LB_PORT:-21400}:80"
+    volumes:
+      - ./nginx/wppconnect-lb.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - wppconnect-1
+    networks:
+      - supabase-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
 networks:
   supabase-network:
