@@ -8,6 +8,7 @@ export interface Campaign {
   description: string | null;
   message: string;
   media_url: string | null;
+  media_type: string | null;
   status: 'draft' | 'active' | 'paused' | 'completed';
   scheduled_at: string | null;
   sent_count: number;
@@ -17,6 +18,14 @@ export interface Campaign {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  // New fields
+  message_variations: string[] | null;
+  use_variations: boolean | null;
+  use_buttons: boolean | null;
+  buttons: Array<{ id: string; text: string }> | null;
+  min_interval: number | null;
+  max_interval: number | null;
+  template_id: string | null;
 }
 
 export interface CampaignContact {
@@ -27,11 +36,25 @@ export interface CampaignContact {
   sent_at: string | null;
   delivered_at: string | null;
   read_at: string | null;
+  retry_count: number | null;
+  last_error: string | null;
+  next_retry_at: string | null;
   contact?: {
     id: string;
     name: string;
     phone: string | null;
   };
+}
+
+export interface MessageTemplate {
+  id: string;
+  name: string;
+  message: string;
+  media_url: string | null;
+  media_type: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export function useCampaigns() {
@@ -85,6 +108,52 @@ export function useCampaignContacts(campaignId: string) {
   });
 }
 
+// Message Templates
+export function useMessageTemplates() {
+  return useQuery({
+    queryKey: ['message-templates'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('message_templates')
+        .select('*')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+      return (data || []) as MessageTemplate[];
+    },
+  });
+}
+
+export function useCreateMessageTemplate() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: {
+      name: string;
+      message: string;
+      media_url?: string;
+      media_type?: string;
+      created_by?: string;
+    }) => {
+      const { data, error } = await supabase
+        .from('message_templates')
+        .insert(input)
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['message-templates'] });
+      toast.success('Template salvo com sucesso!');
+    },
+    onError: (error: Error) => {
+      toast.error('Erro ao salvar template: ' + error.message);
+    },
+  });
+}
+
 export function useCreateCampaign() {
   const queryClient = useQueryClient();
 
@@ -94,8 +163,16 @@ export function useCreateCampaign() {
       description?: string;
       message: string;
       media_url?: string;
+      media_type?: string;
       scheduled_at?: string;
       created_by?: string;
+      message_variations?: string[];
+      use_variations?: boolean;
+      use_buttons?: boolean;
+      buttons?: Array<{ id: string; text: string }>;
+      min_interval?: number;
+      max_interval?: number;
+      template_id?: string;
     }) => {
       const { data, error } = await supabase
         .from('campaigns')
@@ -128,8 +205,16 @@ export function useUpdateCampaign() {
       name?: string;
       description?: string;
       message?: string;
+      media_url?: string;
+      media_type?: string;
       status?: Campaign['status'];
       scheduled_at?: string;
+      message_variations?: string[];
+      use_variations?: boolean;
+      use_buttons?: boolean;
+      buttons?: Array<{ id: string; text: string }>;
+      min_interval?: number;
+      max_interval?: number;
     }) => {
       const { data, error } = await supabase
         .from('campaigns')

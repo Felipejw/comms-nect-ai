@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, Image, X, Tag, LayoutGrid, List, FileText, Upload, ClipboardPaste } from "lucide-react";
+import { useState } from "react";
+import { Plus, Search, Filter, MoreHorizontal, Play, Pause, BarChart3, Users, Send, Calendar, Trash2, Loader2, List } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -23,7 +23,6 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -41,18 +40,14 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/components/ui/tabs";
-import {
-  RadioGroup,
-  RadioGroupItem,
-} from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { useCampaigns, useCreateCampaign, useUpdateCampaign, useDeleteCampaign, useAddContactsToCampaign, Campaign } from "@/hooks/useCampaigns";
-import { useContacts, useCreateContact } from "@/hooks/useContacts";
+import { useCampaigns, useUpdateCampaign, useDeleteCampaign, useAddContactsToCampaign, Campaign } from "@/hooks/useCampaigns";
+import { useContacts } from "@/hooks/useContacts";
 import { useTags } from "@/hooks/useTags";
 import { format } from "date-fns";
 import { CampaignMetricsDashboard } from "@/components/campanhas/CampaignMetricsDashboard";
+import { CampaignDialog } from "@/components/campanhas/CampaignDialog";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";

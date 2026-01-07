@@ -132,7 +132,10 @@ export type Database = {
           created_at: string
           delivered_at: string | null
           id: string
+          last_error: string | null
+          next_retry_at: string | null
           read_at: string | null
+          retry_count: number | null
           sent_at: string | null
           status: string | null
         }
@@ -142,7 +145,10 @@ export type Database = {
           created_at?: string
           delivered_at?: string | null
           id?: string
+          last_error?: string | null
+          next_retry_at?: string | null
           read_at?: string | null
+          retry_count?: number | null
           sent_at?: string | null
           status?: string | null
         }
@@ -152,7 +158,10 @@ export type Database = {
           created_at?: string
           delivered_at?: string | null
           id?: string
+          last_error?: string | null
+          next_retry_at?: string | null
           read_at?: string | null
+          retry_count?: number | null
           sent_at?: string | null
           status?: string | null
         }
@@ -175,54 +184,86 @@ export type Database = {
       }
       campaigns: {
         Row: {
+          buttons: Json | null
           created_at: string
           created_by: string | null
           delivered_count: number | null
           description: string | null
           failed_count: number | null
           id: string
+          max_interval: number | null
+          media_type: string | null
           media_url: string | null
           message: string
+          message_variations: string[] | null
+          min_interval: number | null
           name: string
           read_count: number | null
           scheduled_at: string | null
           sent_count: number | null
           status: Database["public"]["Enums"]["campaign_status"]
+          template_id: string | null
           updated_at: string
+          use_buttons: boolean | null
+          use_variations: boolean | null
         }
         Insert: {
+          buttons?: Json | null
           created_at?: string
           created_by?: string | null
           delivered_count?: number | null
           description?: string | null
           failed_count?: number | null
           id?: string
+          max_interval?: number | null
+          media_type?: string | null
           media_url?: string | null
           message: string
+          message_variations?: string[] | null
+          min_interval?: number | null
           name: string
           read_count?: number | null
           scheduled_at?: string | null
           sent_count?: number | null
           status?: Database["public"]["Enums"]["campaign_status"]
+          template_id?: string | null
           updated_at?: string
+          use_buttons?: boolean | null
+          use_variations?: boolean | null
         }
         Update: {
+          buttons?: Json | null
           created_at?: string
           created_by?: string | null
           delivered_count?: number | null
           description?: string | null
           failed_count?: number | null
           id?: string
+          max_interval?: number | null
+          media_type?: string | null
           media_url?: string | null
           message?: string
+          message_variations?: string[] | null
+          min_interval?: number | null
           name?: string
           read_count?: number | null
           scheduled_at?: string | null
           sent_count?: number | null
           status?: Database["public"]["Enums"]["campaign_status"]
+          template_id?: string | null
           updated_at?: string
+          use_buttons?: boolean | null
+          use_variations?: boolean | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "message_templates"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       chat_messages: {
         Row: {
@@ -805,6 +846,47 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      message_templates: {
+        Row: {
+          created_at: string | null
+          created_by: string | null
+          id: string
+          media_type: string | null
+          media_url: string | null
+          message: string
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          media_type?: string | null
+          media_url?: string | null
+          message: string
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          created_by?: string | null
+          id?: string
+          media_type?: string | null
+          media_url?: string | null
+          message?: string
+          name?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_templates_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["user_id"]
+          },
+        ]
       }
       messages: {
         Row: {
