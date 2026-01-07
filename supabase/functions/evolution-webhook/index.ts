@@ -294,19 +294,10 @@ serve(async (req) => {
                 if (lidContact) {
                   console.log(`[Webhook] Found LID contact:`, JSON.stringify(lidContact));
                   
-                  // 2. Try to find linked contact with same pushName and real number
-                  const contactPushName = lidContact.pushName || pushName;
-                  if (contactPushName) {
-                    const linkedContact = contactsArray.find((c: any) => 
-                      c.pushName === contactPushName && 
-                      c.remoteJid?.includes('@s.whatsapp.net')
-                    );
-                    
-                    if (linkedContact) {
-                      realPhoneNumber = linkedContact.remoteJid.replace('@s.whatsapp.net', '');
-                      console.log(`[Webhook] Found real phone via pushName match: ${realPhoneNumber}`);
-                    }
-                  }
+                  // NOTE: We intentionally DO NOT match by pushName anymore.
+                  // Multiple contacts can have the same pushName (e.g., "Felipe", "Maria"),
+                  // which caused wrong phone numbers to be associated with contacts.
+                  // We only use remoteJidAlt or direct ID matching for LID->phone resolution.
                 }
                 
                 // 3. If still no match, try direct ID lookup
@@ -403,12 +394,36 @@ serve(async (req) => {
         }
 
         // Get contact name with fallback
-        // IMPORTANT: pushName from fromMe messages contains OUR name, not the contact's
-        // Only use pushName for received messages (fromMe: false)
-        let contactName = phoneNumber || "Contato Desconhecido";
+        // IMPORTANT: pushName from fromMe messages contains OUR name (the connected account), 
+        // not the contact's name. Only use pushName for INCOMING messages (fromMe: false).
+        // For new contacts, prefer formatted phone number over "Contato Desconhecido"
+        let contactName: string;
+        
         if (!fromMe && data?.pushName) {
-          // Only trust pushName for incoming messages
+          // Only trust pushName for incoming messages - this is the contact's actual name
           contactName = data.pushName;
+        } else if (realPhoneNumber && realPhoneNumber.length <= 15) {
+          // Use formatted phone number as name
+          const phone = realPhoneNumber;
+          // Format: 55 47 9642-0547
+          if (phone.length >= 10) {
+            const countryCode = phone.slice(0, 2);
+            const areaCode = phone.slice(2, 4);
+            const rest = phone.slice(4);
+            const lastPart = rest.slice(-4);
+            const firstPart = rest.slice(0, -4);
+            contactName = `${countryCode} ${areaCode} ${firstPart}-${lastPart}`;
+          } else {
+            contactName = phone;
+          }
+        } else if (phoneNumber && phoneNumber.length <= 15) {
+          // Fallback to phoneNumber if no realPhoneNumber
+          contactName = phoneNumber;
+        } else if (whatsappLid) {
+          // Last resort: use last 8 digits of LID
+          contactName = `LID ${whatsappLid.slice(-8)}`;
+        } else {
+          contactName = "Contato Desconhecido";
         }
         
         // Tentar extrair foto do perfil do WhatsApp (pode estar em diferentes locais)
