@@ -1,6 +1,6 @@
 # Guia de Instalação - Sistema de Atendimento
 
-Sistema de atendimento WhatsApp self-hosted com Supabase + Evolution API.
+Sistema de atendimento WhatsApp self-hosted com Supabase + WPPConnect Server.
 
 ## Requisitos Mínimos
 
@@ -38,7 +38,9 @@ O script de instalação irá:
 2. Solicitar seu domínio/IP
 3. Gerar certificados SSL
 4. Configurar o banco de dados
-5. Criar usuário administrador
+5. Iniciar o WPPConnect Server
+6. Verificar saúde de todos os serviços
+7. Criar usuário administrador
 
 ## Pós-Instalação
 
@@ -97,13 +99,14 @@ docker-compose logs -f
 # Ver logs de um serviço específico
 docker-compose logs -f nginx
 docker-compose logs -f db
-docker-compose logs -f evolution
+docker-compose logs -f wppconnect
 
 # Reiniciar todos os serviços
 docker-compose restart
 
 # Reiniciar um serviço específico
 docker-compose restart nginx
+docker-compose restart wppconnect
 
 # Parar todos os serviços
 docker-compose down
@@ -119,6 +122,9 @@ docker-compose ps
 
 # Restaurar backup
 ./scripts/restore.sh backups/nome-do-backup.tar.gz
+
+# Verificar saúde do WPPConnect
+curl http://localhost:21465/api/health
 ```
 
 ---
@@ -148,7 +154,9 @@ sistema-atendimento/
 │   ├── db/                # Dados PostgreSQL
 │   ├── storage/           # Arquivos enviados
 │   ├── kong/              # Config API Gateway
-│   └── evolution/         # Sessões WhatsApp
+│   └── wppconnect/        # Sessões WhatsApp
+│       ├── tokens/        # Tokens de sessão
+│       └── userDataDir/   # Dados do navegador
 ├── backups/               # Backups automáticos
 └── docs/
     └── INSTALACAO.md      # Esta documentação
@@ -165,9 +173,45 @@ docker-compose restart db
 ```
 
 ### WhatsApp não conecta
-1. Verifique se Evolution está rodando: `docker-compose ps evolution`
-2. Verifique os logs: `docker-compose logs evolution`
-3. Confirme webhook configurado no .env
+
+1. Verifique se WPPConnect está rodando:
+   ```bash
+   docker-compose ps wppconnect
+   ```
+
+2. Verifique os logs:
+   ```bash
+   docker-compose logs wppconnect
+   ```
+
+3. Verifique a saúde do serviço:
+   ```bash
+   curl http://localhost:21465/api/health
+   ```
+
+4. Confirme webhook configurado no .env:
+   ```bash
+   grep WEBHOOK_URL .env
+   ```
+
+5. Reinicie o serviço se necessário:
+   ```bash
+   docker-compose restart wppconnect
+   ```
+
+### QR Code não aparece
+
+1. Verifique se a sessão foi iniciada corretamente:
+   ```bash
+   docker-compose logs wppconnect | grep -i session
+   ```
+
+2. Limpe sessões antigas se necessário:
+   ```bash
+   rm -rf volumes/wppconnect/tokens/*
+   rm -rf volumes/wppconnect/userDataDir/*
+   docker-compose restart wppconnect
+   ```
 
 ### Frontend não carrega
 1. Verifique nginx: `docker-compose logs nginx`
@@ -194,8 +238,40 @@ cat CHANGELOG.md
 
 ---
 
+## Configuração do WPPConnect
+
+### Variáveis de Ambiente
+
+| Variável | Descrição | Padrão |
+|----------|-----------|--------|
+| `WPPCONNECT_SECRET_KEY` | Chave secreta para autenticação | Obrigatório |
+| `WPPCONNECT_PORT` | Porta do servidor | 21465 |
+| `WEBHOOK_URL` | URL para receber eventos | Obrigatório |
+
+### Endpoints Principais
+
+| Endpoint | Descrição |
+|----------|-----------|
+| `POST /api/{session}/generate-token` | Gerar token de acesso |
+| `POST /api/{session}/start-session` | Iniciar sessão e obter QR |
+| `GET /api/{session}/check-connection-session` | Verificar status |
+| `POST /api/{session}/send-message` | Enviar mensagem |
+| `POST /api/{session}/close-session` | Encerrar sessão |
+
+### Resolução de LID (Número oculto)
+
+O WPPConnect possui endpoint dedicado para resolver números LID:
+```bash
+GET /api/{session}/contact/pn-lid/{pnLid}
+```
+
+Isso retorna o número real do contato, resolvendo o problema de privacidade do WhatsApp.
+
+---
+
 ## Suporte
 
 Para dúvidas e suporte, entre em contato com o desenvolvedor.
 
-**Versão da documentação:** 1.0.0
+**Versão da documentação:** 2.0.0  
+**API WhatsApp:** WPPConnect Server
