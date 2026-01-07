@@ -18,8 +18,8 @@ interface WPPConnectInstance {
 function getConfiguredInstances(): WPPConnectInstance[] {
   const instances: WPPConnectInstance[] = [];
   
-  // Primary instance (always configured)
-  const primaryUrl = Deno.env.get("WPPCONNECT_API_URL") || Deno.env.get("EVOLUTION_API_URL");
+// Primary instance (only WPPConnect)
+  const primaryUrl = Deno.env.get("WPPCONNECT_API_URL");
   if (primaryUrl) {
     instances.push({ url: primaryUrl, priority: 1, healthy: true, lastCheck: 0 });
   }
@@ -44,7 +44,7 @@ function getConfiguredInstances(): WPPConnectInstance[] {
   return instances;
 }
 
-const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY") || Deno.env.get("EVOLUTION_API_KEY");
+const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY");
 
 // Health check cache (in-memory, resets on cold start)
 const healthCache: Map<string, { healthy: boolean; lastCheck: number }> = new Map();
@@ -298,10 +298,13 @@ serve(async (req) => {
 
     console.log(`[WPPConnect] Action: ${action}, instanceName: ${instanceName}, connectionId: ${connectionId}`);
 
+    // For health check, allow even without credentials to show "not configured" status
     const instances = getConfiguredInstances();
-    if (instances.length === 0 || !WPPCONNECT_SECRET_KEY) {
+    const isHealthCheck = action === "health";
+    
+    if (!isHealthCheck && (instances.length === 0 || !WPPCONNECT_SECRET_KEY)) {
       console.error("[WPPConnect] Missing credentials");
-      throw new Error("WPPConnect API credentials not configured. Please set WPPCONNECT_API_URL and WPPCONNECT_SECRET_KEY secrets.");
+      throw new Error("WPPConnect não configurado. Configure as variáveis WPPCONNECT_API_URL e WPPCONNECT_SECRET_KEY.");
     }
 
     switch (action) {
@@ -717,6 +720,33 @@ serve(async (req) => {
         console.log("[WPPConnect] Running health check on all instances");
         
         const allInstances = getConfiguredInstances();
+        
+        // If no instances configured, return clear "not configured" status
+        if (allInstances.length === 0) {
+          const { data: dbConnections } = await supabaseClient
+            .from("connections")
+            .select("id")
+            .eq("type", "whatsapp");
+
+          return new Response(
+            JSON.stringify({
+              success: true,
+              configured: false,
+              message: "Nenhuma instância WPPConnect configurada. Configure a variável WPPCONNECT_API_URL.",
+              summary: {
+                totalInstances: 0,
+                healthyInstances: 0,
+                unhealthyInstances: 0,
+                overallStatus: "not_configured",
+                totalConnections: dbConnections?.length || 0,
+              },
+              instances: [],
+              connectionsByInstance: {},
+              timestamp: new Date().toISOString(),
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
         const healthResults = await Promise.all(
           allInstances.map(async (inst) => {
             const startTime = Date.now();

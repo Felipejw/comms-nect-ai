@@ -35,11 +35,13 @@ interface InstanceHealth {
 
 interface HealthCheckResponse {
   success: boolean;
+  configured?: boolean;
+  message?: string;
   summary: {
     totalInstances: number;
     healthyInstances: number;
     unhealthyInstances: number;
-    overallStatus: "healthy" | "degraded" | "down";
+    overallStatus: "healthy" | "degraded" | "down" | "not_configured";
     totalConnections: number;
   };
   instances: InstanceHealth[];
@@ -173,6 +175,8 @@ export default function Diagnostico() {
         return <AlertTriangle className="w-8 h-8 text-yellow-500" />;
       case "down":
         return <XCircle className="w-8 h-8 text-red-500" />;
+      case "not_configured":
+        return <AlertTriangle className="w-8 h-8 text-muted-foreground" />;
     }
   };
 
@@ -224,6 +228,8 @@ export default function Diagnostico() {
                     "Saudável"
                   ) : healthData?.summary.overallStatus === "degraded" ? (
                     "Degradado"
+                  ) : healthData?.summary.overallStatus === "not_configured" ? (
+                    "Não Configurado"
                   ) : (
                     "Offline"
                   )}
@@ -329,10 +335,17 @@ export default function Diagnostico() {
               <p>Erro ao carregar status das instâncias</p>
               <p className="text-sm">{(healthError as Error).message}</p>
             </div>
-          ) : healthData?.instances.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Server className="w-12 h-12 mx-auto mb-4" />
-              <p>Nenhuma instância WPPConnect configurada</p>
+          ) : healthData?.configured === false || healthData?.instances.length === 0 ? (
+            <div className="text-center py-8">
+              <Server className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
+              <p className="text-lg font-medium mb-2">Nenhuma instância WPPConnect configurada</p>
+              <p className="text-muted-foreground text-sm max-w-md mx-auto">
+                Para começar a usar o WPPConnect, configure a variável de ambiente{" "}
+                <code className="bg-muted px-1.5 py-0.5 rounded text-xs">WPPCONNECT_API_URL</code>{" "}
+                com a URL do seu servidor WPPConnect e{" "}
+                <code className="bg-muted px-1.5 py-0.5 rounded text-xs">WPPCONNECT_SECRET_KEY</code>{" "}
+                com a chave secreta.
+              </p>
             </div>
           ) : (
             <div className="space-y-4">
