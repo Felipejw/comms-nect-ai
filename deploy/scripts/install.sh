@@ -83,18 +83,110 @@ else
 fi
 
 # ==========================================
-# 2. Verificar Frontend Pré-compilado
+# 2. Verificar/Compilar Frontend
 # ==========================================
 log_info "Verificando frontend..."
 
+# Detectar se estamos em instalação via GitHub (sem frontend compilado)
 if [ ! -d "frontend/dist" ] || [ ! -f "frontend/dist/index.html" ]; then
-    log_error "Frontend não encontrado em frontend/dist/"
-    log_error "O pacote de instalação parece estar incompleto."
-    log_error "Certifique-se de ter baixado o pacote completo."
+    log_warning "Frontend pré-compilado não encontrado."
+    log_info "Detectado instalação via GitHub. Compilando frontend..."
+    
+    # Salvar diretório atual
+    CURRENT_DIR=$(pwd)
+    PROJECT_ROOT=$(dirname "$DEPLOY_DIR")
+    
+    # Verificar se package.json existe no diretório raiz
+    if [ ! -f "$PROJECT_ROOT/package.json" ]; then
+        log_error "package.json não encontrado em $PROJECT_ROOT"
+        log_error "Certifique-se de ter clonado o repositório completo."
+        exit 1
+    fi
+    
+    # Verificar/Instalar Node.js
+    if ! command -v node &> /dev/null; then
+        log_info "Node.js não encontrado. Instalando Node.js 18..."
+        
+        # Detectar sistema operacional
+        if [ -f /etc/debian_version ]; then
+            # Debian/Ubuntu
+            curl -fsSL https://deb.nodesource.com/setup_18.x | $SUDO bash -
+            $SUDO apt-get install -y nodejs
+        elif [ -f /etc/redhat-release ]; then
+            # CentOS/RHEL/Fedora
+            curl -fsSL https://rpm.nodesource.com/setup_18.x | $SUDO bash -
+            $SUDO yum install -y nodejs
+        else
+            log_error "Sistema operacional não suportado para instalação automática do Node.js"
+            log_error "Por favor, instale o Node.js 18+ manualmente e execute novamente."
+            exit 1
+        fi
+        
+        log_success "Node.js instalado: $(node --version)"
+    else
+        NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+        if [ "$NODE_VERSION" -lt 18 ]; then
+            log_warning "Node.js versão $(node --version) detectada. Recomendado v18+"
+        fi
+        log_success "Node.js encontrado: $(node --version)"
+    fi
+    
+    # Verificar npm
+    if ! command -v npm &> /dev/null; then
+        log_error "npm não encontrado. Por favor, instale o Node.js corretamente."
+        exit 1
+    fi
+    
+    log_info "Instalando dependências do frontend..."
+    cd "$PROJECT_ROOT"
+    
+    # Limpar cache npm se necessário
+    npm cache clean --force 2>/dev/null || true
+    
+    # Instalar dependências
+    if ! npm install; then
+        log_error "Falha ao instalar dependências npm"
+        exit 1
+    fi
+    log_success "Dependências instaladas"
+    
+    # Criar arquivo .env temporário para build
+    log_info "Configurando variáveis de build..."
+    cat > .env << EOF
+VITE_SUPABASE_URL=https://placeholder.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=placeholder
+VITE_SUPABASE_PROJECT_ID=placeholder
+EOF
+    
+    # Compilar frontend
+    log_info "Compilando frontend (pode levar alguns minutos)..."
+    if ! npm run build; then
+        log_error "Falha ao compilar frontend"
+        rm -f .env
+        exit 1
+    fi
+    log_success "Frontend compilado"
+    
+    # Remover .env temporário
+    rm -f .env
+    
+    # Criar diretório frontend e copiar dist
+    mkdir -p "$DEPLOY_DIR/frontend"
+    cp -r dist "$DEPLOY_DIR/frontend/"
+    
+    # Voltar ao diretório deploy
+    cd "$CURRENT_DIR"
+    
+    log_success "Frontend compilado e copiado para deploy/frontend/dist/"
+fi
+
+# Verificação final
+if [ ! -f "frontend/dist/index.html" ]; then
+    log_error "Falha na preparação do frontend"
     exit 1
 fi
 
-log_success "Frontend encontrado"
+log_success "Frontend pronto"
 
 # ==========================================
 # 3. Configurar Variáveis de Ambiente
