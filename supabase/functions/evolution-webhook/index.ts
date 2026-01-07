@@ -266,54 +266,90 @@ serve(async (req) => {
           console.log(`[Webhook] Got real phone from remoteJidAlt: ${realPhoneNumber}`);
         }
         
-        // If no remoteJidAlt, try Evolution API lookup
+        // If no remoteJidAlt, try Evolution API lookup methods
         if (!realPhoneNumber && isLid && phoneNumber) {
-          try {
-            const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
-            const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
-            
-            if (evolutionUrl && evolutionKey) {
-              // Fetch ALL contacts to find the LID -> real phone mapping
-              const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instance}`, {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'apikey': evolutionKey,
-                },
-                body: JSON.stringify({ where: {} }), // Fetch all contacts
-              });
-              
-              if (contactResponse.ok) {
-                const allContacts = await contactResponse.json();
-                const contactsArray = Array.isArray(allContacts) ? allContacts : [];
-                
-                // 1. Find the LID contact
-                const lidRemoteJid = `${phoneNumber}@lid`;
-                const lidContact = contactsArray.find((c: any) => c.remoteJid === lidRemoteJid);
-                
-                if (lidContact) {
-                  console.log(`[Webhook] Found LID contact:`, JSON.stringify(lidContact));
-                  
-                  // NOTE: We intentionally DO NOT match by pushName anymore.
-                  // Multiple contacts can have the same pushName (e.g., "Felipe", "Maria"),
-                  // which caused wrong phone numbers to be associated with contacts.
-                  // We only use remoteJidAlt or direct ID matching for LID->phone resolution.
+          const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
+          const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
+          
+          if (evolutionUrl && evolutionKey) {
+            // Method 1: Try to fetch profile for the LID contact
+            try {
+              console.log(`[Webhook] Trying fetchProfile for LID ${phoneNumber}...`);
+              const profileResponse = await fetch(
+                `${evolutionUrl}/chat/fetchProfile/${instance}`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': evolutionKey,
+                  },
+                  body: JSON.stringify({ number: `${phoneNumber}@lid` }),
                 }
+              );
+              
+              if (profileResponse.ok) {
+                const profile = await profileResponse.json();
+                console.log(`[Webhook] Profile response:`, JSON.stringify(profile));
                 
-                // 3. If still no match, try direct ID lookup
-                if (!realPhoneNumber) {
-                  const directMatch = contactsArray.find((c: any) => 
-                    c.id === remoteJid && c.remoteJid?.includes('@s.whatsapp.net')
-                  );
-                  if (directMatch) {
-                    realPhoneNumber = directMatch.remoteJid.replace('@s.whatsapp.net', '');
-                    console.log(`[Webhook] Found real phone via direct match: ${realPhoneNumber}`);
-                  }
+                // Check various fields where real phone might be
+                const profilePhone = profile?.wuid?.replace('@s.whatsapp.net', '') ||
+                                    profile?.jid?.replace('@s.whatsapp.net', '') ||
+                                    profile?.number;
+                
+                if (profilePhone && profilePhone.length >= 10 && profilePhone.length <= 15 && !profilePhone.includes('@lid')) {
+                  realPhoneNumber = profilePhone;
+                  console.log(`[Webhook] Found real phone via profile: ${realPhoneNumber}`);
                 }
               }
+            } catch (profileError) {
+              console.log(`[Webhook] Profile fetch failed:`, profileError);
             }
-          } catch (lookupError) {
-            console.error(`[Webhook] Error looking up contact:`, lookupError);
+            
+            // Method 2: Fetch ALL contacts to find the LID -> real phone mapping
+            if (!realPhoneNumber) {
+              try {
+                const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instance}`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'apikey': evolutionKey,
+                  },
+                  body: JSON.stringify({ where: {} }),
+                });
+                
+                if (contactResponse.ok) {
+                  const allContacts = await contactResponse.json();
+                  const contactsArray = Array.isArray(allContacts) ? allContacts : [];
+                  
+                  // Find the LID contact
+                  const lidRemoteJid = `${phoneNumber}@lid`;
+                  const lidContact = contactsArray.find((c: any) => c.remoteJid === lidRemoteJid);
+                  
+                  if (lidContact) {
+                    console.log(`[Webhook] Found LID contact:`, JSON.stringify(lidContact));
+                    
+                    // Check if lidContact has remoteJidAlt with real phone
+                    if (lidContact.remoteJidAlt?.includes('@s.whatsapp.net')) {
+                      realPhoneNumber = lidContact.remoteJidAlt.replace('@s.whatsapp.net', '');
+                      console.log(`[Webhook] Found real phone via remoteJidAlt in contact: ${realPhoneNumber}`);
+                    }
+                  }
+                  
+                  // Try direct ID lookup as fallback
+                  if (!realPhoneNumber) {
+                    const directMatch = contactsArray.find((c: any) => 
+                      c.id === remoteJid && c.remoteJid?.includes('@s.whatsapp.net')
+                    );
+                    if (directMatch) {
+                      realPhoneNumber = directMatch.remoteJid.replace('@s.whatsapp.net', '');
+                      console.log(`[Webhook] Found real phone via direct match: ${realPhoneNumber}`);
+                    }
+                  }
+                }
+              } catch (lookupError) {
+                console.error(`[Webhook] Error looking up contact:`, lookupError);
+              }
+            }
           }
         } else if (!isLid) {
           // Not a LID, use the phone number directly
