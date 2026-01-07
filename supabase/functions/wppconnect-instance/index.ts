@@ -713,6 +713,107 @@ serve(async (req) => {
         );
       }
 
+      case "health": {
+        console.log("[WPPConnect] Running health check on all instances");
+        
+        const allInstances = getConfiguredInstances();
+        const healthResults = await Promise.all(
+          allInstances.map(async (inst) => {
+            const startTime = Date.now();
+            let healthy = false;
+            let responseTime = 0;
+            let version = null;
+            let activeSessions = 0;
+            let error = null;
+
+            try {
+              const response = await fetch(`${inst.url}/api/`, {
+                method: "GET",
+                signal: AbortSignal.timeout(10000),
+              });
+              responseTime = Date.now() - startTime;
+              healthy = response.ok;
+
+              if (response.ok) {
+                try {
+                  const data = await response.json();
+                  version = data.version || data.WPPConnect || null;
+                } catch {
+                  // Response wasn't JSON, but server is up
+                }
+              }
+
+              // Try to get active sessions count
+              try {
+                const sessionsResponse = await fetch(`${inst.url}/api/show-all-sessions`, {
+                  method: "GET",
+                  headers: {
+                    "Authorization": `Bearer ${WPPCONNECT_SECRET_KEY}`,
+                  },
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (sessionsResponse.ok) {
+                  const sessionsData = await sessionsResponse.json();
+                  activeSessions = Array.isArray(sessionsData) 
+                    ? sessionsData.length 
+                    : (sessionsData.response?.length || 0);
+                }
+              } catch {
+                // Ignore session count errors
+              }
+            } catch (e) {
+              responseTime = Date.now() - startTime;
+              error = e instanceof Error ? e.message : "Connection failed";
+            }
+
+            return {
+              url: inst.url,
+              priority: inst.priority,
+              healthy,
+              responseTime,
+              version,
+              activeSessions,
+              error,
+            };
+          })
+        );
+
+        // Get database connections and their assigned instances
+        const { data: dbConnections } = await supabaseClient
+          .from("connections")
+          .select("id, name, status, session_data")
+          .eq("type", "whatsapp");
+
+        const connectionsByInstance: Record<string, number> = {};
+        (dbConnections || []).forEach((conn: any) => {
+          const instanceUrl = conn.session_data?.instanceUrl || "unassigned";
+          connectionsByInstance[instanceUrl] = (connectionsByInstance[instanceUrl] || 0) + 1;
+        });
+
+        const healthyCount = healthResults.filter(r => r.healthy).length;
+        const totalCount = healthResults.length;
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            summary: {
+              totalInstances: totalCount,
+              healthyInstances: healthyCount,
+              unhealthyInstances: totalCount - healthyCount,
+              overallStatus: healthyCount === totalCount ? "healthy" : healthyCount > 0 ? "degraded" : "down",
+              totalConnections: dbConnections?.length || 0,
+            },
+            instances: healthResults.map(r => ({
+              ...r,
+              assignedConnections: connectionsByInstance[r.url] || 0,
+            })),
+            connectionsByInstance,
+            timestamp: new Date().toISOString(),
+          }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
       default:
         throw new Error(`Unknown action: ${action}`);
     }
