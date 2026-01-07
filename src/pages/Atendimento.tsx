@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, AlertTriangle } from "lucide-react";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -65,6 +65,7 @@ import { useQueues } from "@/hooks/useQueues";
 import { useBulkDeleteConversations, useBulkUpdateConversations, useBulkAddTagsToConversations, useBulkRemoveTagsFromConversations, useExportConversations } from "@/hooks/useBulkConversationActions";
 import ContactProfilePanel from "@/components/atendimento/ContactProfilePanel";
 import { ChatConnectionIndicator } from "@/components/atendimento/ChatConnectionIndicator";
+import LidContactIndicator, { isLidOnlyContact } from "@/components/atendimento/LidContactIndicator";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
 import { useContactDisplayName, formatPhoneForDisplay as formatPhone } from "@/hooks/useContactDisplayName";
@@ -1435,6 +1436,12 @@ export default function Atendimento() {
                         <Bot className="w-2.5 h-2.5 text-primary-foreground" />
                       </span>
                     )}
+                    {/* LID Contact indicator */}
+                    {!conversation.is_bot_active && isLidOnlyContact(conversation.contact) && (
+                      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-warning rounded-full flex items-center justify-center" title="Contato sem número identificado">
+                        <AlertTriangle className="w-2.5 h-2.5 text-warning-foreground" />
+                      </span>
+                    )}
                   </div>
                   
                   <div className="flex-1 min-w-0">
@@ -1791,6 +1798,15 @@ export default function Atendimento() {
             </div>
           )}
 
+          {/* LID Contact Indicator */}
+          {isLidOnlyContact(selectedConversation?.contact) && (
+            <LidContactIndicator 
+              contact={selectedConversation?.contact} 
+              conversationId={selectedConversation?.id}
+              className="mx-3 sm:mx-4 mt-3"
+            />
+          )}
+
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 bg-muted/30 scrollbar-thin">
             {messagesLoading ? (
@@ -2018,18 +2034,43 @@ export default function Atendimento() {
                 </div>
               )}
               
-              <Button 
-                size="icon" 
-                className="shrink-0 bg-accent hover:bg-accent/90"
-                onClick={handleSendMessage}
-                disabled={(!messageText.trim() && !mediaPreview && !isRecording) || sendMessage.isPending || isUploading}
-              >
-                {(sendMessage.isPending || isUploading) ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Send className="w-5 h-5" />
-                )}
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button 
+                        size="icon" 
+                        className={cn(
+                          "shrink-0",
+                          isLidOnlyContact(selectedConversation?.contact)
+                            ? "bg-muted text-muted-foreground cursor-not-allowed"
+                            : "bg-accent hover:bg-accent/90"
+                        )}
+                        onClick={handleSendMessage}
+                        disabled={
+                          (!messageText.trim() && !mediaPreview && !isRecording) || 
+                          sendMessage.isPending || 
+                          isUploading ||
+                          isLidOnlyContact(selectedConversation?.contact)
+                        }
+                      >
+                        {(sendMessage.isPending || isUploading) ? (
+                          <Loader2 className="w-5 h-5 animate-spin" />
+                        ) : isLidOnlyContact(selectedConversation?.contact) ? (
+                          <AlertTriangle className="w-5 h-5" />
+                        ) : (
+                          <Send className="w-5 h-5" />
+                        )}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  {isLidOnlyContact(selectedConversation?.contact) && (
+                    <TooltipContent>
+                      <p>Não é possível enviar mensagens - contato sem número identificado</p>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              </TooltipProvider>
             </div>
           </div>
         </div>
