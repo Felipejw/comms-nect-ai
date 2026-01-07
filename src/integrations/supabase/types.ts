@@ -1176,6 +1176,14 @@ export type Database = {
         }
         Returns: boolean
       }
+      increment_campaign_delivered: {
+        Args: { campaign_id: string }
+        Returns: undefined
+      }
+      increment_campaign_read: {
+        Args: { campaign_id: string; was_delivered?: boolean }
+        Returns: undefined
+      }
       is_admin_or_manager: { Args: { _user_id: string }; Returns: boolean }
       normalize_phone: { Args: { phone_input: string }; Returns: string }
     }
