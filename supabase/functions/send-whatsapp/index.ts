@@ -5,11 +5,21 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// WPPConnect API configuration
+const WPPCONNECT_API_URL = Deno.env.get("WPPCONNECT_API_URL") || Deno.env.get("EVOLUTION_API_URL");
+const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY") || Deno.env.get("EVOLUTION_API_KEY");
+
 interface SendMessagePayload {
   conversationId: string;
   content: string;
   messageType?: "text" | "image" | "audio" | "document" | "video";
   mediaUrl?: string;
+}
+
+interface SessionData {
+  sessionName?: string;
+  token?: string;
+  instanceName?: string;
 }
 
 Deno.serve(async (req) => {
@@ -21,8 +31,10 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL")!;
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY")!;
+
+    if (!WPPCONNECT_API_URL) {
+      throw new Error("WPPConnect API URL not configured");
+    }
 
     // Client for validating user token
     const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
@@ -81,220 +93,19 @@ Deno.serve(async (req) => {
     
     console.log(`Contact data: phone="${phone}", whatsapp_lid="${whatsappLid}"`);
     
-    // Determine which identifier to use and how to format it
-    // LID detection: phone === whatsapp_lid OR phone is very long (14+ digits with no valid country code)
-    const isPhoneActuallyLid = phone && whatsappLid && phone === whatsappLid;
-    const hasRealPhone = phone && phone !== whatsappLid && phone.length >= 10 && phone.length <= 15;
-    
+    // Determine phone to send
     let phoneToSend: string | null = null;
-    let sendAsLid = false;
     
-    if (hasRealPhone) {
-      // We have a real phone number, use it
+    if (phone && phone.length >= 10 && phone.length <= 15) {
       phoneToSend = phone;
-      console.log(`Using real phone number: ${phoneToSend}`);
+      console.log(`Using phone number: ${phoneToSend}`);
     } else if (whatsappLid) {
-      // Only have LID - need to try to find real phone number first
-      console.log(`Contact only has LID: ${whatsappLid}, trying to find real phone via Evolution API...`);
-      
-      // Get connection first to query Evolution API
-      const { data: tempConnection, error: tempConnError } = await supabaseAdmin
-        .from("connections")
-        .select("*")
-        .eq("type", "whatsapp")
-        .eq("status", "connected")
-        .order("is_default", { ascending: false })
-        .limit(1)
-        .single();
-      
-      if (tempConnError) {
-        console.error("Error getting connection:", tempConnError);
-      }
-      
-      if (tempConnection) {
-        const tempInstanceName = tempConnection.session_data?.instanceName || tempConnection.name;
-        console.log(`Using instance ${tempInstanceName} to lookup LID`);
-        
-        // Method 1: Try to use findContact endpoint with the LID directly
-        try {
-          console.log(`Trying findContact endpoint for LID ${whatsappLid}...`);
-          const findResponse = await fetch(`${evolutionApiUrl}/chat/findContact/${tempInstanceName}`, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "apikey": evolutionApiKey,
-            },
-            body: JSON.stringify({
-              numbers: [`${whatsappLid}@lid`]
-            }),
-          });
-          
-          console.log(`findContact response status: ${findResponse.status}`);
-          
-          if (findResponse.ok) {
-            const findData = await findResponse.json();
-            console.log(`findContact response:`, JSON.stringify(findData));
-            
-            // Check if we got a real phone number back
-            const foundContact = Array.isArray(findData) ? findData[0] : findData;
-            if (foundContact?.jid && foundContact.jid.includes("@s.whatsapp.net")) {
-              const realPhone = foundContact.jid.replace("@s.whatsapp.net", "");
-              if (realPhone.length >= 10 && realPhone.length <= 15) {
-                console.log(`Found real phone via findContact: ${realPhone}`);
-                phoneToSend = realPhone;
-                sendAsLid = false;
-                
-                // Update contact with real phone
-                await supabaseAdmin
-                  .from("contacts")
-                  .update({ phone: realPhone })
-                  .eq("id", contact.id);
-                console.log(`Updated contact ${contact.id} with real phone: ${realPhone}`);
-              }
-            }
-          } else {
-            const errorText = await findResponse.text();
-            console.log(`findContact failed: ${errorText}`);
-          }
-        } catch (findErr) {
-          console.error("Error in findContact:", findErr);
-        }
-        
-        // Method 2: If method 1 didn't work, try fetchAllContacts
-        if (!phoneToSend) {
-          try {
-            console.log(`Trying fetchAllContacts endpoint...`);
-            const contactsResponse = await fetch(`${evolutionApiUrl}/chat/fetchAllContacts/${tempInstanceName}`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "apikey": evolutionApiKey,
-              },
-              body: JSON.stringify({}),
-            });
-            
-            console.log(`fetchAllContacts response status: ${contactsResponse.status}`);
-            
-            if (contactsResponse.ok) {
-              const contactsData = await contactsResponse.json();
-              const contactsArray = Array.isArray(contactsData) ? contactsData : contactsData?.contacts || [];
-              
-              console.log(`Fetched ${contactsArray.length} contacts from Evolution API`);
-              
-              // Find contact by LID
-              const lidContact = contactsArray.find((c: any) => {
-                const remoteJid = c.remoteJid || c.id || "";
-                const remoteLid = remoteJid.replace("@lid", "").replace("@s.whatsapp.net", "").split(":")[0];
-                return remoteLid === whatsappLid || remoteJid.includes(whatsappLid);
-              });
-              
-              if (lidContact) {
-                console.log(`Found LID contact in Evolution:`, JSON.stringify(lidContact));
-                
-                // Check if this contact has remoteJidAlt with real phone
-                if (lidContact.remoteJidAlt && lidContact.remoteJidAlt.includes("@s.whatsapp.net")) {
-                  const realPhone = lidContact.remoteJidAlt.replace("@s.whatsapp.net", "");
-                  if (realPhone.length >= 10 && realPhone.length <= 15) {
-                    console.log(`Found real phone via remoteJidAlt: ${realPhone}`);
-                    phoneToSend = realPhone;
-                    sendAsLid = false;
-                    
-                    // Update contact with real phone
-                    await supabaseAdmin
-                      .from("contacts")
-                      .update({ phone: realPhone })
-                      .eq("id", contact.id);
-                    console.log(`Updated contact ${contact.id} with real phone: ${realPhone}`);
-                  }
-                }
-                
-                // If still no phone, try to find via pushName match
-                if (!phoneToSend && lidContact.pushName) {
-                  console.log(`Trying pushName match for "${lidContact.pushName}"...`);
-                  const matchingContact = contactsArray.find((c: any) => 
-                    c.pushName === lidContact.pushName && 
-                    c.remoteJid?.includes("@s.whatsapp.net") &&
-                    !c.remoteJid?.includes("@lid")
-                  );
-                  
-                  if (matchingContact) {
-                    const realPhone = matchingContact.remoteJid.replace("@s.whatsapp.net", "");
-                    if (realPhone.length >= 10 && realPhone.length <= 15) {
-                      console.log(`Found real phone via pushName match: ${realPhone}`);
-                      phoneToSend = realPhone;
-                      sendAsLid = false;
-                      
-                      // Update contact with real phone
-                      await supabaseAdmin
-                        .from("contacts")
-                        .update({ phone: realPhone })
-                        .eq("id", contact.id);
-                      console.log(`Updated contact ${contact.id} with real phone: ${realPhone}`);
-                    }
-                  } else {
-                    console.log(`No pushName match found`);
-                  }
-                }
-              } else {
-                console.log(`LID ${whatsappLid} not found in Evolution contacts`);
-              }
-            } else {
-              const errorText = await contactsResponse.text();
-              console.log(`fetchAllContacts failed: ${errorText}`);
-            }
-          } catch (fetchErr) {
-            console.error("Error fetching contacts from Evolution:", fetchErr);
-          }
-        }
-      } else {
-        console.log("No connected WhatsApp instance found for LID lookup");
-      }
-      
-      // Fallback: If we still don't have a real phone, try to send directly to LID
-      if (!phoneToSend && whatsappLid) {
-        console.log(`[Fallback] No real phone found, attempting to send directly to LID: ${whatsappLid}`);
-        phoneToSend = whatsappLid;
-        sendAsLid = true;
-        
-        // Note: We'll try to send, but if it fails, we'll return a helpful error
-      }
-      
-      // If we still don't have anything to send to
-      if (!phoneToSend) {
-        const contactName = contact?.name || "este contato";
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: `Não foi possível enviar mensagem para ${contactName}. Este contato foi identificado apenas pelo ID interno do WhatsApp (LID: ${whatsappLid?.slice(-6)}) e não possui número de telefone real cadastrado. O contato precisa enviar uma nova mensagem para que o sistema capture o número correto.`,
-            needsReconnection: false,
-            isLidContact: true
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    } else if (phone) {
-      // Fallback to whatever we have
-      phoneToSend = phone;
-      // Check if it looks like a LID (long number without valid country code)
-      const cleanPhone = phone.replace(/\D/g, "");
-      sendAsLid = cleanPhone.length > 13 || (cleanPhone.length >= 12 && !cleanPhone.match(/^(55|1|44|351|34|49|33|39|81|86|91)/));
-      
-      if (sendAsLid) {
-        // If it looks like a LID, we can't send
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: `Não foi possível enviar mensagem. O contato possui apenas um identificador interno do WhatsApp (LID) e não o número real. Por favor, peça ao contato para enviar uma nova mensagem.`,
-            needsReconnection: false
-          }),
-          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      
-      console.log(`Using phone as fallback: ${phoneToSend}`);
+      // WPPConnect has better LID support - try to resolve it
+      console.log(`Contact only has LID: ${whatsappLid}, will try to send directly`);
+      phoneToSend = whatsappLid;
     } else {
       return new Response(
-        JSON.stringify({ success: false, error: "Contato sem número de telefone ou ID do WhatsApp" }),
+        JSON.stringify({ success: false, error: "Contato sem número de telefone válido" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -317,22 +128,21 @@ Deno.serve(async (req) => {
       );
     }
 
-    const instanceName = connection.session_data?.instanceName || connection.name;
+    const sessionData = connection.session_data as SessionData;
+    const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name;
+    const sessionToken = sessionData?.token || WPPCONNECT_SECRET_KEY;
 
-    // Verify real connection status before sending
-    console.log(`Checking real status of instance ${instanceName}...`);
+    console.log(`Using session: ${sessionName}`);
+
+    // Verify connection status
     try {
-      const statusCheck = await fetch(`${evolutionApiUrl}/instance/connectionState/${instanceName}`, {
-        headers: { "apikey": evolutionApiKey }
+      const statusCheck = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/check-connection-session`, {
+        headers: { "Authorization": `Bearer ${sessionToken}` }
       });
       const statusResult = await statusCheck.json();
-      console.log(`Instance ${instanceName} status:`, JSON.stringify(statusResult));
+      console.log(`Session ${sessionName} status:`, JSON.stringify(statusResult));
       
-      const connectionState = statusResult?.instance?.state || statusResult?.state;
-      if (connectionState !== 'open') {
-        console.log(`Instance ${instanceName} is not connected (state: ${connectionState}), updating database...`);
-        
-        // Update database to reflect disconnection
+      if (statusResult.status !== true && statusResult.status !== "CONNECTED" && statusResult.state !== "CONNECTED") {
         await supabaseAdmin
           .from("connections")
           .update({ status: 'disconnected' })
@@ -350,243 +160,141 @@ Deno.serve(async (req) => {
       }
     } catch (statusError) {
       console.error("Error checking connection status:", statusError);
-      // Continue anyway, the send will fail if there's actually a problem
     }
 
-    // Format the number based on whether it's a LID or real phone
+    // Format the number for WPPConnect - uses @c.us format
     let formattedNumber = phoneToSend!.replace(/\D/g, "");
     
-    if (sendAsLid) {
-      // For LIDs, append @lid suffix
-      formattedNumber = `${formattedNumber}@lid`;
-      console.log(`Sending to LID: ${formattedNumber}`);
-    } else {
-      // For real phone numbers, add country code if needed
-      if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
-        formattedNumber = "55" + formattedNumber;
-      }
-      console.log(`Sending to phone: ${formattedNumber}`);
+    // Add country code if needed
+    if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
+      formattedNumber = "55" + formattedNumber;
     }
-
-    console.log(`Sending via instance ${instanceName}`);
-
-    // Send message via Evolution API
-    let evolutionResponse;
     
+    // WPPConnect uses @c.us format for phone numbers
+    formattedNumber = `${formattedNumber}@c.us`;
+    
+    console.log(`Sending to: ${formattedNumber}`);
+
+    let wppResponse;
+    const headers = {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${sessionToken}`,
+    };
+
     if (messageType === "text") {
-      evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendText/${instanceName}`, {
+      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": evolutionApiKey,
-        },
+        headers,
         body: JSON.stringify({
-          number: formattedNumber,
-          text: content,
+          phone: formattedNumber,
+          message: content,
         }),
       });
     } else if (messageType === "image" && mediaUrl) {
-      evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
+      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-image`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": evolutionApiKey,
-        },
+        headers,
         body: JSON.stringify({
-          number: formattedNumber,
-          mediatype: "image",
-          media: mediaUrl,
+          phone: formattedNumber,
+          path: mediaUrl,
           caption: content,
         }),
       });
     } else if (messageType === "document" && mediaUrl) {
-      evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
+      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": evolutionApiKey,
-        },
+        headers,
         body: JSON.stringify({
-          number: formattedNumber,
-          mediatype: "document",
-          media: mediaUrl,
-          caption: content,
+          phone: formattedNumber,
+          path: mediaUrl,
+          filename: content || "document",
         }),
       });
     } else if (messageType === "audio" && mediaUrl) {
-      evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendWhatsAppAudio/${instanceName}`, {
+      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-voice-base64`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": evolutionApiKey,
-        },
+        headers,
         body: JSON.stringify({
-          number: formattedNumber,
-          audio: mediaUrl,
+          phone: formattedNumber,
+          base64Ptt: mediaUrl,
         }),
       });
     } else if (messageType === "video" && mediaUrl) {
-      console.log(`Sending video to ${formattedNumber}`);
-      evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
+      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "apikey": evolutionApiKey,
-        },
+        headers,
         body: JSON.stringify({
-          number: formattedNumber,
-          mediatype: "video",
-          media: mediaUrl,
+          phone: formattedNumber,
+          path: mediaUrl,
           caption: content,
         }),
       });
     } else {
+      // Default to text
+      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          phone: formattedNumber,
+          message: content,
+        }),
+      });
+    }
+
+    const wppResult = await wppResponse.json();
+    console.log("WPPConnect response:", JSON.stringify(wppResult));
+
+    if (!wppResponse.ok || wppResult.status === "error" || wppResult.error) {
+      console.error("WPPConnect error:", wppResult);
       return new Response(
-        JSON.stringify({ success: false, error: "Tipo de mensagem não suportado ou URL de mídia ausente" }),
+        JSON.stringify({ 
+          success: false, 
+          error: wppResult.message || wppResult.error || "Erro ao enviar mensagem",
+        }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const evolutionResult = await evolutionResponse.json();
-    console.log("Evolution API response:", JSON.stringify(evolutionResult));
-
-    if (!evolutionResponse.ok) {
-      console.error("Evolution API error:", evolutionResult);
-      
-      // Check for specific error types
-      let errorMessage = evolutionResult.message || "Falha ao enviar mensagem";
-      let needsReconnection = false;
-      
-      // Check for session errors (WhatsApp disconnected)
-      const responseMessage = evolutionResult.response?.message || evolutionResult.message || "";
-      if (typeof responseMessage === "string" && 
-          (responseMessage.includes("No sessions") || 
-           responseMessage.includes("Session not found") ||
-           responseMessage.includes("not connected"))) {
-        console.log(`Session error detected for instance ${instanceName}, marking as disconnected...`);
-        
-        // Update database to reflect disconnection
-        await supabaseAdmin
-          .from("connections")
-          .update({ status: 'disconnected' })
-          .eq("id", connection.id);
-        
-        errorMessage = "Sessão do WhatsApp expirou. Reconecte o WhatsApp na página de Conexões.";
-        needsReconnection = true;
-        
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: errorMessage,
-            needsReconnection: true,
-            connectionId: connection.id 
-          }),
-          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-      
-      // Check if number doesn't exist on WhatsApp
-      if (evolutionResult.response?.message?.[0]?.exists === false) {
-        const failedNumber = evolutionResult.response.message[0].number;
-        errorMessage = `Número não encontrado no WhatsApp: ${failedNumber}. O contato pode ter trocado de número ou não estar mais no WhatsApp.`;
-      }
-      
-      return new Response(
-        JSON.stringify({ success: false, error: errorMessage, needsReconnection }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // After successful send, try to update contact info if needed
-    // Check if Evolution API returned real phone info
-    const sentToNumber = evolutionResult?.key?.remoteJid;
-    if (sentToNumber && contact && sendAsLid) {
-      // If we sent via LID and got back a real phone number
-      const returnedPhone = sentToNumber.replace('@s.whatsapp.net', '').replace('@lid', '').split(':')[0];
-      
-      if (sentToNumber.includes('@s.whatsapp.net') && returnedPhone.length <= 15) {
-        // We now have the real phone number
-        console.log(`Got real phone from Evolution response: ${returnedPhone}`);
-        
-        // Check if there's already a contact with this phone
-        const { data: existingWithPhone } = await supabaseAdmin
-          .from("contacts")
-          .select("id")
-          .eq("phone", returnedPhone)
-          .neq("id", contact.id)
-          .single();
-        
-        if (existingWithPhone) {
-          // There's a duplicate - merge them
-          console.log(`Found duplicate contact ${existingWithPhone.id}, merging...`);
-          
-          // Move conversations to existing contact
-          await supabaseAdmin
-            .from("conversations")
-            .update({ contact_id: existingWithPhone.id })
-            .eq("contact_id", contact.id);
-          
-          // Delete the LID contact
-          await supabaseAdmin
-            .from("contacts")
-            .delete()
-            .eq("id", contact.id);
-          
-          console.log(`Merged contact ${contact.id} into ${existingWithPhone.id}`);
-        } else {
-          // Just update the phone
-          await supabaseAdmin
-            .from("contacts")
-            .update({ 
-              phone: returnedPhone,
-              whatsapp_lid: phoneToSend // Store the LID we used
-            })
-            .eq("id", contact.id);
-          
-          console.log(`Updated contact ${contact.id} with real phone: ${returnedPhone}`);
-        }
-      }
-    }
-
     // Save message to database
-    const { data: message, error: msgError } = await supabaseAdmin
+    const { error: msgError } = await supabaseAdmin
       .from("messages")
       .insert({
         conversation_id: conversationId,
         content,
+        message_type: messageType,
+        media_url: mediaUrl,
         sender_id: user.id,
         sender_type: "agent",
-        message_type: messageType,
-        media_url: mediaUrl || null,
-      })
-      .select()
-      .single();
+        is_read: true,
+      });
 
     if (msgError) {
       console.error("Error saving message:", msgError);
-      // Message was sent but not saved - still return success
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          warning: "Mensagem enviada mas não salva no banco de dados",
-          evolutionResult 
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
     }
 
-    console.log(`Message sent and saved: ${message.id}`);
+    // Update conversation
+    await supabaseAdmin
+      .from("conversations")
+      .update({
+        last_message_at: new Date().toISOString(),
+        status: conversation.status === "new" ? "in_progress" : conversation.status,
+      })
+      .eq("id", conversationId);
 
     return new Response(
-      JSON.stringify({ success: true, message, evolutionResult }),
+      JSON.stringify({ 
+        success: true, 
+        messageId: wppResult.id || wppResult.messageId,
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
-
   } catch (error) {
     console.error("Error in send-whatsapp:", error);
-    const errorMessage = error instanceof Error ? error.message : "Erro desconhecido";
     return new Response(
-      JSON.stringify({ success: false, error: errorMessage }),
+      JSON.stringify({ 
+        success: false, 
+        error: error instanceof Error ? error.message : "Erro interno" 
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }

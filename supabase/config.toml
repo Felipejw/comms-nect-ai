@@ -6,10 +6,10 @@ verify_jwt = false
 [functions.send-whatsapp]
 verify_jwt = false
 
-[functions.evolution-instance]
+[functions.wppconnect-instance]
 verify_jwt = false
 
-[functions.evolution-webhook]
+[functions.wppconnect-webhook]
 verify_jwt = false
 
 [functions.fetch-whatsapp-profile]

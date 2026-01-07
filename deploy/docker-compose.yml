@@ -344,65 +344,28 @@ services:
       - supabase-network
 
   # ==========================================
-  # EVOLUTION API - WhatsApp (opcional)
+  # WPPCONNECT SERVER - WhatsApp
   # ==========================================
-  evolution:
-    image: atendai/evolution-api:v2.3.7
-    container_name: evolution-api
+  wppconnect:
+    image: wppconnect/server-cli:latest
+    container_name: wppconnect-server
     restart: unless-stopped
     ports:
-      - "${EVOLUTION_PORT:-8080}:8080"
+      - "${WPPCONNECT_PORT:-21465}:21465"
     environment:
-      SERVER_URL: ${EVOLUTION_SERVER_URL:-http://localhost:8080}
-      AUTHENTICATION_TYPE: apikey
-      AUTHENTICATION_API_KEY: ${EVOLUTION_API_KEY:-}
-      
-      DATABASE_ENABLED: true
-      DATABASE_PROVIDER: postgresql
-      DATABASE_CONNECTION_URI: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}?schema=evolution
-      DATABASE_CONNECTION_CLIENT_NAME: evolution
-      DATABASE_SAVE_DATA_INSTANCE: true
-      DATABASE_SAVE_DATA_NEW_MESSAGE: true
-      DATABASE_SAVE_MESSAGE_UPDATE: true
-      DATABASE_SAVE_DATA_CONTACTS: true
-      DATABASE_SAVE_DATA_CHATS: true
-      
-      RABBITMQ_ENABLED: false
-      WEBSOCKET_ENABLED: true
-      
-      QRCODE_LIMIT: 30
-      QRCODE_COLOR: "#000000"
-      
-      LOG_LEVEL: "ERROR,WARN,DEBUG,INFO,LOG,VERBOSE,DARK,WEBHOOKS"
-      DEL_INSTANCE: false
-      
-      WEBHOOK_GLOBAL_ENABLED: true
-      WEBHOOK_GLOBAL_URL: ${WEBHOOK_URL:-}
-      WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS: false
-      WEBHOOK_EVENTS_APPLICATION_STARTUP: false
-      WEBHOOK_EVENTS_QRCODE_UPDATED: true
-      WEBHOOK_EVENTS_MESSAGES_SET: true
-      WEBHOOK_EVENTS_MESSAGES_UPSERT: true
-      WEBHOOK_EVENTS_MESSAGES_UPDATE: true
-      WEBHOOK_EVENTS_MESSAGES_DELETE: false
-      WEBHOOK_EVENTS_SEND_MESSAGE: true
-      WEBHOOK_EVENTS_CONTACTS_SET: true
-      WEBHOOK_EVENTS_CONTACTS_UPSERT: true
-      WEBHOOK_EVENTS_CONTACTS_UPDATE: true
-      WEBHOOK_EVENTS_PRESENCE_UPDATE: true
-      WEBHOOK_EVENTS_CHATS_SET: true
-      WEBHOOK_EVENTS_CHATS_UPSERT: true
-      WEBHOOK_EVENTS_CHATS_UPDATE: true
-      WEBHOOK_EVENTS_CHATS_DELETE: true
-      WEBHOOK_EVENTS_GROUPS_UPSERT: true
-      WEBHOOK_EVENTS_GROUPS_UPDATE: true
-      WEBHOOK_EVENTS_GROUP_PARTICIPANTS_UPDATE: true
-      WEBHOOK_EVENTS_CONNECTION_UPDATE: true
-      WEBHOOK_EVENTS_CALL: true
-      WEBHOOK_EVENTS_TYPEBOT_START: false
-      WEBHOOK_EVENTS_TYPEBOT_CHANGE_STATUS: false
+      SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
+      HOST: "0.0.0.0"
+      PORT: "21465"
+      START_ALL_SESSION: "true"
+      TOKEN_STORE_TYPE: "file"
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_AUTO_DOWNLOAD: "true"
+      WEBHOOK_READ_MESSAGE: "true"
+      WEBHOOK_LISTEN_ACKS: "true"
+      WEBHOOK_ON_PRESENCE_CHANGED: "true"
     volumes:
-      - ./volumes/evolution:/evolution/instances:z
+      - ./volumes/wppconnect/tokens:/home/node/tokens
+      - ./volumes/wppconnect/userDataDir:/home/node/userDataDir
     networks:
       - supabase-network
 
