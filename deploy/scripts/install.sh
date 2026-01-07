@@ -3,6 +3,7 @@
 # ============================================
 # Script de Instalação - Sistema de Atendimento
 # Self-Hosted com Supabase + Evolution API
+# Distribuição via arquivo (sem Git)
 # ============================================
 
 set -e
@@ -20,20 +21,23 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warning() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
 log_error() { echo -e "${RED}[ERRO]${NC} $1"; }
 
+# Diretório do script
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
+
+cd "$DEPLOY_DIR"
+
+# Ler versão
+VERSION=$(cat VERSION 2>/dev/null || echo "1.0.0")
+
 # Banner
 echo -e "${BLUE}"
 echo "============================================"
 echo "  Sistema de Atendimento - Instalação"
 echo "  Self-Hosted com Supabase + WhatsApp"
+echo "  Versão: $VERSION"
 echo "============================================"
 echo -e "${NC}"
-
-# Diretório do script
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
-PROJECT_DIR="$(dirname "$DEPLOY_DIR")"
-
-cd "$DEPLOY_DIR"
 
 # ==========================================
 # 1. Verificar Requisitos
@@ -71,18 +75,22 @@ else
     log_success "Docker Compose encontrado"
 fi
 
-# Verificar Node.js (para build do frontend)
-if ! command -v node &> /dev/null; then
-    log_warning "Node.js não encontrado. Instalando..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | $SUDO -E bash -
-    $SUDO apt-get install -y nodejs
-    log_success "Node.js instalado: $(node --version)"
-else
-    log_success "Node.js encontrado: $(node --version)"
+# ==========================================
+# 2. Verificar Frontend Pré-compilado
+# ==========================================
+log_info "Verificando frontend..."
+
+if [ ! -d "frontend/dist" ] || [ ! -f "frontend/dist/index.html" ]; then
+    log_error "Frontend não encontrado em frontend/dist/"
+    log_error "O pacote de instalação parece estar incompleto."
+    log_error "Certifique-se de ter baixado o pacote completo."
+    exit 1
 fi
 
+log_success "Frontend encontrado"
+
 # ==========================================
-# 2. Configurar Variáveis de Ambiente
+# 3. Configurar Variáveis de Ambiente
 # ==========================================
 log_info "Configurando variáveis de ambiente..."
 
@@ -94,6 +102,7 @@ if [ -f .env ]; then
     else
         cp .env .env.backup
         log_info "Backup salvo em .env.backup"
+        cp .env.example .env
     fi
 else
     cp .env.example .env
@@ -159,7 +168,7 @@ sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_
 log_success "Arquivo .env configurado"
 
 # ==========================================
-# 3. Criar Estrutura de Diretórios
+# 4. Criar Estrutura de Diretórios
 # ==========================================
 log_info "Criando estrutura de diretórios..."
 
@@ -169,12 +178,12 @@ mkdir -p volumes/storage
 mkdir -p volumes/kong
 mkdir -p volumes/evolution
 mkdir -p nginx/ssl
-mkdir -p frontend/dist
+mkdir -p backups
 
 log_success "Diretórios criados"
 
 # ==========================================
-# 4. Copiar Configurações do Kong
+# 5. Copiar Configurações do Kong
 # ==========================================
 log_info "Configurando Kong API Gateway..."
 
@@ -347,7 +356,7 @@ KONG_EOF
 log_success "Kong configurado"
 
 # ==========================================
-# 5. Copiar Migrations do Banco
+# 6. Copiar Migrations do Banco
 # ==========================================
 log_info "Preparando migrations do banco de dados..."
 
@@ -355,11 +364,11 @@ if [ -f "supabase/init.sql" ]; then
     cp supabase/init.sql volumes/db/init/
     log_success "Migrations copiadas"
 else
-    log_warning "Arquivo init.sql não encontrado. Copie manualmente para volumes/db/init/"
+    log_warning "Arquivo init.sql não encontrado em supabase/"
 fi
 
 # ==========================================
-# 6. Gerar Certificado SSL
+# 7. Gerar Certificado SSL
 # ==========================================
 log_info "Configurando SSL..."
 
@@ -398,45 +407,37 @@ fi
 log_success "Certificados SSL configurados"
 
 # ==========================================
-# 7. Build do Frontend
+# 8. Atualizar Frontend com Configurações
 # ==========================================
-log_info "Construindo frontend..."
+log_info "Configurando frontend..."
 
-cd "$PROJECT_DIR"
-
-# Criar arquivo .env para o build
-cat > .env << EOF
-VITE_SUPABASE_URL=https://$DOMAIN
-VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY
-VITE_SUPABASE_PROJECT_ID=self-hosted
+# Substituir placeholders no frontend compilado
+if [ -f "frontend/dist/index.html" ]; then
+    # Criar script de configuração dinâmica
+    cat > frontend/dist/config.js << EOF
+window.__SUPABASE_CONFIG__ = {
+    url: "https://$DOMAIN",
+    anonKey: "$ANON_KEY"
+};
 EOF
-
-# Instalar dependências e fazer build
-npm install
-npm run build
-
-# Copiar build para pasta do deploy
-cp -r dist/* "$DEPLOY_DIR/frontend/dist/"
-
-cd "$DEPLOY_DIR"
-
-log_success "Frontend construído"
+    log_success "Frontend configurado"
+fi
 
 # ==========================================
-# 8. Iniciar Containers
+# 9. Iniciar Containers
 # ==========================================
 log_info "Iniciando containers Docker..."
 
 # Parar containers existentes
-docker-compose down 2>/dev/null || true
+docker-compose down 2>/dev/null || docker compose down 2>/dev/null || true
 
 # Iniciar serviços em background
-docker-compose up -d
+docker-compose up -d || docker compose up -d
 
 log_success "Containers iniciados"
 
 # ==========================================
-# 9. Aguardar Serviços Iniciarem
+# 10. Aguardar Serviços Iniciarem
 # ==========================================
 log_info "Aguardando serviços iniciarem..."
 
@@ -445,7 +446,7 @@ sleep 30
 # Verificar se banco está pronto
 max_attempts=30
 attempt=0
-while ! docker-compose exec -T db pg_isready -U postgres &>/dev/null; do
+while ! docker-compose exec -T db pg_isready -U postgres &>/dev/null && ! docker compose exec -T db pg_isready -U postgres &>/dev/null; do
     attempt=$((attempt + 1))
     if [ $attempt -ge $max_attempts ]; then
         log_error "Banco de dados não iniciou a tempo"
@@ -457,19 +458,20 @@ done
 log_success "Banco de dados pronto"
 
 # ==========================================
-# 10. Executar Migrations
+# 11. Executar Migrations
 # ==========================================
 log_info "Executando migrations do banco de dados..."
 
 if [ -f "volumes/db/init/init.sql" ]; then
-    docker-compose exec -T db psql -U postgres -d postgres -f /docker-entrypoint-initdb.d/init.sql || {
+    docker-compose exec -T db psql -U postgres -d postgres -f /docker-entrypoint-initdb.d/init.sql 2>/dev/null || \
+    docker compose exec -T db psql -U postgres -d postgres -f /docker-entrypoint-initdb.d/init.sql 2>/dev/null || {
         log_warning "Algumas migrations podem ter falhado (normal se já executadas)"
     }
     log_success "Migrations executadas"
 fi
 
 # ==========================================
-# 11. Criar Usuário Admin
+# 12. Criar Usuário Admin
 # ==========================================
 echo ""
 log_info "Criar usuário administrador inicial"
@@ -490,14 +492,18 @@ USER_ID=$(echo $RESPONSE | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
 
 if [ -n "$USER_ID" ]; then
     # Atualizar role para admin
-    docker-compose exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';"
+    docker-compose exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null || \
+    docker compose exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null
     log_success "Usuário admin criado com sucesso!"
 else
     log_warning "Não foi possível criar usuário automaticamente. Crie manualmente após a instalação."
 fi
 
+# Salvar versão instalada
+cp VERSION VERSION.old 2>/dev/null || true
+
 # ==========================================
-# 12. Resumo Final
+# 13. Resumo Final
 # ==========================================
 echo ""
 echo -e "${GREEN}============================================${NC}"
@@ -528,4 +534,6 @@ echo "  Reiniciar:          docker-compose restart"
 echo "  Parar:              docker-compose down"
 echo "  Backup:             ./scripts/backup.sh"
 echo "  Atualizar:          ./scripts/update.sh"
+echo ""
+echo -e "${BLUE}Versão instalada: $VERSION${NC}"
 echo ""
