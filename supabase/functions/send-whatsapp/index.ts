@@ -86,7 +86,7 @@ Deno.serve(async (req) => {
     const isPhoneActuallyLid = phone && whatsappLid && phone === whatsappLid;
     const hasRealPhone = phone && phone !== whatsappLid && phone.length >= 10 && phone.length <= 15;
     
-    let phoneToSend: string;
+    let phoneToSend: string | null = null;
     let sendAsLid = false;
     
     if (hasRealPhone) {
@@ -94,17 +94,129 @@ Deno.serve(async (req) => {
       phoneToSend = phone;
       console.log(`Using real phone number: ${phoneToSend}`);
     } else if (whatsappLid) {
-      // Only have LID, send using LID format
-      phoneToSend = whatsappLid;
-      sendAsLid = true;
-      console.log(`Using LID (no real phone available): ${phoneToSend}`);
+      // Only have LID - need to try to find real phone number first
+      console.log(`Contact only has LID: ${whatsappLid}, trying to find real phone via Evolution API...`);
+      
+      // Get connection first to query Evolution API
+      const { data: tempConnection } = await supabaseAdmin
+        .from("connections")
+        .select("*")
+        .eq("type", "whatsapp")
+        .eq("status", "connected")
+        .order("is_default", { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (tempConnection) {
+        const tempInstanceName = tempConnection.session_data?.instanceName || tempConnection.name;
+        
+        try {
+          // Try to fetch contacts from Evolution API to find real phone
+          const contactsResponse = await fetch(`${evolutionApiUrl}/chat/fetchAllContacts/${tempInstanceName}`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "apikey": evolutionApiKey,
+            },
+            body: JSON.stringify({}),
+          });
+          
+          if (contactsResponse.ok) {
+            const contactsData = await contactsResponse.json();
+            const contactsArray = Array.isArray(contactsData) ? contactsData : contactsData?.contacts || [];
+            
+            console.log(`Fetched ${contactsArray.length} contacts from Evolution API`);
+            
+            // Find contact by LID
+            const lidContact = contactsArray.find((c: any) => {
+              const remoteJid = c.remoteJid || c.id || "";
+              const remoteLid = remoteJid.replace("@lid", "").replace("@s.whatsapp.net", "").split(":")[0];
+              return remoteLid === whatsappLid || remoteJid.includes(whatsappLid);
+            });
+            
+            if (lidContact) {
+              console.log(`Found LID contact in Evolution:`, JSON.stringify(lidContact));
+              
+              // Check if this contact has remoteJidAlt with real phone
+              if (lidContact.remoteJidAlt && lidContact.remoteJidAlt.includes("@s.whatsapp.net")) {
+                const realPhone = lidContact.remoteJidAlt.replace("@s.whatsapp.net", "");
+                if (realPhone.length >= 10 && realPhone.length <= 15) {
+                  console.log(`Found real phone via remoteJidAlt: ${realPhone}`);
+                  phoneToSend = realPhone;
+                  sendAsLid = false;
+                  
+                  // Update contact with real phone
+                  await supabaseAdmin
+                    .from("contacts")
+                    .update({ phone: realPhone })
+                    .eq("id", contact.id);
+                  console.log(`Updated contact ${contact.id} with real phone: ${realPhone}`);
+                }
+              }
+              
+              // If still no phone, try to find via pushName match
+              if (!phoneToSend && lidContact.pushName) {
+                const matchingContact = contactsArray.find((c: any) => 
+                  c.pushName === lidContact.pushName && 
+                  c.remoteJid?.includes("@s.whatsapp.net") &&
+                  !c.remoteJid?.includes("@lid")
+                );
+                
+                if (matchingContact) {
+                  const realPhone = matchingContact.remoteJid.replace("@s.whatsapp.net", "");
+                  if (realPhone.length >= 10 && realPhone.length <= 15) {
+                    console.log(`Found real phone via pushName match: ${realPhone}`);
+                    phoneToSend = realPhone;
+                    sendAsLid = false;
+                    
+                    // Update contact with real phone
+                    await supabaseAdmin
+                      .from("contacts")
+                      .update({ phone: realPhone })
+                      .eq("id", contact.id);
+                    console.log(`Updated contact ${contact.id} with real phone: ${realPhone}`);
+                  }
+                }
+              }
+            }
+          }
+        } catch (fetchErr) {
+          console.error("Error fetching contacts from Evolution:", fetchErr);
+        }
+      }
+      
+      // If we still don't have a real phone, we can't send
+      if (!phoneToSend) {
+        console.log(`Could not find real phone for LID ${whatsappLid}`);
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: `Não foi possível encontrar o número real do contato. Este contato foi identificado apenas pelo ID interno do WhatsApp (LID). Por favor, peça ao contato para enviar uma nova mensagem para que o sistema possa capturar o número correto.`,
+            needsReconnection: false
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     } else if (phone) {
       // Fallback to whatever we have
       phoneToSend = phone;
       // Check if it looks like a LID (long number without valid country code)
       const cleanPhone = phone.replace(/\D/g, "");
       sendAsLid = cleanPhone.length > 13 || (cleanPhone.length >= 12 && !cleanPhone.match(/^(55|1|44|351|34|49|33|39|81|86|91)/));
-      console.log(`Using phone as fallback, sendAsLid=${sendAsLid}: ${phoneToSend}`);
+      
+      if (sendAsLid) {
+        // If it looks like a LID, we can't send
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: `Não foi possível enviar mensagem. O contato possui apenas um identificador interno do WhatsApp (LID) e não o número real. Por favor, peça ao contato para enviar uma nova mensagem.`,
+            needsReconnection: false
+          }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      
+      console.log(`Using phone as fallback: ${phoneToSend}`);
     } else {
       return new Response(
         JSON.stringify({ success: false, error: "Contato sem número de telefone ou ID do WhatsApp" }),
@@ -167,7 +279,7 @@ Deno.serve(async (req) => {
     }
 
     // Format the number based on whether it's a LID or real phone
-    let formattedNumber = phoneToSend.replace(/\D/g, "");
+    let formattedNumber = phoneToSend!.replace(/\D/g, "");
     
     if (sendAsLid) {
       // For LIDs, append @lid suffix
