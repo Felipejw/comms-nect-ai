@@ -568,10 +568,10 @@ check_wppconnect_health() {
     log_info "Verificando WPPConnect Server (pode levar até 2 minutos)..."
     
     while [ $retry_count -lt $max_retries ]; do
-        # Verificar se container está rodando
-        if ! $DOCKER_COMPOSE ps wppconnect 2>/dev/null | grep -q "Up\|running"; then
+        # Verificar se container está rodando (usando wppconnect-1 como principal)
+        if ! $DOCKER_COMPOSE ps wppconnect-1 2>/dev/null | grep -q "Up\|running"; then
             log_warning "Container WPPConnect não está rodando. Tentando reiniciar..."
-            $DOCKER_COMPOSE up -d wppconnect
+            $DOCKER_COMPOSE up -d wppconnect-1
             sleep 10
         fi
         
@@ -597,7 +597,7 @@ if check_wppconnect_health; then
     log_success "WPPConnect Server verificado com sucesso"
 else
     log_warning "WPPConnect pode ainda estar inicializando"
-    log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect"
+    log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect-1"
     log_info "Teste: curl http://localhost:21465/api/health"
 fi
 
