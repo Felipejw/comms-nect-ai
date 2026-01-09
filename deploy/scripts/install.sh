@@ -520,6 +520,12 @@ window.__SUPABASE_CONFIG__ = {
     anonKey: "$ANON_KEY"
 };
 EOF
+    
+    # Inserir referência ao config.js no index.html se não existir
+    if ! grep -q "config.js" frontend/dist/index.html; then
+        sed -i 's|</head>|<script src="/config.js"></script></head>|' frontend/dist/index.html
+    fi
+    
     log_success "Frontend configurado"
 fi
 
