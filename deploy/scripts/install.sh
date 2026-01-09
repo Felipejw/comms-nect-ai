@@ -541,7 +541,7 @@ log_success "Containers iniciados"
 # ==========================================
 log_info "Aguardando serviços iniciarem..."
 
-sleep 30
+sleep 60
 
 # Verificar se banco está pronto
 max_attempts=30
@@ -576,7 +576,7 @@ check_wppconnect_health() {
         fi
         
         # Tentar health check via curl
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/health 2>/dev/null || echo "000")
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
         
         # 200 = OK, 401 = Não autorizado (mas servidor está funcionando)
         if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
@@ -598,7 +598,7 @@ if check_wppconnect_health; then
 else
     log_warning "WPPConnect pode ainda estar inicializando"
     log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect-1"
-    log_info "Teste: curl http://localhost:21465/api/health"
+    log_info "Teste: curl http://localhost:21465/api/"
 fi
 
 # ==========================================
