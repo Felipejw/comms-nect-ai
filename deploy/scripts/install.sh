@@ -575,11 +575,17 @@ check_wppconnect_health() {
             sleep 10
         fi
         
-        # Tentar health check via curl
+        # Tentar health check via curl - endpoint principal
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
         
-        # 200 = OK, 401/403 = Não autorizado, 404 = Sem sessões (mas servidor funcionando)
-        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ]; then
+        # Se /api/ falhar, tentar endpoint alternativo /api/showAllSessions
+        if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "502" ] || [ "$HTTP_CODE" = "503" ]; then
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
+        fi
+        
+        # Qualquer resposta HTTP válida indica que o servidor está funcionando
+        # 200 = OK, 401/403 = Não autorizado, 404 = Sem sessões, 500 = Erro interno (mas servidor respondendo)
+        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "500" ]; then
             log_success "WPPConnect Server está funcionando (HTTP $HTTP_CODE)"
             return 0
         fi
