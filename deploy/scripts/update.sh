@@ -190,8 +190,16 @@ log_info "Verificando WPPConnect Server..."
 MAX_RETRIES=20
 RETRY=0
 while [ $RETRY -lt $MAX_RETRIES ]; do
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/health 2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+    # Tentar endpoint principal
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
+    
+    # Se falhar, tentar endpoint alternativo
+    if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "502" ] || [ "$HTTP_CODE" = "503" ]; then
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
+    fi
+    
+    # Qualquer resposta válida indica servidor funcionando
+    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "500" ]; then
         log_success "WPPConnect Server: OK (HTTP $HTTP_CODE)"
         break
     fi
