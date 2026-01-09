@@ -287,17 +287,17 @@ log_success "Diretórios criados"
 # ==========================================
 log_info "Configurando Kong API Gateway..."
 
-cat > volumes/kong/kong.yml << 'KONG_EOF'
+cat > volumes/kong/kong.yml << KONG_EOF
 _format_version: "2.1"
 _transform: true
 
 consumers:
   - username: anon
     keyauth_credentials:
-      - key: $SUPABASE_ANON_KEY
+      - key: ${ANON_KEY}
   - username: service_role
     keyauth_credentials:
-      - key: $SUPABASE_SERVICE_KEY
+      - key: ${SERVICE_ROLE_KEY}
 
 acls:
   - consumer: anon
