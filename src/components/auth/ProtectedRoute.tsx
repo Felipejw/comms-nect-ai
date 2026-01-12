@@ -15,8 +15,9 @@ export function ProtectedRoute({
   module, 
   requiredAction = "view" 
 }: ProtectedRouteProps) {
-  const { user, loading, hasPermission, isAdmin } = useAuth();
+  const { user, loading, hasPermission, isAdmin, role } = useAuth();
 
+  // Show loading while auth state is being determined
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -28,6 +29,15 @@ export function ProtectedRoute({
   // Not logged in - redirect to login
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Still loading role data - show loader
+  if (role === null) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
   }
 
   // Admins have full access
