@@ -50,7 +50,7 @@ export function ProfileTab() {
   };
 
   const handleChangeEmail = async () => {
-    if (!emailData.newEmail) {
+    if (!user || !emailData.newEmail) {
       toast.error("Digite o novo email");
       return;
     }
@@ -61,21 +61,24 @@ export function ProfileTab() {
       return;
     }
 
-    if (emailData.newEmail === user?.email) {
+    if (emailData.newEmail === profile?.email) {
       toast.error("O novo email deve ser diferente do atual");
       return;
     }
 
     setIsChangingEmail(true);
     try {
-      const { error } = await supabase.auth.updateUser({
-        email: emailData.newEmail,
-      });
+      const { error } = await supabase
+        .from("profiles")
+        .update({ email: emailData.newEmail })
+        .eq("user_id", user.id);
 
       if (error) throw error;
 
-      toast.success("Email de confirmação enviado! Verifique sua caixa de entrada.");
+      toast.success("Email alterado com sucesso!");
       setEmailData({ newEmail: "" });
+      // Refresh to show updated email
+      window.location.reload();
     } catch (error: any) {
       toast.error(error.message || "Erro ao alterar email");
     } finally {
