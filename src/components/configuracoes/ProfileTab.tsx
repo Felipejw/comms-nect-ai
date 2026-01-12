@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUpdateProfile } from "@/hooks/useUsers";
 import { supabase } from "@/integrations/supabase/client";
-import { User, Lock, Loader2 } from "lucide-react";
+import { User, Lock, Loader2, Mail } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,6 +19,11 @@ export function ProfileTab() {
     phone: profile?.phone || "",
   });
   const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  const [emailData, setEmailData] = useState({
+    newEmail: "",
+  });
+  const [isChangingEmail, setIsChangingEmail] = useState(false);
 
   const [passwordData, setPasswordData] = useState({
     newPassword: "",
@@ -41,6 +46,40 @@ export function ProfileTab() {
       toast.error("Erro ao atualizar perfil");
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  const handleChangeEmail = async () => {
+    if (!emailData.newEmail) {
+      toast.error("Digite o novo email");
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(emailData.newEmail)) {
+      toast.error("Digite um email válido");
+      return;
+    }
+
+    if (emailData.newEmail === user?.email) {
+      toast.error("O novo email deve ser diferente do atual");
+      return;
+    }
+
+    setIsChangingEmail(true);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        email: emailData.newEmail,
+      });
+
+      if (error) throw error;
+
+      toast.success("Email de confirmação enviado! Verifique sua caixa de entrada.");
+      setEmailData({ newEmail: "" });
+    } catch (error: any) {
+      toast.error(error.message || "Erro ao alterar email");
+    } finally {
+      setIsChangingEmail(false);
     }
   };
 
@@ -118,7 +157,7 @@ export function ProfileTab() {
             />
           </div>
           <div className="space-y-2">
-            <Label>Email</Label>
+            <Label>Email atual</Label>
             <Input value={profile?.email || ""} disabled className="bg-muted" />
           </div>
           <div className="space-y-2 md:col-span-2">
@@ -141,6 +180,47 @@ export function ProfileTab() {
             </>
           ) : (
             "Salvar Alterações"
+          )}
+        </Button>
+      </div>
+
+      {/* Change Email */}
+      <div className="bg-card rounded-lg p-6 space-y-6">
+        <div className="flex items-center gap-2 text-lg font-semibold">
+          <Mail className="w-5 h-5 text-primary" />
+          Alterar Email
+        </div>
+
+        <p className="text-sm text-muted-foreground">
+          Após a alteração, você receberá um email de confirmação no novo endereço.
+        </p>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label>Novo Email</Label>
+            <Input
+              type="email"
+              value={emailData.newEmail}
+              onChange={(e) =>
+                setEmailData({ newEmail: e.target.value })
+              }
+              placeholder="novo@email.com"
+            />
+          </div>
+        </div>
+
+        <Button
+          onClick={handleChangeEmail}
+          disabled={isChangingEmail || !emailData.newEmail}
+          variant="secondary"
+        >
+          {isChangingEmail ? (
+            <>
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              Alterando...
+            </>
+          ) : (
+            "Alterar Email"
           )}
         </Button>
       </div>
