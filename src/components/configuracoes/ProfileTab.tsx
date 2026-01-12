@@ -68,17 +68,30 @@ export function ProfileTab() {
 
     setIsChangingEmail(true);
     try {
-      const { error } = await supabase
+      // 1. Atualizar email no auth.users (email de login)
+      const { error: authError } = await supabase.auth.updateUser({
+        email: emailData.newEmail,
+      });
+
+      if (authError) throw authError;
+
+      // 2. Atualizar email na tabela profiles (para exibição)
+      const { error: profileError } = await supabase
         .from("profiles")
         .update({ email: emailData.newEmail })
         .eq("user_id", user.id);
 
-      if (error) throw error;
+      if (profileError) {
+        console.error("Erro ao atualizar profile:", profileError);
+      }
 
-      toast.success("Email alterado com sucesso!");
+      toast.success("Email alterado com sucesso! Você será deslogado para fazer login com o novo email.");
       setEmailData({ newEmail: "" });
-      // Refresh to show updated email
-      window.location.reload();
+      
+      // Aguardar um pouco e fazer logout
+      setTimeout(async () => {
+        await supabase.auth.signOut();
+      }, 2000);
     } catch (error: any) {
       toast.error(error.message || "Erro ao alterar email");
     } finally {
@@ -195,7 +208,7 @@ export function ProfileTab() {
         </div>
 
         <p className="text-sm text-muted-foreground">
-          Após a alteração, você receberá um email de confirmação no novo endereço.
+          Após a alteração, você será deslogado e precisará fazer login com o novo email.
         </p>
 
         <div className="grid gap-4 md:grid-cols-2">
