@@ -298,11 +298,12 @@ serve(async (req) => {
 
     console.log(`[WPPConnect] Action: ${action}, instanceName: ${instanceName}, connectionId: ${connectionId}`);
 
-    // For health check, allow even without credentials to show "not configured" status
+    // Actions that work without WPPConnect configured (database-only operations)
     const instances = getConfiguredInstances();
-    const isHealthCheck = action === "health";
+    const dbOnlyActions = ["health", "delete", "status"];
+    const requiresWppConnect = !dbOnlyActions.includes(action);
     
-    if (!isHealthCheck && (instances.length === 0 || !WPPCONNECT_SECRET_KEY)) {
+    if (requiresWppConnect && (instances.length === 0 || !WPPCONNECT_SECRET_KEY)) {
       console.error("[WPPConnect] Missing credentials");
       throw new Error("WPPConnect não configurado. Configure as variáveis WPPCONNECT_API_URL e WPPCONNECT_SECRET_KEY.");
     }
