@@ -932,6 +932,39 @@ export type Database = {
           },
         ]
       }
+      products: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          features: Json | null
+          id: string
+          is_active: boolean | null
+          name: string
+          price: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          features?: Json | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          price: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          features?: Json | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          price?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -943,6 +976,7 @@ export type Database = {
           name: string
           phone: string | null
           signature_enabled: boolean | null
+          tenant_id: string | null
           updated_at: string
           user_id: string
         }
@@ -956,6 +990,7 @@ export type Database = {
           name: string
           phone?: string | null
           signature_enabled?: boolean | null
+          tenant_id?: string | null
           updated_at?: string
           user_id: string
         }
@@ -969,10 +1004,19 @@ export type Database = {
           name?: string
           phone?: string | null
           signature_enabled?: boolean | null
+          tenant_id?: string | null
           updated_at?: string
           user_id?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "profiles_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       queue_agents: {
         Row: {
@@ -1077,6 +1121,70 @@ export type Database = {
           usage_count?: number | null
         }
         Relationships: []
+      }
+      sales: {
+        Row: {
+          buyer_email: string | null
+          buyer_name: string | null
+          buyer_tenant_id: string | null
+          commission_amount: number
+          created_at: string | null
+          id: string
+          paid_at: string | null
+          product_id: string | null
+          seller_tenant_id: string | null
+          status: string | null
+          total_amount: number
+        }
+        Insert: {
+          buyer_email?: string | null
+          buyer_name?: string | null
+          buyer_tenant_id?: string | null
+          commission_amount: number
+          created_at?: string | null
+          id?: string
+          paid_at?: string | null
+          product_id?: string | null
+          seller_tenant_id?: string | null
+          status?: string | null
+          total_amount: number
+        }
+        Update: {
+          buyer_email?: string | null
+          buyer_name?: string | null
+          buyer_tenant_id?: string | null
+          commission_amount?: number
+          created_at?: string | null
+          id?: string
+          paid_at?: string | null
+          product_id?: string | null
+          seller_tenant_id?: string | null
+          status?: string | null
+          total_amount?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_buyer_tenant_id_fkey"
+            columns: ["buyer_tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_seller_tenant_id_fkey"
+            columns: ["seller_tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       schedules: {
         Row: {
@@ -1195,6 +1303,97 @@ export type Database = {
         }
         Relationships: []
       }
+      tenant_settings: {
+        Row: {
+          category: string | null
+          created_at: string | null
+          id: string
+          key: string
+          tenant_id: string
+          updated_at: string | null
+          value: string
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          key: string
+          tenant_id: string
+          updated_at?: string | null
+          value: string
+        }
+        Update: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          key?: string
+          tenant_id?: string
+          updated_at?: string | null
+          value?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_settings_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      tenants: {
+        Row: {
+          affiliate_code: string | null
+          commission_rate: number | null
+          created_at: string | null
+          custom_domain: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          owner_user_id: string
+          plan: string | null
+          referred_by: string | null
+          slug: string
+          updated_at: string | null
+        }
+        Insert: {
+          affiliate_code?: string | null
+          commission_rate?: number | null
+          created_at?: string | null
+          custom_domain?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          owner_user_id: string
+          plan?: string | null
+          referred_by?: string | null
+          slug: string
+          updated_at?: string | null
+        }
+        Update: {
+          affiliate_code?: string | null
+          commission_rate?: number | null
+          created_at?: string | null
+          custom_domain?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          owner_user_id?: string
+          plan?: string | null
+          referred_by?: string | null
+          slug?: string
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenants_referred_by_fkey"
+            columns: ["referred_by"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_permissions: {
         Row: {
           can_edit: boolean | null
@@ -1251,6 +1450,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      can_access_tenant: {
+        Args: { _tenant_id: string; _user_id: string }
+        Returns: boolean
+      }
+      get_user_tenant_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1267,10 +1471,11 @@ export type Database = {
         Returns: undefined
       }
       is_admin_or_manager: { Args: { _user_id: string }; Returns: boolean }
+      is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       normalize_phone: { Args: { phone_input: string }; Returns: string }
     }
     Enums: {
-      app_role: "admin" | "manager" | "operator"
+      app_role: "super_admin" | "admin" | "manager" | "operator"
       campaign_status: "draft" | "active" | "paused" | "completed"
       contact_status: "active" | "inactive"
       conversation_status: "new" | "in_progress" | "resolved" | "archived"
@@ -1411,7 +1616,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
-      app_role: ["admin", "manager", "operator"],
+      app_role: ["super_admin", "admin", "manager", "operator"],
       campaign_status: ["draft", "active", "paused", "completed"],
       contact_status: ["active", "inactive"],
       conversation_status: ["new", "in_progress", "resolved", "archived"],
