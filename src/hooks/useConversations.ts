@@ -12,8 +12,9 @@ export interface Message {
   message_type: 'text' | 'image' | 'audio' | 'document' | 'video';
   media_url: string | null;
   is_read: boolean;
-  delivery_status: 'sent' | 'delivered' | 'read' | null;
+  delivery_status?: 'sent' | 'delivered' | 'read' | null;
   created_at: string;
+  tenant_id?: string | null;
 }
 
 export interface ConversationTag {
