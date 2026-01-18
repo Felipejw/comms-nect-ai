@@ -202,8 +202,23 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
         ))}
       </nav>
 
-      {/* Footer - Settings always visible */}
-      <div className="p-3 border-t border-sidebar-border">
+      {/* Footer - Settings and Super Admin */}
+      <div className="p-3 border-t border-sidebar-border space-y-1">
+        {isSuperAdmin && (
+          <NavLink
+            to="/super-admin"
+            onClick={onNavigate}
+            className={cn(
+              "sidebar-link bg-gradient-to-r from-amber-500/10 to-orange-500/10 hover:from-amber-500/20 hover:to-orange-500/20",
+              isActive("/super-admin") && "sidebar-link-active from-amber-500/20 to-orange-500/20",
+              isCollapsed && "justify-center px-2"
+            )}
+            title={isCollapsed ? "Super Admin" : undefined}
+          >
+            <Crown className="w-5 h-5 text-amber-500" />
+            {!isCollapsed && <span className="text-amber-600 dark:text-amber-400 font-medium">Super Admin</span>}
+          </NavLink>
+        )}
         <NavLink
           to="/configuracoes"
           onClick={onNavigate}
