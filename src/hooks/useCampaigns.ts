@@ -22,10 +22,11 @@ export interface Campaign {
   message_variations: string[] | null;
   use_variations: boolean | null;
   use_buttons: boolean | null;
-  buttons: Array<{ id: string; text: string }> | null;
+  buttons: unknown; // JSON from database
   min_interval: number | null;
   max_interval: number | null;
   template_id: string | null;
+  tenant_id?: string | null;
 }
 
 export interface CampaignContact {
