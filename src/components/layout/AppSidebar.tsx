@@ -23,6 +23,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Building2,
+  Crown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -83,7 +84,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const location = useLocation();
-  const { hasPermission, isAdmin } = useAuth();
+  const { hasPermission, isAdmin, isSuperAdmin } = useAuth();
   const { getSetting } = useSystemSettings();
   const [expandedSections, setExpandedSections] = useState<string[]>(["Gerência", "Atendimento", "Administração"]);
   const [isCollapsed, setIsCollapsed] = useState(false);

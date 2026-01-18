@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, ReactNode } from 'react
 import { User, Session } from '@supabase/supabase-js';
 import { supabase } from '@/integrations/supabase/client';
 
-type AppRole = 'admin' | 'atendente';
+type AppRole = 'super_admin' | 'admin' | 'manager' | 'operator';
 
 interface Profile {
   id: string;
@@ -12,6 +12,18 @@ interface Profile {
   avatar_url: string | null;
   phone: string | null;
   is_online: boolean;
+  tenant_id: string | null;
+}
+
+interface Tenant {
+  id: string;
+  name: string;
+  slug: string;
+  custom_domain: string | null;
+  plan: string;
+  is_active: boolean;
+  affiliate_code: string;
+  commission_rate: number;
 }
 
 interface UserPermission {
@@ -25,11 +37,13 @@ interface AuthContextType {
   session: Session | null;
   profile: Profile | null;
   role: AppRole | null;
+  tenant: Tenant | null;
   permissions: UserPermission[];
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  isSuperAdmin: boolean;
   isAdmin: boolean;
   hasPermission: (module: string, action: 'view' | 'edit') => boolean;
 }
@@ -41,6 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<AppRole | null>(null);
+  const [tenant, setTenant] = useState<Tenant | null>(null);
   const [permissions, setPermissions] = useState<UserPermission[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -59,6 +74,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } else {
           setProfile(null);
           setRole(null);
+          setTenant(null);
           setPermissions([]);
           setLoading(false);
         }
@@ -91,9 +107,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       if (profileData) {
         setProfile(profileData as Profile);
+        
+        // Fetch tenant if user has tenant_id
+        if (profileData.tenant_id) {
+          const { data: tenantData } = await supabase
+            .from('tenants')
+            .select('*')
+            .eq('id', profileData.tenant_id)
+            .maybeSingle();
+          
+          if (tenantData) {
+            setTenant(tenantData as Tenant);
+          }
+        }
       }
 
-      // Fetch role - normalize old roles to new ones
+      // Fetch role
       const { data: roleData } = await supabase
         .from('user_roles')
         .select('role')
@@ -101,12 +130,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
       
       if (roleData) {
-        // Normalize: manager and operator become atendente, admin stays admin
-        const normalizedRole: AppRole = roleData.role === 'admin' ? 'admin' : 'atendente';
-        setRole(normalizedRole);
+        // Map old roles to new structure
+        const dbRole = roleData.role as string;
+        let mappedRole: AppRole;
+        
+        if (dbRole === 'super_admin') {
+          mappedRole = 'super_admin';
+        } else if (dbRole === 'admin') {
+          mappedRole = 'admin';
+        } else if (dbRole === 'manager') {
+          mappedRole = 'manager';
+        } else {
+          mappedRole = 'operator';
+        }
+        
+        setRole(mappedRole);
         
         // Only fetch permissions for non-admin users
-        if (normalizedRole !== 'admin') {
+        if (mappedRole !== 'super_admin' && mappedRole !== 'admin') {
           const { data: permissionsData } = await supabase
             .from('user_permissions')
             .select('module, can_view, can_edit')
@@ -116,7 +157,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setPermissions(permissionsData);
           }
         } else {
-          // Admins have all permissions
+          // Super admins and admins have all permissions
           setPermissions([]);
         }
       }
@@ -157,15 +198,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null);
     setProfile(null);
     setRole(null);
+    setTenant(null);
     setPermissions([]);
   };
 
-  const isAdmin = role === 'admin';
+  const isSuperAdmin = role === 'super_admin';
+  const isAdmin = role === 'admin' || role === 'super_admin';
 
   // Check if user has permission for a module and action
   const hasPermission = (module: string, action: 'view' | 'edit'): boolean => {
-    // Admins have all permissions
-    if (isAdmin) return true;
+    // Super admins and admins have all permissions
+    if (isSuperAdmin || isAdmin) return true;
     
     const permission = permissions.find(p => p.module === module);
     if (!permission) return false;
@@ -180,11 +223,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         session,
         profile,
         role,
+        tenant,
         permissions,
         loading,
         signIn,
         signUp,
         signOut,
+        isSuperAdmin,
         isAdmin,
         hasPermission,
       }}
