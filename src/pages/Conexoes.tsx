@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { QrCode, Plus, Loader2, AlertTriangle, RefreshCw, Smartphone } from "lucide-react";
+import { QrCode, Plus, Loader2, AlertTriangle, RefreshCw, Smartphone, Cloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,9 +12,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useWhatsAppConnections, WhatsAppConnection } from "@/hooks/useWhatsAppConnections";
 import { useToast } from "@/hooks/use-toast";
 import { ConnectionCard } from "@/components/conexoes/ConnectionCard";
+import { supabase } from "@/integrations/supabase/client";
 
 export default function Conexoes() {
   const [newInstanceName, setNewInstanceName] = useState("");
@@ -40,6 +42,15 @@ export default function Conexoes() {
   const [recreateAttempts, setRecreateAttempts] = useState<Record<string, number>>({});
   const [pollCount, setPollCount] = useState(0);
   const [qrError, setQrError] = useState<string | null>(null);
+  
+  // Meta API states
+  const [isMetaDialogOpen, setIsMetaDialogOpen] = useState(false);
+  const [metaName, setMetaName] = useState("");
+  const [metaAccessToken, setMetaAccessToken] = useState("");
+  const [metaPhoneNumberId, setMetaPhoneNumberId] = useState("");
+  const [metaBusinessAccountId, setMetaBusinessAccountId] = useState("");
+  const [metaWebhookVerifyToken, setMetaWebhookVerifyToken] = useState("");
+  const [isCreatingMeta, setIsCreatingMeta] = useState(false);
   
   // Polling for QR code and status updates
   useEffect(() => {
@@ -179,6 +190,60 @@ export default function Conexoes() {
     }
   };
 
+  const handleCreateMetaConnection = async () => {
+    if (!metaName.trim() || !metaAccessToken.trim() || !metaPhoneNumberId.trim()) {
+      toast({
+        title: "Campos obrigatórios",
+        description: "Preencha o nome, Access Token e Phone Number ID.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsCreatingMeta(true);
+    try {
+      const { data, error } = await supabase
+        .from("connections")
+        .insert({
+          name: metaName.trim(),
+          type: "meta_api",
+          status: "connected",
+          session_data: {
+            access_token: metaAccessToken.trim(),
+            phone_number_id: metaPhoneNumberId.trim(),
+            business_account_id: metaBusinessAccountId.trim() || null,
+            webhook_verify_token: metaWebhookVerifyToken.trim() || null,
+          },
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      toast({
+        title: "Conexão criada!",
+        description: "Sua conexão com a API Oficial da Meta foi configurada com sucesso.",
+      });
+
+      setIsMetaDialogOpen(false);
+      setMetaName("");
+      setMetaAccessToken("");
+      setMetaPhoneNumberId("");
+      setMetaBusinessAccountId("");
+      setMetaWebhookVerifyToken("");
+      refetch();
+    } catch (error) {
+      console.error("Error creating Meta connection:", error);
+      toast({
+        title: "Erro ao criar conexão",
+        description: "Não foi possível criar a conexão. Verifique os dados e tente novamente.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsCreatingMeta(false);
+    }
+  };
+
   const currentQrConnection = connections.find(c => c.id === selectedConnection?.id);
 
   return (
@@ -192,11 +257,13 @@ export default function Conexoes() {
           </h2>
           <p className="text-muted-foreground">Gerencie suas conexões de WhatsApp</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <Button variant="outline" onClick={() => refetch()} className="gap-2">
             <RefreshCw className="w-4 h-4" />
             Atualizar
           </Button>
+          
+          {/* WPPConnect Dialog */}
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-emerald-500 hover:bg-emerald-600 text-white">
@@ -208,7 +275,7 @@ export default function Conexoes() {
               <DialogHeader>
                 <DialogTitle>Nova Conexão WhatsApp</DialogTitle>
                 <DialogDescription>
-                  Crie uma nova instância para conectar um número de WhatsApp
+                  Crie uma nova instância para conectar um número de WhatsApp via QR Code
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -233,6 +300,91 @@ export default function Conexoes() {
                 >
                   {createConnection.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
                   Criar Instância
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Meta API Dialog */}
+          <Dialog open={isMetaDialogOpen} onOpenChange={setIsMetaDialogOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline" className="gap-2 border-blue-500 text-blue-500 hover:bg-blue-50">
+                <Cloud className="w-4 h-4" />
+                VIA META API
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Cloud className="w-5 h-5 text-blue-500" />
+                  Conexão via API Oficial da Meta
+                </DialogTitle>
+                <DialogDescription>
+                  Configure sua conexão usando a API Cloud do WhatsApp Business
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label htmlFor="metaName">Nome da Conexão *</Label>
+                  <Input
+                    id="metaName"
+                    placeholder="Ex: WhatsApp Oficial"
+                    value={metaName}
+                    onChange={(e) => setMetaName(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metaAccessToken">Access Token Permanente *</Label>
+                  <Input
+                    id="metaAccessToken"
+                    type="password"
+                    placeholder="EAAxxxxxx..."
+                    value={metaAccessToken}
+                    onChange={(e) => setMetaAccessToken(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Gere um token permanente no Meta Business Suite
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metaPhoneNumberId">Phone Number ID *</Label>
+                  <Input
+                    id="metaPhoneNumberId"
+                    placeholder="123456789012345"
+                    value={metaPhoneNumberId}
+                    onChange={(e) => setMetaPhoneNumberId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metaBusinessAccountId">Business Account ID (opcional)</Label>
+                  <Input
+                    id="metaBusinessAccountId"
+                    placeholder="123456789012345"
+                    value={metaBusinessAccountId}
+                    onChange={(e) => setMetaBusinessAccountId(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="metaWebhookVerifyToken">Webhook Verify Token (opcional)</Label>
+                  <Input
+                    id="metaWebhookVerifyToken"
+                    placeholder="Token para verificação do webhook"
+                    value={metaWebhookVerifyToken}
+                    onChange={(e) => setMetaWebhookVerifyToken(e.target.value)}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setIsMetaDialogOpen(false)}>
+                  Cancelar
+                </Button>
+                <Button 
+                  onClick={handleCreateMetaConnection} 
+                  disabled={!metaName.trim() || !metaAccessToken.trim() || !metaPhoneNumberId.trim() || isCreatingMeta}
+                  className="bg-blue-500 hover:bg-blue-600 text-white"
+                >
+                  {isCreatingMeta && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                  Conectar
                 </Button>
               </DialogFooter>
             </DialogContent>

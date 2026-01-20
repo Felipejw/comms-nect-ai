@@ -7,6 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   RefreshCw,
   Server,
   Database,
@@ -19,8 +27,11 @@ import {
   Clock,
   Zap,
   Users,
+  FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { format } from "date-fns";
+import { ptBR } from "date-fns/locale";
 
 interface InstanceHealth {
   url: string;
@@ -122,16 +133,100 @@ export default function Diagnostico() {
     refetchInterval: autoRefresh ? 30000 : false,
   });
 
+  // Fetch activity logs
+  const {
+    data: activityLogs,
+    isLoading: isLoadingLogs,
+    refetch: refetchLogs,
+  } = useQuery({
+    queryKey: ["activity-logs-diagnostic"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("activity_logs")
+        .select(`
+          id,
+          action,
+          entity_type,
+          entity_id,
+          metadata,
+          created_at,
+          user_id,
+          ip_address
+        `)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      
+      if (error) throw error;
+      
+      // Fetch user names separately
+      const userIds = [...new Set(data?.map(log => log.user_id).filter(Boolean))];
+      let userNames: Record<string, string> = {};
+      
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("user_id, name")
+          .in("user_id", userIds);
+        
+        profiles?.forEach(p => {
+          userNames[p.user_id] = p.name;
+        });
+      }
+      
+      return data?.map(log => ({
+        ...log,
+        userName: log.user_id ? (userNames[log.user_id] || "Usuário desconhecido") : "Sistema",
+      })) || [];
+    },
+    refetchInterval: autoRefresh ? 30000 : false,
+  });
+
   useEffect(() => {
-    if (healthData || dbStatus || connections) {
+    if (healthData || dbStatus || connections || activityLogs) {
       setLastRefresh(new Date());
     }
-  }, [healthData, dbStatus, connections]);
+  }, [healthData, dbStatus, connections, activityLogs]);
 
   const handleRefresh = () => {
     refetchHealth();
     refetchDb();
     refetchConnections();
+    refetchLogs();
+  };
+
+  const getActionLabel = (action: string) => {
+    const actionMap: Record<string, string> = {
+      create: "Criou",
+      update: "Atualizou",
+      delete: "Excluiu",
+      login: "Login",
+      logout: "Logout",
+      send_message: "Enviou mensagem",
+      receive_message: "Recebeu mensagem",
+    };
+    return actionMap[action] || action;
+  };
+
+  const getEntityLabel = (entityType: string) => {
+    const entityMap: Record<string, string> = {
+      conversation: "Conversa",
+      contact: "Contato",
+      message: "Mensagem",
+      user: "Usuário",
+      campaign: "Campanha",
+      connection: "Conexão",
+      tag: "Tag",
+      queue: "Fila",
+    };
+    return entityMap[entityType] || entityType;
+  };
+
+  const hasError = (metadata: unknown): { hasError: boolean; errorMessage: string | null } => {
+    if (!metadata || typeof metadata !== 'object') return { hasError: false, errorMessage: null };
+    const meta = metadata as Record<string, unknown>;
+    if (meta.error) return { hasError: true, errorMessage: String(meta.error) };
+    if (meta.status === 'error') return { hasError: true, errorMessage: meta.message ? String(meta.message) : 'Erro desconhecido' };
+    return { hasError: false, errorMessage: null };
   };
 
   const getStatusColor = (status: string) => {
@@ -470,6 +565,96 @@ export default function Diagnostico() {
                   )}
                 </div>
               ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Activity Logs */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="w-5 h-5" />
+            Log de Atividades
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {isLoadingLogs ? (
+            <div className="space-y-4">
+              {[1, 2, 3, 4, 5].map((i) => (
+                <Skeleton key={i} className="h-12 w-full" />
+              ))}
+            </div>
+          ) : !activityLogs || activityLogs.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <FileText className="w-12 h-12 mx-auto mb-4" />
+              <p>Nenhuma atividade registrada</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[180px]">Data/Hora</TableHead>
+                    <TableHead>Usuário</TableHead>
+                    <TableHead>Ação</TableHead>
+                    <TableHead>Entidade</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Detalhes</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activityLogs.map((log) => {
+                    const errorInfo = hasError(log.metadata);
+                    return (
+                      <TableRow key={log.id}>
+                        <TableCell className="font-mono text-sm">
+                          {format(new Date(log.created_at), "dd/MM/yyyy HH:mm:ss", { locale: ptBR })}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span className="font-medium">{log.userName}</span>
+                            {log.ip_address && (
+                              <span className="text-xs text-muted-foreground">{log.ip_address}</span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{getActionLabel(log.action)}</TableCell>
+                        <TableCell>
+                          <div className="flex flex-col">
+                            <span>{getEntityLabel(log.entity_type)}</span>
+                            {log.entity_id && (
+                              <span className="text-xs text-muted-foreground font-mono truncate max-w-[120px]">
+                                {log.entity_id}
+                              </span>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {errorInfo.hasError ? (
+                            <Badge className="bg-red-500/10 text-red-500 border-red-500/20">
+                              <XCircle className="w-3 h-3 mr-1" />
+                              Erro
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
+                              <CheckCircle2 className="w-3 h-3 mr-1" />
+                              OK
+                            </Badge>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {errorInfo.hasError && errorInfo.errorMessage && (
+                            <span className="text-sm text-red-500 max-w-[200px] truncate block">
+                              {errorInfo.errorMessage}
+                            </span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>
