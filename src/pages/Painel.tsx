@@ -1,31 +1,10 @@
-import { Activity, Users, MessageSquare, Clock, Wifi, WifiOff, Server, Database, Loader2 } from "lucide-react";
+import { Activity, Users, MessageSquare, Clock, Wifi, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { usePanelStats, useActivityLog, useRecentConversationsPanel } from "@/hooks/usePanelStats";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
-
-interface SystemStatus {
-  name: string;
-  status: "online" | "offline" | "degraded";
-  uptime: string;
-  load: number;
-}
-
-const systems: SystemStatus[] = [
-  { name: "Servidor Principal", status: "online", uptime: "99.98%", load: 42 },
-  { name: "Banco de Dados", status: "online", uptime: "99.95%", load: 38 },
-  { name: "API Gateway", status: "online", uptime: "99.99%", load: 25 },
-  { name: "Serviço de Mensagens", status: "online", uptime: "99.90%", load: 67 },
-];
-
-const statusConfig = {
-  online: { label: "Online", className: "bg-success/10 text-success", icon: Wifi },
-  offline: { label: "Offline", className: "bg-destructive/10 text-destructive", icon: WifiOff },
-  degraded: { label: "Degradado", className: "bg-warning/10 text-warning", icon: Activity },
-};
 
 export default function Painel() {
   const { stats, isLoading: isLoadingStats } = usePanelStats();
@@ -111,44 +90,6 @@ export default function Painel() {
         )}
       </div>
 
-      {/* System Status */}
-      <div className="bg-card rounded-xl border border-border p-6">
-        <h3 className="font-semibold text-lg mb-6 flex items-center gap-2">
-          <Server className="w-5 h-5" />
-          Status dos Serviços
-        </h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {systems.map((system) => {
-            const StatusIcon = statusConfig[system.status].icon;
-            return (
-              <div
-                key={system.name}
-                className="flex items-center justify-between p-4 rounded-lg border border-border hover:bg-muted/50 transition-colors"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-muted">
-                    <Database className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <p className="font-medium">{system.name}</p>
-                    <p className="text-sm text-muted-foreground">Uptime: {system.uptime}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="text-sm font-medium">{system.load}%</p>
-                    <Progress value={system.load} className="w-20 h-2" />
-                  </div>
-                  <Badge className={statusConfig[system.status].className}>
-                    <StatusIcon className="w-3 h-3 mr-1" />
-                    {statusConfig[system.status].label}
-                  </Badge>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
       {/* Recent Conversations */}
       <div className="bg-card rounded-xl border border-border p-6">

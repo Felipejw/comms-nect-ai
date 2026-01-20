@@ -6,7 +6,9 @@ import { DomainTab } from "@/components/configuracoes/DomainTab";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Configuracoes() {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin } = useAuth();
+
+  const showDomainTab = isAdmin || isSuperAdmin;
 
   return (
     <div className="space-y-6">
@@ -37,7 +39,7 @@ export default function Configuracoes() {
           >
             Personalizar
           </TabsTrigger>
-          {isAdmin && (
+          {showDomainTab && (
             <TabsTrigger
               value="dominio"
               className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
@@ -60,7 +62,7 @@ export default function Configuracoes() {
             <CustomizeTab />
           </TabsContent>
 
-          {isAdmin && (
+          {showDomainTab && (
             <TabsContent value="dominio" className="mt-0">
               <DomainTab />
             </TabsContent>
