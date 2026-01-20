@@ -53,3 +53,9 @@ verify_jwt = false
 
 [functions.update-user-email]
 verify_jwt = false
+
+[functions.meta-api-webhook]
+verify_jwt = false
+
+[functions.send-meta-message]
+verify_jwt = false
