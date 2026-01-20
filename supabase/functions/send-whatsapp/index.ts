@@ -8,6 +8,7 @@ const corsHeaders = {
 // WPPConnect API configuration
 const WPPCONNECT_API_URL = Deno.env.get("WPPCONNECT_API_URL") || Deno.env.get("EVOLUTION_API_URL");
 const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY") || Deno.env.get("EVOLUTION_API_KEY");
+const META_API_URL = "https://graph.facebook.com/v18.0";
 
 interface SendMessagePayload {
   conversationId: string;
@@ -20,6 +21,219 @@ interface SessionData {
   sessionName?: string;
   token?: string;
   instanceName?: string;
+  // Meta API fields
+  access_token?: string;
+  phone_number_id?: string;
+}
+
+interface Connection {
+  id: string;
+  type: string;
+  status: string;
+  session_data: SessionData | null;
+  name: string;
+  is_default: boolean;
+  tenant_id: string;
+}
+
+async function sendViaMetaAPI(
+  connection: Connection,
+  phoneToSend: string,
+  content: string,
+  messageType: string,
+  mediaUrl?: string
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  const sessionData = connection.session_data;
+  
+  if (!sessionData?.access_token || !sessionData?.phone_number_id) {
+    return { success: false, error: "Meta API credentials not configured" };
+  }
+
+  const formattedTo = phoneToSend.replace(/[^\d]/g, "");
+
+  let payload: Record<string, unknown> = {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: formattedTo,
+    type: "text",
+  };
+
+  if (messageType === "image" && mediaUrl) {
+    payload.type = "image";
+    payload.image = { link: mediaUrl, caption: content };
+  } else if (messageType === "video" && mediaUrl) {
+    payload.type = "video";
+    payload.video = { link: mediaUrl, caption: content };
+  } else if (messageType === "audio" && mediaUrl) {
+    payload.type = "audio";
+    payload.audio = { link: mediaUrl };
+  } else if (messageType === "document" && mediaUrl) {
+    payload.type = "document";
+    payload.document = { link: mediaUrl, caption: content };
+  } else {
+    payload.type = "text";
+    payload.text = { body: content, preview_url: true };
+  }
+
+  console.log("[Meta API] Sending message:", JSON.stringify(payload));
+
+  const response = await fetch(
+    `${META_API_URL}/${sessionData.phone_number_id}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${sessionData.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    console.error("[Meta API] Error:", result);
+    return { success: false, error: result.error?.message || "Failed to send message" };
+  }
+
+  console.log("[Meta API] Success:", result);
+  return { success: true, messageId: result.messages?.[0]?.id };
+}
+
+async function sendViaWPPConnect(
+  connection: Connection,
+  phoneToSend: string,
+  content: string,
+  messageType: string,
+  mediaUrl: string | undefined,
+  // deno-lint-ignore no-explicit-any
+  supabaseAdmin: any
+): Promise<{ success: boolean; messageId?: string; error?: string; needsReconnection?: boolean }> {
+  if (!WPPCONNECT_API_URL) {
+    return { success: false, error: "WPPConnect API URL not configured" };
+  }
+
+  const sessionData = connection.session_data;
+  const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name;
+  const sessionToken = sessionData?.token || WPPCONNECT_SECRET_KEY;
+
+  console.log(`[WPPConnect] Using session: ${sessionName}`);
+
+  // Verify connection status
+  try {
+    const statusCheck = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/check-connection-session`, {
+      headers: { "Authorization": `Bearer ${sessionToken}` }
+    });
+    const statusResult = await statusCheck.json();
+    console.log(`[WPPConnect] Session ${sessionName} status:`, JSON.stringify(statusResult));
+    
+    if (statusResult.status !== true && statusResult.status !== "CONNECTED" && statusResult.state !== "CONNECTED") {
+      await supabaseAdmin
+        .from("connections")
+        .update({ status: "disconnected" })
+        .eq("id", connection.id);
+      
+      return {
+        success: false, 
+        error: "WhatsApp desconectado. Por favor, reconecte na página de Conexões.",
+        needsReconnection: true 
+      };
+    }
+  } catch (statusError) {
+    console.error("[WPPConnect] Error checking connection status:", statusError);
+  }
+
+  // Format the number for WPPConnect - uses @c.us format
+  let formattedNumber = phoneToSend.replace(/\D/g, "");
+  
+  // Add country code if needed
+  if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
+    formattedNumber = "55" + formattedNumber;
+  }
+  
+  // WPPConnect uses @c.us format for phone numbers
+  formattedNumber = `${formattedNumber}@c.us`;
+  
+  console.log(`[WPPConnect] Sending to: ${formattedNumber}`);
+
+  let wppResponse;
+  const headers = {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${sessionToken}`,
+  };
+
+  if (messageType === "text") {
+    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: formattedNumber,
+        message: content,
+      }),
+    });
+  } else if (messageType === "image" && mediaUrl) {
+    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-image`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: formattedNumber,
+        path: mediaUrl,
+        caption: content,
+      }),
+    });
+  } else if (messageType === "document" && mediaUrl) {
+    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: formattedNumber,
+        path: mediaUrl,
+        filename: content || "document",
+      }),
+    });
+  } else if (messageType === "audio" && mediaUrl) {
+    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-voice-base64`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: formattedNumber,
+        base64Ptt: mediaUrl,
+      }),
+    });
+  } else if (messageType === "video" && mediaUrl) {
+    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: formattedNumber,
+        path: mediaUrl,
+        caption: content,
+      }),
+    });
+  } else {
+    // Default to text
+    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        phone: formattedNumber,
+        message: content,
+      }),
+    });
+  }
+
+  const wppResult = await wppResponse.json();
+  console.log("[WPPConnect] Response:", JSON.stringify(wppResult));
+
+  if (!wppResponse.ok || wppResult.status === "error" || wppResult.error) {
+    console.error("[WPPConnect] Error:", wppResult);
+    return { 
+      success: false, 
+      error: wppResult.message || wppResult.error || "Erro ao enviar mensagem" 
+    };
+  }
+
+  return { success: true, messageId: wppResult.id || wppResult.messageId };
 }
 
 Deno.serve(async (req) => {
@@ -31,10 +245,6 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-    if (!WPPCONNECT_API_URL) {
-      throw new Error("WPPConnect API URL not configured");
-    }
 
     // Client for validating user token
     const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
@@ -74,7 +284,8 @@ Deno.serve(async (req) => {
       .from("conversations")
       .select(`
         *,
-        contact:contacts (id, name, phone, whatsapp_lid)
+        contact:contacts (id, name, phone, whatsapp_lid),
+        connection:connections (id, type, status, session_data, name, is_default, tenant_id)
       `)
       .eq("id", conversationId)
       .single();
@@ -100,7 +311,6 @@ Deno.serve(async (req) => {
       phoneToSend = phone;
       console.log(`Using phone number: ${phoneToSend}`);
     } else if (whatsappLid) {
-      // WPPConnect has better LID support - try to resolve it
       console.log(`Contact only has LID: ${whatsappLid}, will try to send directly`);
       phoneToSend = whatsappLid;
     } else {
@@ -110,148 +320,52 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Get default WhatsApp connection
-    const { data: connection, error: connError } = await supabaseAdmin
-      .from("connections")
-      .select("*")
-      .eq("type", "whatsapp")
-      .eq("status", "connected")
-      .order("is_default", { ascending: false })
-      .limit(1)
-      .single();
+    // Try to use the conversation's connection first, then find a default one
+    let connection: Connection | null = conversation.connection;
+    
+    if (!connection || connection.status !== "connected") {
+      // Find any available connected connection (prefer Meta API, then WPPConnect)
+      const { data: connections } = await supabaseAdmin
+        .from("connections")
+        .select("id, type, status, session_data, name, is_default, tenant_id")
+        .in("type", ["whatsapp", "meta_api"])
+        .eq("status", "connected")
+        .order("is_default", { ascending: false });
 
-    if (connError || !connection) {
-      console.error("No connected WhatsApp instance:", connError);
+      if (connections && connections.length > 0) {
+        // Prefer Meta API connections
+        connection = connections.find(c => c.type === "meta_api") || connections[0];
+      }
+    }
+
+    if (!connection) {
+      console.error("No connected WhatsApp instance found");
       return new Response(
         JSON.stringify({ success: false, error: "Nenhuma conexão WhatsApp disponível" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const sessionData = connection.session_data as SessionData;
-    const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name;
-    const sessionToken = sessionData?.token || WPPCONNECT_SECRET_KEY;
+    console.log(`Using connection: ${connection.name} (type: ${connection.type})`);
 
-    console.log(`Using session: ${sessionName}`);
+    // Send message based on connection type
+    let result: { success: boolean; messageId?: string; error?: string; needsReconnection?: boolean };
 
-    // Verify connection status
-    try {
-      const statusCheck = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/check-connection-session`, {
-        headers: { "Authorization": `Bearer ${sessionToken}` }
-      });
-      const statusResult = await statusCheck.json();
-      console.log(`Session ${sessionName} status:`, JSON.stringify(statusResult));
-      
-      if (statusResult.status !== true && statusResult.status !== "CONNECTED" && statusResult.state !== "CONNECTED") {
-        await supabaseAdmin
-          .from("connections")
-          .update({ status: 'disconnected' })
-          .eq("id", connection.id);
-        
-        return new Response(
-          JSON.stringify({ 
-            success: false, 
-            error: "WhatsApp desconectado. Por favor, reconecte na página de Conexões.",
-            needsReconnection: true,
-            connectionId: connection.id 
-          }),
-          { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-    } catch (statusError) {
-      console.error("Error checking connection status:", statusError);
-    }
-
-    // Format the number for WPPConnect - uses @c.us format
-    let formattedNumber = phoneToSend!.replace(/\D/g, "");
-    
-    // Add country code if needed
-    if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
-      formattedNumber = "55" + formattedNumber;
-    }
-    
-    // WPPConnect uses @c.us format for phone numbers
-    formattedNumber = `${formattedNumber}@c.us`;
-    
-    console.log(`Sending to: ${formattedNumber}`);
-
-    let wppResponse;
-    const headers = {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${sessionToken}`,
-    };
-
-    if (messageType === "text") {
-      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          phone: formattedNumber,
-          message: content,
-        }),
-      });
-    } else if (messageType === "image" && mediaUrl) {
-      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-image`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          phone: formattedNumber,
-          path: mediaUrl,
-          caption: content,
-        }),
-      });
-    } else if (messageType === "document" && mediaUrl) {
-      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          phone: formattedNumber,
-          path: mediaUrl,
-          filename: content || "document",
-        }),
-      });
-    } else if (messageType === "audio" && mediaUrl) {
-      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-voice-base64`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          phone: formattedNumber,
-          base64Ptt: mediaUrl,
-        }),
-      });
-    } else if (messageType === "video" && mediaUrl) {
-      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          phone: formattedNumber,
-          path: mediaUrl,
-          caption: content,
-        }),
-      });
+    if (connection.type === "meta_api") {
+      result = await sendViaMetaAPI(connection, phoneToSend!, content, messageType, mediaUrl);
     } else {
-      // Default to text
-      wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({
-          phone: formattedNumber,
-          message: content,
-        }),
-      });
+      result = await sendViaWPPConnect(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
     }
 
-    const wppResult = await wppResponse.json();
-    console.log("WPPConnect response:", JSON.stringify(wppResult));
-
-    if (!wppResponse.ok || wppResult.status === "error" || wppResult.error) {
-      console.error("WPPConnect error:", wppResult);
+    if (!result.success) {
       return new Response(
         JSON.stringify({ 
           success: false, 
-          error: wppResult.message || wppResult.error || "Erro ao enviar mensagem",
+          error: result.error,
+          needsReconnection: result.needsReconnection,
+          connectionId: connection.id 
         }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: result.needsReconnection ? 503 : 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -278,13 +392,14 @@ Deno.serve(async (req) => {
       .update({
         last_message_at: new Date().toISOString(),
         status: conversation.status === "new" ? "in_progress" : conversation.status,
+        connection_id: connection.id,
       })
       .eq("id", conversationId);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        messageId: wppResult.id || wppResult.messageId,
+        messageId: result.messageId,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
