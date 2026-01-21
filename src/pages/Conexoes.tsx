@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { QrCode, Plus, Loader2, AlertTriangle, RefreshCw, Smartphone, Cloud } from "lucide-react";
+import { QrCode, Plus, Loader2, AlertTriangle, RefreshCw, Smartphone, Cloud, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -17,6 +17,15 @@ import { useWhatsAppConnections, WhatsAppConnection } from "@/hooks/useWhatsAppC
 import { useToast } from "@/hooks/use-toast";
 import { ConnectionCard } from "@/components/conexoes/ConnectionCard";
 import { supabase } from "@/integrations/supabase/client";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+
+interface ServerInfo {
+  status: "online" | "offline";
+  version?: string;
+  engine?: string;
+  sessionsCount?: number;
+}
 
 export default function Conexoes() {
   const [newInstanceName, setNewInstanceName] = useState("");
@@ -24,6 +33,8 @@ export default function Conexoes() {
   const [selectedConnection, setSelectedConnection] = useState<WhatsAppConnection | null>(null);
   const [pollingConnection, setPollingConnection] = useState<string | null>(null);
   const [isQrModalOpen, setIsQrModalOpen] = useState(false);
+  const [serverInfo, setServerInfo] = useState<ServerInfo | null>(null);
+  const [isLoadingServerInfo, setIsLoadingServerInfo] = useState(false);
   const { toast } = useToast();
 
   const {
@@ -37,11 +48,36 @@ export default function Conexoes() {
     deleteConnection,
     updateConnection,
     recreateConnection,
+    checkServerHealth,
   } = useWhatsAppConnections();
 
   const [recreateAttempts, setRecreateAttempts] = useState<Record<string, number>>({});
   const [pollCount, setPollCount] = useState(0);
   const [qrError, setQrError] = useState<string | null>(null);
+
+  // Fetch WAHA server info
+  const fetchServerInfo = async () => {
+    setIsLoadingServerInfo(true);
+    try {
+      const result = await checkServerHealth.mutateAsync();
+      setServerInfo({
+        status: result.healthy ? "online" : "offline",
+        version: result.version,
+        engine: result.engine,
+        sessionsCount: result.sessionsCount,
+      });
+    } catch (error) {
+      console.error("[Conexoes] Error fetching server info:", error);
+      setServerInfo({ status: "offline" });
+    } finally {
+      setIsLoadingServerInfo(false);
+    }
+  };
+
+  // Fetch server info on mount
+  useEffect(() => {
+    fetchServerInfo();
+  }, []);
   
   // Meta API states
   const [isMetaDialogOpen, setIsMetaDialogOpen] = useState(false);
@@ -142,7 +178,7 @@ export default function Conexoes() {
       refetch();
     } catch (error) {
       console.error("Error refreshing QR code:", error);
-      setQrError("Erro ao recriar instância. Verifique se o servidor Evolution API está acessível.");
+      setQrError("Erro ao recriar instância. Verifique se o servidor WAHA está acessível.");
     }
   };
 
@@ -391,6 +427,55 @@ export default function Conexoes() {
           </Dialog>
         </div>
       </div>
+
+      {/* WAHA Server Info */}
+      <Card className="mb-2">
+        <CardHeader className="pb-2 py-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Server className="w-4 h-4" />
+            Servidor WAHA
+            {isLoadingServerInfo ? (
+              <Loader2 className="w-3 h-3 animate-spin" />
+            ) : serverInfo ? (
+              <Badge variant={serverInfo.status === "online" ? "default" : "destructive"}>
+                {serverInfo.status === "online" ? "Online" : "Offline"}
+              </Badge>
+            ) : null}
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0 pb-3">
+          {serverInfo ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <span className="text-muted-foreground">Versão:</span>
+                <span className="ml-2 font-medium">{serverInfo.version || "N/A"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Engine:</span>
+                <span className="ml-2 font-medium">{serverInfo.engine || "N/A"}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground">Sessões:</span>
+                <span className="ml-2 font-medium">{serverInfo.sessionsCount ?? 0}</span>
+              </div>
+              <div>
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={fetchServerInfo}
+                  disabled={isLoadingServerInfo}
+                  className="h-7 px-2"
+                >
+                  <RefreshCw className={`w-3 h-3 mr-1 ${isLoadingServerInfo ? 'animate-spin' : ''}`} />
+                  Atualizar
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">Carregando informações do servidor...</span>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Connection Count */}
       <div className="flex items-center gap-2 text-muted-foreground">
