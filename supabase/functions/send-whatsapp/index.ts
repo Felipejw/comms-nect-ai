@@ -5,9 +5,9 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// WPPConnect API configuration
-const WPPCONNECT_API_URL = Deno.env.get("WPPCONNECT_API_URL") || Deno.env.get("EVOLUTION_API_URL");
-const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY") || Deno.env.get("EVOLUTION_API_KEY");
+// WAHA API configuration
+const WAHA_API_URL = Deno.env.get("WAHA_API_URL") || Deno.env.get("EVOLUTION_API_URL");
+const WAHA_API_KEY = Deno.env.get("WAHA_API_KEY") || Deno.env.get("EVOLUTION_API_KEY");
 const META_API_URL = "https://graph.facebook.com/v18.0";
 
 interface SendMessagePayload {
@@ -100,7 +100,7 @@ async function sendViaMetaAPI(
   return { success: true, messageId: result.messages?.[0]?.id };
 }
 
-async function sendViaWPPConnect(
+async function sendViaWAHA(
   connection: Connection,
   phoneToSend: string,
   content: string,
@@ -109,25 +109,31 @@ async function sendViaWPPConnect(
   // deno-lint-ignore no-explicit-any
   supabaseAdmin: any
 ): Promise<{ success: boolean; messageId?: string; error?: string; needsReconnection?: boolean }> {
-  if (!WPPCONNECT_API_URL) {
-    return { success: false, error: "WPPConnect API URL not configured" };
+  if (!WAHA_API_URL) {
+    return { success: false, error: "WAHA API URL not configured" };
   }
 
   const sessionData = connection.session_data;
-  const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name;
-  const sessionToken = sessionData?.token || WPPCONNECT_SECRET_KEY;
+  const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name.toLowerCase().replace(/\s+/g, "_");
 
-  console.log(`[WPPConnect] Using session: ${sessionName}`);
+  console.log(`[WAHA] Using session: ${sessionName}`);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (WAHA_API_KEY) {
+    headers["X-Api-Key"] = WAHA_API_KEY;
+  }
 
   // Verify connection status
   try {
-    const statusCheck = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/check-connection-session`, {
-      headers: { "Authorization": `Bearer ${sessionToken}` }
+    const statusCheck = await fetch(`${WAHA_API_URL}/api/sessions/${sessionName}`, {
+      headers,
     });
     const statusResult = await statusCheck.json();
-    console.log(`[WPPConnect] Session ${sessionName} status:`, JSON.stringify(statusResult));
+    console.log(`[WAHA] Session ${sessionName} status:`, JSON.stringify(statusResult));
     
-    if (statusResult.status !== true && statusResult.status !== "CONNECTED" && statusResult.state !== "CONNECTED") {
+    if (statusResult.status !== "WORKING") {
       await supabaseAdmin
         .from("connections")
         .update({ status: "disconnected" })
@@ -140,10 +146,10 @@ async function sendViaWPPConnect(
       };
     }
   } catch (statusError) {
-    console.error("[WPPConnect] Error checking connection status:", statusError);
+    console.error("[WAHA] Error checking connection status:", statusError);
   }
 
-  // Format the number for WPPConnect - uses @c.us format
+  // Format the number for WAHA - uses @c.us format
   let formattedNumber = phoneToSend.replace(/\D/g, "");
   
   // Add country code if needed
@@ -151,89 +157,91 @@ async function sendViaWPPConnect(
     formattedNumber = "55" + formattedNumber;
   }
   
-  // WPPConnect uses @c.us format for phone numbers
-  formattedNumber = `${formattedNumber}@c.us`;
+  // WAHA uses chatId format with @c.us
+  const chatId = `${formattedNumber}@c.us`;
   
-  console.log(`[WPPConnect] Sending to: ${formattedNumber}`);
+  console.log(`[WAHA] Sending to: ${chatId}`);
 
-  let wppResponse;
-  const headers = {
-    "Content-Type": "application/json",
-    "Authorization": `Bearer ${sessionToken}`,
-  };
+  let wahaResponse;
 
   if (messageType === "text") {
-    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
+    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendText`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        phone: formattedNumber,
-        message: content,
+        session: sessionName,
+        chatId,
+        text: content,
       }),
     });
   } else if (messageType === "image" && mediaUrl) {
-    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-image`, {
+    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendImage`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        phone: formattedNumber,
-        path: mediaUrl,
+        session: sessionName,
+        chatId,
+        file: { url: mediaUrl },
         caption: content,
       }),
     });
   } else if (messageType === "document" && mediaUrl) {
-    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
+    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendFile`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        phone: formattedNumber,
-        path: mediaUrl,
+        session: sessionName,
+        chatId,
+        file: { url: mediaUrl },
         filename: content || "document",
       }),
     });
   } else if (messageType === "audio" && mediaUrl) {
-    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-voice-base64`, {
+    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendVoice`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        phone: formattedNumber,
-        base64Ptt: mediaUrl,
+        session: sessionName,
+        chatId,
+        file: { url: mediaUrl },
       }),
     });
   } else if (messageType === "video" && mediaUrl) {
-    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-file`, {
+    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendVideo`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        phone: formattedNumber,
-        path: mediaUrl,
+        session: sessionName,
+        chatId,
+        file: { url: mediaUrl },
         caption: content,
       }),
     });
   } else {
     // Default to text
-    wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/send-message`, {
+    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendText`, {
       method: "POST",
       headers,
       body: JSON.stringify({
-        phone: formattedNumber,
-        message: content,
+        session: sessionName,
+        chatId,
+        text: content,
       }),
     });
   }
 
-  const wppResult = await wppResponse.json();
-  console.log("[WPPConnect] Response:", JSON.stringify(wppResult));
+  const wahaResult = await wahaResponse.json();
+  console.log("[WAHA] Response:", JSON.stringify(wahaResult));
 
-  if (!wppResponse.ok || wppResult.status === "error" || wppResult.error) {
-    console.error("[WPPConnect] Error:", wppResult);
+  if (!wahaResponse.ok || wahaResult.error) {
+    console.error("[WAHA] Error:", wahaResult);
     return { 
       success: false, 
-      error: wppResult.message || wppResult.error || "Erro ao enviar mensagem" 
+      error: wahaResult.message || wahaResult.error || "Erro ao enviar mensagem" 
     };
   }
 
-  return { success: true, messageId: wppResult.id || wppResult.messageId };
+  return { success: true, messageId: wahaResult.id || wahaResult.key?.id };
 }
 
 Deno.serve(async (req) => {
@@ -354,7 +362,7 @@ Deno.serve(async (req) => {
     if (connection.type === "meta_api") {
       result = await sendViaMetaAPI(connection, phoneToSend!, content, messageType, mediaUrl);
     } else {
-      result = await sendViaWPPConnect(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
+      result = await sendViaWAHA(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
     }
 
     if (!result.success) {

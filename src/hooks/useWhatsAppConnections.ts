@@ -36,7 +36,7 @@ export function useWhatsAppConnections() {
 
   const createConnection = useMutation({
     mutationFn: async (instanceName: string) => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "create", instanceName },
       });
 
@@ -62,7 +62,7 @@ export function useWhatsAppConnections() {
 
   const getQrCode = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "getQrCode", connectionId },
       });
 
@@ -77,7 +77,7 @@ export function useWhatsAppConnections() {
 
   const checkStatus = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "status", connectionId },
       });
 
@@ -92,7 +92,7 @@ export function useWhatsAppConnections() {
 
   const disconnect = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "disconnect", connectionId },
       });
 
@@ -118,7 +118,7 @@ export function useWhatsAppConnections() {
 
   const deleteConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "delete", connectionId },
       });
 
@@ -177,7 +177,7 @@ export function useWhatsAppConnections() {
 
   const recreateConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "recreate", connectionId },
       });
 
@@ -203,7 +203,7 @@ export function useWhatsAppConnections() {
 
   const checkServerHealth = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "serverHealth" },
       });
 
@@ -215,7 +215,7 @@ export function useWhatsAppConnections() {
 
   const cleanupOrphaned = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
+      const { data, error } = await supabase.functions.invoke("waha-instance", {
         body: { action: "cleanupOrphanedInstances" },
       });
 
