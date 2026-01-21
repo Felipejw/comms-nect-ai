@@ -254,8 +254,15 @@ async function deleteSession(sessionName: string): Promise<{ success: boolean; e
   }
 }
 
-// Check server health
-async function checkServerHealth(): Promise<{ success: boolean; healthy?: boolean; version?: string; error?: string }> {
+// Check server health with extended info
+async function checkServerHealth(): Promise<{ 
+  success: boolean; 
+  healthy?: boolean; 
+  version?: string; 
+  engine?: string;
+  sessionsCount?: number;
+  error?: string 
+}> {
   if (!WAHA_API_URL) {
     return { success: false, error: "WAHA API URL not configured" };
   }
@@ -266,16 +273,34 @@ async function checkServerHealth(): Promise<{ success: boolean; healthy?: boolea
   }
 
   try {
-    const response = await fetch(`${WAHA_API_URL}/api/version`, {
-      headers,
-    });
-
-    if (response.ok) {
-      const result = await response.json();
-      return { success: true, healthy: true, version: result.version };
+    // Fetch version info
+    const versionResponse = await fetch(`${WAHA_API_URL}/api/version`, { headers });
+    
+    if (!versionResponse.ok) {
+      return { success: true, healthy: false };
+    }
+    
+    const versionInfo = await versionResponse.json();
+    
+    // Fetch sessions count
+    let sessionsCount = 0;
+    try {
+      const sessionsResponse = await fetch(`${WAHA_API_URL}/api/sessions`, { headers });
+      if (sessionsResponse.ok) {
+        const sessions = await sessionsResponse.json();
+        sessionsCount = Array.isArray(sessions) ? sessions.length : 0;
+      }
+    } catch (e) {
+      console.log("[WAHA] Could not fetch sessions count:", e);
     }
 
-    return { success: true, healthy: false };
+    return { 
+      success: true, 
+      healthy: true, 
+      version: versionInfo.version || "unknown",
+      engine: versionInfo.engine || "WEBJS",
+      sessionsCount,
+    };
   } catch (error) {
     console.error("[WAHA] Error checking server health:", error);
     return { success: false, error: error instanceof Error ? error.message : "Unknown error" };
