@@ -1500,6 +1500,111 @@ export type Database = {
           },
         ]
       }
+      subscription_payments: {
+        Row: {
+          amount: number
+          created_at: string | null
+          currency: string | null
+          due_date: string
+          external_payment_id: string | null
+          id: string
+          invoice_url: string | null
+          paid_at: string | null
+          payment_method: string | null
+          status: string
+          subscription_id: string
+          tenant_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string | null
+          currency?: string | null
+          due_date: string
+          external_payment_id?: string | null
+          id?: string
+          invoice_url?: string | null
+          paid_at?: string | null
+          payment_method?: string | null
+          status?: string
+          subscription_id: string
+          tenant_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string | null
+          currency?: string | null
+          due_date?: string
+          external_payment_id?: string | null
+          id?: string
+          invoice_url?: string | null
+          paid_at?: string | null
+          payment_method?: string | null
+          status?: string
+          subscription_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "subscription_payments_subscription_id_fkey"
+            columns: ["subscription_id"]
+            isOneToOne: false
+            referencedRelation: "tenant_subscriptions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscription_payments_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      subscription_plans: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          display_order: number | null
+          features: Json | null
+          id: string
+          is_active: boolean | null
+          limits: Json | null
+          name: string
+          price_monthly: number
+          price_yearly: number
+          slug: string
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          display_order?: number | null
+          features?: Json | null
+          id?: string
+          is_active?: boolean | null
+          limits?: Json | null
+          name: string
+          price_monthly?: number
+          price_yearly?: number
+          slug: string
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          display_order?: number | null
+          features?: Json | null
+          id?: string
+          is_active?: boolean | null
+          limits?: Json | null
+          name?: string
+          price_monthly?: number
+          price_yearly?: number
+          slug?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       system_settings: {
         Row: {
           category: string | null
@@ -1603,12 +1708,73 @@ export type Database = {
           },
         ]
       }
+      tenant_subscriptions: {
+        Row: {
+          billing_cycle: string
+          cancel_at_period_end: boolean | null
+          cancelled_at: string | null
+          created_at: string | null
+          current_period_end: string
+          current_period_start: string
+          id: string
+          plan_id: string
+          status: string
+          tenant_id: string
+          trial_ends_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          billing_cycle?: string
+          cancel_at_period_end?: boolean | null
+          cancelled_at?: string | null
+          created_at?: string | null
+          current_period_end: string
+          current_period_start?: string
+          id?: string
+          plan_id: string
+          status?: string
+          tenant_id: string
+          trial_ends_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          billing_cycle?: string
+          cancel_at_period_end?: boolean | null
+          cancelled_at?: string | null
+          created_at?: string | null
+          current_period_end?: string
+          current_period_start?: string
+          id?: string
+          plan_id?: string
+          status?: string
+          tenant_id?: string
+          trial_ends_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "tenant_subscriptions_plan_id_fkey"
+            columns: ["plan_id"]
+            isOneToOne: false
+            referencedRelation: "subscription_plans"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "tenant_subscriptions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: true
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenants: {
         Row: {
           affiliate_code: string | null
           commission_rate: number | null
           created_at: string | null
           custom_domain: string | null
+          grace_period_days: number | null
           id: string
           is_active: boolean | null
           name: string
@@ -1616,6 +1782,8 @@ export type Database = {
           plan: string | null
           referred_by: string | null
           slug: string
+          subscription_expires_at: string | null
+          subscription_status: string | null
           updated_at: string | null
         }
         Insert: {
@@ -1623,6 +1791,7 @@ export type Database = {
           commission_rate?: number | null
           created_at?: string | null
           custom_domain?: string | null
+          grace_period_days?: number | null
           id?: string
           is_active?: boolean | null
           name: string
@@ -1630,6 +1799,8 @@ export type Database = {
           plan?: string | null
           referred_by?: string | null
           slug: string
+          subscription_expires_at?: string | null
+          subscription_status?: string | null
           updated_at?: string | null
         }
         Update: {
@@ -1637,6 +1808,7 @@ export type Database = {
           commission_rate?: number | null
           created_at?: string | null
           custom_domain?: string | null
+          grace_period_days?: number | null
           id?: string
           is_active?: boolean | null
           name?: string
@@ -1644,6 +1816,8 @@ export type Database = {
           plan?: string | null
           referred_by?: string | null
           slug?: string
+          subscription_expires_at?: string | null
+          subscription_status?: string | null
           updated_at?: string | null
         }
         Relationships: [
@@ -1716,6 +1890,7 @@ export type Database = {
         Args: { _tenant_id: string; _user_id: string }
         Returns: boolean
       }
+      get_tenant_plan_limits: { Args: { _tenant_id: string }; Returns: Json }
       get_user_tenant_id: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
@@ -1735,6 +1910,10 @@ export type Database = {
       is_admin_or_manager: { Args: { _user_id: string }; Returns: boolean }
       is_super_admin: { Args: { _user_id: string }; Returns: boolean }
       normalize_phone: { Args: { phone_input: string }; Returns: string }
+      tenant_has_active_subscription: {
+        Args: { _tenant_id: string }
+        Returns: boolean
+      }
     }
     Enums: {
       app_role: "super_admin" | "admin" | "manager" | "operator"

@@ -1,9 +1,10 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Building2, Package, DollarSign, Users } from "lucide-react";
+import { Building2, Package, DollarSign, CreditCard } from "lucide-react";
 import { SuperAdminTenants } from "@/components/superadmin/SuperAdminTenants";
 import { SuperAdminProducts } from "@/components/superadmin/SuperAdminProducts";
 import { SuperAdminSales } from "@/components/superadmin/SuperAdminSales";
 import { SuperAdminStats } from "@/components/superadmin/SuperAdminStats";
+import { SuperAdminPlans } from "@/components/superadmin/SuperAdminPlans";
 
 export default function SuperAdmin() {
   return (
@@ -23,6 +24,10 @@ export default function SuperAdmin() {
             <Building2 className="w-4 h-4" />
             Clientes
           </TabsTrigger>
+          <TabsTrigger value="plans" className="flex items-center gap-2">
+            <CreditCard className="w-4 h-4" />
+            Planos
+          </TabsTrigger>
           <TabsTrigger value="products" className="flex items-center gap-2">
             <Package className="w-4 h-4" />
             Produtos
@@ -35,6 +40,10 @@ export default function SuperAdmin() {
 
         <TabsContent value="tenants">
           <SuperAdminTenants />
+        </TabsContent>
+
+        <TabsContent value="plans">
+          <SuperAdminPlans />
         </TabsContent>
 
         <TabsContent value="products">
