@@ -2,7 +2,8 @@ version: "3.8"
 
 # ===========================================
 # Sistema de Atendimento WhatsApp - Self-Hosted
-# Docker Compose para Supabase + Frontend + Evolution API
+# Docker Compose para Supabase + Frontend + WAHA/WPPConnect
+# Suporta profiles: waha ou wppconnect
 # ===========================================
 
 services:
@@ -260,11 +261,18 @@ services:
       SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
       DENO_JOBS: 4
       
-      # WPPConnect (Multi-Instância)
+      # WAHA (Usado quando WHATSAPP_ENGINE=waha)
+      WAHA_API_URL: ${WAHA_API_URL:-http://waha:3000}
+      WAHA_API_KEY: ${WAHA_API_KEY:-}
+      
+      # WPPConnect (Usado quando WHATSAPP_ENGINE=wppconnect)
       WPPCONNECT_API_URL: ${WPPCONNECT_API_URL:-http://wppconnect-1:21465}
       WPPCONNECT_SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-}
       WPPCONNECT_API_URL_2: ${WPPCONNECT_API_URL_2:-}
       WPPCONNECT_API_URL_3: ${WPPCONNECT_API_URL_3:-}
+      
+      # Identificador da engine em uso
+      WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-waha}
       
       # Google Calendar (opcional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -346,7 +354,54 @@ services:
       - supabase-network
 
   # ==========================================
-  # WPPCONNECT SERVERS - WhatsApp (Multi-Instance)
+  # WAHA - WhatsApp HTTP API (Profile: waha)
+  # ==========================================
+  waha:
+    image: devlikeapro/waha:latest
+    container_name: waha-server
+    restart: unless-stopped
+    profiles:
+      - waha
+    ports:
+      - "${WAHA_PORT:-3000}:3000"
+    environment:
+      # API Key para autenticação
+      WHATSAPP_API_KEY: ${WAHA_API_KEY}
+      
+      # Webhook para receber mensagens
+      WHATSAPP_HOOK_URL: ${WEBHOOK_URL:-}
+      WHATSAPP_HOOK_EVENTS: "message,message.any,message.ack,session.status,state.change"
+      
+      # Reiniciar sessões ao iniciar
+      WHATSAPP_RESTART_ALL_SESSIONS: "true"
+      
+      # Dashboard de administração
+      WAHA_DASHBOARD_ENABLED: "true"
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: ${WAHA_API_KEY}
+      
+      # Configurações de mídia
+      WHATSAPP_FILES_MIMETYPES: "image/jpeg,image/png,image/gif,video/mp4,audio/mpeg,audio/ogg,application/pdf,application/msword"
+      WHATSAPP_FILES_LIFETIME: "180"
+    volumes:
+      - ./volumes/waha/sessions:/app/.waha/sessions
+      - ./volumes/waha/media:/app/.waha/media
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - supabase-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==========================================
+  # WPPCONNECT SERVERS - WhatsApp (Profile: wppconnect)
   # ==========================================
   
   # Instance 1 (Primary)
@@ -354,6 +409,8 @@ services:
     image: wppconnect/server-cli:latest
     container_name: wppconnect-server-1
     restart: unless-stopped
+    profiles:
+      - wppconnect
     ports:
       - "${WPPCONNECT_PORT_1:-21465}:21465"
     environment:
@@ -382,12 +439,13 @@ services:
       - "wppconnect.instance=1"
       - "wppconnect.priority=primary"
 
-  # Instance 2 (Secondary - Optional, enable by setting WPPCONNECT_MULTI_INSTANCE=true)
+  # Instance 2 (Secondary - Optional)
   wppconnect-2:
     image: wppconnect/server-cli:latest
     container_name: wppconnect-server-2
     restart: unless-stopped
     profiles:
+      - wppconnect
       - multi-instance
     ports:
       - "${WPPCONNECT_PORT_2:-21466}:21465"
@@ -423,6 +481,7 @@ services:
     container_name: wppconnect-server-3
     restart: unless-stopped
     profiles:
+      - wppconnect
       - multi-instance
       - high-availability
     ports:
@@ -461,6 +520,7 @@ services:
     container_name: wppconnect-loadbalancer
     restart: unless-stopped
     profiles:
+      - wppconnect
       - multi-instance
     ports:
       - "${WPPCONNECT_LB_PORT:-21400}:80"
