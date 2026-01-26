@@ -2,7 +2,7 @@
 
 # ============================================
 # Script de Instalação - Sistema de Atendimento
-# Self-Hosted com Supabase + WPPConnect Server
+# Self-Hosted com Supabase + WAHA/WPPConnect
 # Distribuição via arquivo (sem Git)
 # ============================================
 
@@ -34,7 +34,8 @@ VERSION=$(cat VERSION 2>/dev/null || echo "2.0.0")
 echo -e "${BLUE}"
 echo "============================================"
 echo "  Sistema de Atendimento - Instalação"
-echo "  Self-Hosted com Supabase + WPPConnect"
+echo "  Self-Hosted com Supabase"
+echo "  Suporte: WAHA ou WPPConnect"
 echo "  Versão: $VERSION"
 echo "============================================"
 echo -e "${NC}"
@@ -207,7 +208,7 @@ else
     cp .env.example .env
 fi
 
-# Solicitar informações
+# Solicitar informações básicas
 echo ""
 log_info "Configure as informações do seu servidor:"
 echo ""
@@ -221,6 +222,37 @@ echo ""
 if [ ${#POSTGRES_PASSWORD} -lt 12 ]; then
     log_error "Senha deve ter no mínimo 12 caracteres"
     exit 1
+fi
+
+# ==========================================
+# 4. Escolher Engine de WhatsApp
+# ==========================================
+echo ""
+echo -e "${BLUE}============================================${NC}"
+echo -e "${BLUE}  Escolha a engine de WhatsApp:${NC}"
+echo -e "${BLUE}============================================${NC}"
+echo ""
+echo "  [1] WAHA (Recomendado)"
+echo "      - Mais estável e moderno"
+echo "      - Dashboard de administração incluído"
+echo "      - Melhor suporte a mídia"
+echo "      - Atualizações frequentes"
+echo ""
+echo "  [2] WPPConnect"
+echo "      - Opção legada"
+echo "      - Suporte multi-instância"
+echo "      - Compatibilidade com sistemas existentes"
+echo ""
+
+read -p "Digite sua escolha [1/2] (padrão: 1): " WHATSAPP_ENGINE_CHOICE
+WHATSAPP_ENGINE_CHOICE=${WHATSAPP_ENGINE_CHOICE:-1}
+
+if [ "$WHATSAPP_ENGINE_CHOICE" = "2" ]; then
+    WHATSAPP_ENGINE="wppconnect"
+    log_info "Selecionado: WPPConnect"
+else
+    WHATSAPP_ENGINE="waha"
+    log_info "Selecionado: WAHA (Recomendado)"
 fi
 
 # Gerar JWT Secret (64 caracteres hexadecimais)
@@ -245,9 +277,16 @@ ANON_KEY=$(generate_jwt_key "anon")
 SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
 log_success "Chaves JWT geradas"
 
-# Gerar chave do WPPConnect
-WPPCONNECT_SECRET_KEY=$(openssl rand -hex 24)
-log_success "Chave do WPPConnect gerada"
+# Gerar chave da engine escolhida
+if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+    WAHA_API_KEY=$(openssl rand -hex 32)
+    log_success "Chave WAHA_API_KEY gerada"
+    WEBHOOK_URL="https://$DOMAIN/functions/v1/waha-webhook"
+else
+    WPPCONNECT_SECRET_KEY=$(openssl rand -hex 24)
+    log_success "Chave WPPCONNECT_SECRET_KEY gerada"
+    WEBHOOK_URL="https://$DOMAIN/functions/v1/wppconnect-webhook"
+fi
 
 # Atualizar .env
 sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
@@ -258,16 +297,24 @@ sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
 sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
 sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
-sed -i "s|^WPPCONNECT_SECRET_KEY=.*|WPPCONNECT_SECRET_KEY=$WPPCONNECT_SECRET_KEY|" .env
-sed -i "s|^WPPCONNECT_SERVER_URL=.*|WPPCONNECT_SERVER_URL=https://$DOMAIN:21465|" .env
-sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=https://$DOMAIN/functions/v1/wppconnect-webhook|" .env
+sed -i "s|^WHATSAPP_ENGINE=.*|WHATSAPP_ENGINE=$WHATSAPP_ENGINE|" .env
+sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=$WEBHOOK_URL|" .env
 sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
 sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
+
+# Configurar chaves específicas da engine
+if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+    sed -i "s|^WAHA_API_KEY=.*|WAHA_API_KEY=$WAHA_API_KEY|" .env
+    sed -i "s|^WAHA_API_URL=.*|WAHA_API_URL=http://waha:3000|" .env
+else
+    sed -i "s|^WPPCONNECT_SECRET_KEY=.*|WPPCONNECT_SECRET_KEY=$WPPCONNECT_SECRET_KEY|" .env
+    sed -i "s|^WPPCONNECT_SERVER_URL=.*|WPPCONNECT_SERVER_URL=https://$DOMAIN:21465|" .env
+fi
 
 log_success "Arquivo .env configurado"
 
 # ==========================================
-# 4. Criar Estrutura de Diretórios
+# 5. Criar Estrutura de Diretórios
 # ==========================================
 log_info "Criando estrutura de diretórios..."
 
@@ -275,15 +322,26 @@ mkdir -p volumes/db/data
 mkdir -p volumes/db/init
 mkdir -p volumes/storage
 mkdir -p volumes/kong
-mkdir -p volumes/wppconnect/tokens
-mkdir -p volumes/wppconnect/userDataDir
 mkdir -p nginx/ssl
 mkdir -p backups
+
+# Criar diretórios específicos da engine
+if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+    mkdir -p volumes/waha/sessions
+    mkdir -p volumes/waha/media
+    log_info "Diretórios WAHA criados"
+else
+    mkdir -p volumes/wppconnect/tokens
+    mkdir -p volumes/wppconnect/userDataDir
+    mkdir -p volumes/wppconnect-1/tokens
+    mkdir -p volumes/wppconnect-1/userDataDir
+    log_info "Diretórios WPPConnect criados"
+fi
 
 log_success "Diretórios criados"
 
 # ==========================================
-# 5. Copiar Configurações do Kong
+# 6. Copiar Configurações do Kong
 # ==========================================
 log_info "Configurando Kong API Gateway..."
 
@@ -456,7 +514,7 @@ KONG_EOF
 log_success "Kong configurado"
 
 # ==========================================
-# 6. Copiar Migrations do Banco
+# 7. Copiar Migrations do Banco
 # ==========================================
 log_info "Preparando migrations do banco de dados..."
 
@@ -468,7 +526,7 @@ else
 fi
 
 # ==========================================
-# 7. Gerar Certificado SSL
+# 8. Gerar Certificado SSL
 # ==========================================
 log_info "Configurando SSL..."
 
@@ -507,7 +565,7 @@ fi
 log_success "Certificados SSL configurados"
 
 # ==========================================
-# 8. Atualizar Frontend com Configurações
+# 9. Atualizar Frontend com Configurações
 # ==========================================
 log_info "Configurando frontend..."
 
@@ -530,20 +588,26 @@ EOF
 fi
 
 # ==========================================
-# 9. Iniciar Containers
+# 10. Iniciar Containers
 # ==========================================
 log_info "Iniciando containers Docker..."
 
 # Parar containers existentes
 $DOCKER_COMPOSE down 2>/dev/null || true
 
-# Iniciar serviços em background
-$DOCKER_COMPOSE up -d
+# Iniciar serviços com o profile correto
+if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+    log_info "Iniciando com WAHA..."
+    $DOCKER_COMPOSE --profile waha up -d
+else
+    log_info "Iniciando com WPPConnect..."
+    $DOCKER_COMPOSE --profile wppconnect up -d
+fi
 
 log_success "Containers iniciados"
 
 # ==========================================
-# 10. Aguardar Serviços Iniciarem
+# 11. Aguardar Serviços Iniciarem
 # ==========================================
 log_info "Aguardando serviços iniciarem..."
 
@@ -564,57 +628,85 @@ done
 log_success "Banco de dados pronto"
 
 # ==========================================
-# 11. Verificar Saúde do WPPConnect
+# 12. Verificar Saúde da Engine WhatsApp
 # ==========================================
-check_wppconnect_health() {
+check_whatsapp_health() {
     local max_retries=30
     local retry_count=0
     local wait_time=5
     
-    log_info "Verificando WPPConnect Server (pode levar até 2 minutos)..."
-    
-    while [ $retry_count -lt $max_retries ]; do
-        # Verificar se container está rodando (usando wppconnect-1 como principal)
-        if ! $DOCKER_COMPOSE ps wppconnect-1 2>/dev/null | grep -q "Up\|running"; then
-            log_warning "Container WPPConnect não está rodando. Tentando reiniciar..."
-            $DOCKER_COMPOSE up -d wppconnect-1
-            sleep 10
-        fi
+    if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+        log_info "Verificando WAHA Server (pode levar até 2 minutos)..."
         
-        # Tentar health check via curl - endpoint principal
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
+        while [ $retry_count -lt $max_retries ]; do
+            # Verificar se container está rodando
+            if ! $DOCKER_COMPOSE ps waha 2>/dev/null | grep -q "Up\|running"; then
+                log_warning "Container WAHA não está rodando. Tentando reiniciar..."
+                $DOCKER_COMPOSE --profile waha up -d waha
+                sleep 10
+            fi
+            
+            # Tentar health check via curl
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/api/health 2>/dev/null || echo "000")
+            
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
+                log_success "WAHA Server está funcionando (HTTP $HTTP_CODE)"
+                return 0
+            fi
+            
+            retry_count=$((retry_count + 1))
+            remaining=$((max_retries - retry_count))
+            echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
+            sleep $wait_time
+        done
+    else
+        log_info "Verificando WPPConnect Server (pode levar até 2 minutos)..."
         
-        # Se /api/ falhar, tentar endpoint alternativo /api/showAllSessions
-        if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "502" ] || [ "$HTTP_CODE" = "503" ]; then
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
-        fi
-        
-        # Qualquer resposta HTTP válida indica que o servidor está funcionando
-        # 200 = OK, 401/403 = Não autorizado, 404 = Sem sessões, 500 = Erro interno (mas servidor respondendo)
-        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "500" ]; then
-            log_success "WPPConnect Server está funcionando (HTTP $HTTP_CODE)"
-            return 0
-        fi
-        
-        retry_count=$((retry_count + 1))
-        remaining=$((max_retries - retry_count))
-        echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
-        sleep $wait_time
-    done
+        while [ $retry_count -lt $max_retries ]; do
+            # Verificar se container está rodando
+            if ! $DOCKER_COMPOSE ps wppconnect-1 2>/dev/null | grep -q "Up\|running"; then
+                log_warning "Container WPPConnect não está rodando. Tentando reiniciar..."
+                $DOCKER_COMPOSE --profile wppconnect up -d wppconnect-1
+                sleep 10
+            fi
+            
+            # Tentar health check via curl
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
+            
+            if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "502" ] || [ "$HTTP_CODE" = "503" ]; then
+                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
+            fi
+            
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "500" ]; then
+                log_success "WPPConnect Server está funcionando (HTTP $HTTP_CODE)"
+                return 0
+            fi
+            
+            retry_count=$((retry_count + 1))
+            remaining=$((max_retries - retry_count))
+            echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
+            sleep $wait_time
+        done
+    fi
     
     return 1
 }
 
-if check_wppconnect_health; then
-    log_success "WPPConnect Server verificado com sucesso"
+if check_whatsapp_health; then
+    log_success "Engine WhatsApp verificada com sucesso"
 else
-    log_warning "WPPConnect pode ainda estar inicializando"
-    log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect-1"
-    log_info "Teste: curl http://localhost:21465/api/"
+    log_warning "Engine WhatsApp pode ainda estar inicializando"
+    if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+        log_info "Verifique manualmente com: $DOCKER_COMPOSE logs waha"
+        log_info "Dashboard: http://localhost:3000"
+    else
+        log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect-1"
+        log_info "Teste: curl http://localhost:21465/api/"
+    fi
 fi
 
 # ==========================================
-# 12. Executar Migrations
+# 13. Executar Migrations
 # ==========================================
 log_info "Executando migrations do banco de dados..."
 
@@ -626,7 +718,7 @@ if [ -f "volumes/db/init/init.sql" ]; then
 fi
 
 # ==========================================
-# 13. Criar Usuário Admin
+# 14. Criar Usuário Admin
 # ==========================================
 echo ""
 log_info "Criar usuário administrador inicial"
@@ -654,7 +746,7 @@ else
 fi
 
 # ==========================================
-# 14. Resumo Final
+# 15. Resumo Final
 # ==========================================
 echo ""
 echo -e "${GREEN}============================================${NC}"
@@ -667,15 +759,38 @@ echo "  Credenciais do Admin:"
 echo "    Email: $ADMIN_EMAIL"
 echo "    Senha: (a que você digitou)"
 echo ""
-echo "  Serviços:"
-echo "    Frontend:    https://$DOMAIN"
-echo "    API:         https://$DOMAIN/rest/v1/"
-echo "    WPPConnect:  http://localhost:21465"
+echo "  Engine WhatsApp: $WHATSAPP_ENGINE"
 echo ""
-echo -e "${YELLOW}  IMPORTANTE:${NC}"
+
+if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+    echo "  Serviços WAHA:"
+    echo "    Frontend:     https://$DOMAIN"
+    echo "    API:          https://$DOMAIN/rest/v1/"
+    echo "    WAHA:         http://localhost:3000"
+    echo "    Dashboard:    http://localhost:3000"
+    echo ""
+    echo "  Credenciais WAHA:"
+    echo "    Usuário: admin"
+    echo "    Senha:   (igual WAHA_API_KEY no .env)"
+    echo ""
+    echo -e "${YELLOW}  IMPORTANTE:${NC}"
+    echo "    - O dashboard WAHA está em http://localhost:3000"
+    echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
+    echo "    - A sessão será criada automaticamente"
+else
+    echo "  Serviços WPPConnect:"
+    echo "    Frontend:    https://$DOMAIN"
+    echo "    API:         https://$DOMAIN/rest/v1/"
+    echo "    WPPConnect:  http://localhost:21465"
+    echo ""
+    echo -e "${YELLOW}  IMPORTANTE:${NC}"
+    echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
+    echo "    - O WPPConnect resolve automaticamente números LID"
+fi
+
+echo ""
+echo -e "${YELLOW}  LEMBRETE:${NC}"
 echo "    - Guarde a senha do banco de dados em local seguro"
-echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
-echo "    - O WPPConnect resolve automaticamente números LID"
 echo ""
 echo "  Comandos úteis:"
 echo "    Ver logs:     $DOCKER_COMPOSE logs -f"
