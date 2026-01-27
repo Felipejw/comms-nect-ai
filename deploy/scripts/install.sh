@@ -611,9 +611,44 @@ log_success "Containers iniciados"
 # ==========================================
 log_info "Aguardando serviços iniciarem..."
 
-sleep 60
+# Primeira espera para containers subirem
+sleep 30
+
+# Verificar quais containers estão rodando
+log_info "Verificando status dos containers..."
+$DOCKER_COMPOSE ps
+
+# Função para verificar se container está rodando
+check_container_running() {
+    local service=$1
+    local status=$($DOCKER_COMPOSE ps $service 2>/dev/null | grep -E "Up|running" || echo "")
+    if [ -n "$status" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Aguardar containers críticos estarem Up
+log_info "Aguardando containers críticos..."
+for service in db auth rest kong; do
+    local attempts=0
+    while [ $attempts -lt 30 ]; do
+        if check_container_running $service; then
+            log_success "Container $service está rodando"
+            break
+        fi
+        attempts=$((attempts + 1))
+        echo -e "  Aguardando $service... (tentativa $attempts/30)"
+        sleep 2
+    done
+done
+
+# Segunda espera para serviços internos iniciarem
+log_info "Aguardando serviços internos inicializarem..."
+sleep 30
 
 # Verificar se banco está pronto
+log_info "Verificando banco de dados..."
 max_attempts=30
 attempt=0
 while ! $DOCKER_COMPOSE exec -T db pg_isready -U postgres &>/dev/null; do
@@ -622,6 +657,7 @@ while ! $DOCKER_COMPOSE exec -T db pg_isready -U postgres &>/dev/null; do
         log_error "Banco de dados não iniciou a tempo"
         exit 1
     fi
+    echo -e "  Aguardando PostgreSQL... (tentativa $attempt/$max_attempts)"
     sleep 2
 done
 
@@ -631,27 +667,39 @@ log_success "Banco de dados pronto"
 # 11.1 Verificar Disponibilidade da API (Kong)
 # ==========================================
 wait_for_api() {
-    local max_attempts=30
+    local max_attempts=60
     local attempt=0
     
     log_info "Verificando disponibilidade da API (Kong)..."
     
     while [ $attempt -lt $max_attempts ]; do
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
-            "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+        # Primeiro verificar se Kong está escutando (qualquer resposta)
+        KONG_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+            "http://localhost:8000/" 2>/dev/null || echo "000")
         
-        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
-            log_success "API está disponível (HTTP $HTTP_CODE)"
-            return 0
+        if [ "$KONG_CODE" != "000" ]; then
+            # Kong está respondendo, agora verificar auth
+            AUTH_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+                "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+            
+            if [ "$AUTH_CODE" = "200" ]; then
+                log_success "API está disponível (Kong: $KONG_CODE, Auth: $AUTH_CODE)"
+                return 0
+            fi
+            
+            # Kong responde mas auth ainda não está pronto
+            echo -e "  Tentativa $attempt/$max_attempts - Kong: $KONG_CODE, Auth: $AUTH_CODE - Aguardando..."
+        else
+            # Kong não está respondendo
+            echo -e "  Tentativa $attempt/$max_attempts - Kong não responde - Aguardando..."
         fi
         
         attempt=$((attempt + 1))
-        remaining=$((max_attempts - attempt))
-        echo -e "  Tentativa $attempt/$max_attempts - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
-        sleep 2
+        sleep 3
     done
     
     log_warning "API pode não estar totalmente disponível ainda"
+    log_info "Diagnóstico: Execute 'docker compose logs kong auth' para verificar"
     return 1
 }
 
