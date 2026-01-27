@@ -794,6 +794,77 @@ else
             log_info "Detalhes: $ERROR_MSG"
         fi
     fi
+    
+    # FALLBACK: Criar admin diretamente no banco via SQL
+    log_info "Tentando criar admin diretamente no banco de dados..."
+    
+    # Gerar UUID para o usuário
+    NEW_USER_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || echo "$(date +%s)-$(echo $RANDOM)")
+    
+    # Hash da senha usando bcrypt (via Docker)
+    HASHED_PASSWORD=$($DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -t -c "SELECT crypt('$ADMIN_PASSWORD', gen_salt('bf'));" 2>/dev/null | tr -d ' \n')
+    
+    if [ -n "$HASHED_PASSWORD" ]; then
+        # Criar usuário diretamente na tabela auth.users
+        SQL_RESULT=$($DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "
+            DO \$\$
+            DECLARE
+                new_uid uuid := gen_random_uuid();
+            BEGIN
+                -- Inserir usuário em auth.users
+                INSERT INTO auth.users (
+                    id,
+                    instance_id,
+                    email,
+                    encrypted_password,
+                    email_confirmed_at,
+                    raw_user_meta_data,
+                    created_at,
+                    updated_at,
+                    role,
+                    aud
+                ) VALUES (
+                    new_uid,
+                    '00000000-0000-0000-0000-000000000000',
+                    '$ADMIN_EMAIL',
+                    crypt('$ADMIN_PASSWORD', gen_salt('bf')),
+                    now(),
+                    jsonb_build_object('name', '$ADMIN_NAME'),
+                    now(),
+                    now(),
+                    'authenticated',
+                    'authenticated'
+                );
+                
+                -- Aguardar trigger criar profile/role
+                PERFORM pg_sleep(1);
+                
+                -- Garantir que role seja admin
+                UPDATE public.user_roles SET role = 'admin' WHERE user_id = new_uid;
+                
+                -- Se não existir role, inserir
+                INSERT INTO public.user_roles (user_id, role)
+                SELECT new_uid, 'admin'
+                WHERE NOT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = new_uid);
+                
+                RAISE NOTICE 'Admin criado com ID: %', new_uid;
+            END \$\$;
+        " 2>&1)
+        
+        if echo "$SQL_RESULT" | grep -q "NOTICE\|INSERT\|DO"; then
+            log_success "Admin criado via SQL com sucesso!"
+            ADMIN_CREATED=true
+        else
+            log_error "Falha ao criar admin via SQL"
+            log_info "Erro: $SQL_RESULT"
+            log_info ""
+            log_info "Você pode criar manualmente após a instalação acessando:"
+            log_info "  https://$DOMAIN"
+        fi
+    else
+        log_error "Não foi possível gerar hash da senha"
+        log_info "Crie o admin manualmente após a instalação"
+    fi
 fi
 
 # ==========================================
