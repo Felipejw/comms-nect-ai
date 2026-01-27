@@ -628,6 +628,36 @@ done
 log_success "Banco de dados pronto"
 
 # ==========================================
+# 11.1 Verificar Disponibilidade da API (Kong)
+# ==========================================
+wait_for_api() {
+    local max_attempts=30
+    local attempt=0
+    
+    log_info "Verificando disponibilidade da API (Kong)..."
+    
+    while [ $attempt -lt $max_attempts ]; do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+            "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+        
+        if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ]; then
+            log_success "API está disponível (HTTP $HTTP_CODE)"
+            return 0
+        fi
+        
+        attempt=$((attempt + 1))
+        remaining=$((max_attempts - attempt))
+        echo -e "  Tentativa $attempt/$max_attempts - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
+        sleep 2
+    done
+    
+    log_warning "API pode não estar totalmente disponível ainda"
+    return 1
+}
+
+wait_for_api
+
+# ==========================================
 # 12. Verificar Saúde da Engine WhatsApp
 # ==========================================
 check_whatsapp_health() {
@@ -729,73 +759,106 @@ read -p "Senha do admin (mínimo 8 caracteres): " -s ADMIN_PASSWORD
 echo ""
 read -p "Nome do admin: " ADMIN_NAME
 
-# Criar usuário via API
-RESPONSE=$(curl -s -X POST "https://$DOMAIN/auth/v1/signup" \
+# Variável para controlar se admin foi criado
+ADMIN_CREATED=false
+
+# Criar usuário via API interna (localhost:8000) em vez de HTTPS externo
+log_info "Criando usuário administrador..."
+RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:8000/auth/v1/signup" \
     -H "apikey: $ANON_KEY" \
     -H "Content-Type: application/json" \
-    -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"data\":{\"name\":\"$ADMIN_NAME\"}}")
+    -d "{\"email\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\",\"data\":{\"name\":\"$ADMIN_NAME\"}}" 2>/dev/null || echo -e "\n000")
 
-USER_ID=$(echo $RESPONSE | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+BODY=$(echo "$RESPONSE" | sed '$d')
 
-if [ -n "$USER_ID" ]; then
-    # Atualizar role para admin
-    $DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null || true
-    log_success "Usuário admin criado com sucesso!"
+if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+    USER_ID=$(echo "$BODY" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    
+    if [ -n "$USER_ID" ]; then
+        # Atualizar role para admin
+        $DOCKER_COMPOSE exec -T db psql -U postgres -d postgres \
+            -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null || true
+        log_success "Usuário admin criado com sucesso!"
+        ADMIN_CREATED=true
+    else
+        log_warning "Resposta da API não contém ID do usuário"
+    fi
 else
-    log_warning "Não foi possível criar usuário automaticamente. Crie manualmente após a instalação."
+    log_warning "Falha ao criar admin via API (HTTP $HTTP_CODE)"
+    
+    # Mostrar erro se disponível
+    if [ -n "$BODY" ] && [ "$BODY" != "" ]; then
+        ERROR_MSG=$(echo "$BODY" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || true)
+        if [ -n "$ERROR_MSG" ]; then
+            log_info "Detalhes: $ERROR_MSG"
+        fi
+    fi
 fi
 
 # ==========================================
-# 15. Resumo Final
+# 15. Resumo Final (sempre exibir)
 # ==========================================
-echo ""
-echo -e "${GREEN}============================================${NC}"
-echo -e "${GREEN}  Instalação Concluída com Sucesso!${NC}"
-echo -e "${GREEN}============================================${NC}"
-echo ""
-echo "  URL do Sistema: https://$DOMAIN"
-echo ""
-echo "  Credenciais do Admin:"
-echo "    Email: $ADMIN_EMAIL"
-echo "    Senha: (a que você digitou)"
-echo ""
-echo "  Engine WhatsApp: $WHATSAPP_ENGINE"
-echo ""
+show_summary() {
+    echo ""
+    echo -e "${GREEN}============================================${NC}"
+    echo -e "${GREEN}  Instalação Concluída!${NC}"
+    echo -e "${GREEN}============================================${NC}"
+    echo ""
+    echo "  URL do Sistema: https://$DOMAIN"
+    echo ""
+    
+    if [ "$ADMIN_CREATED" = "true" ]; then
+        echo "  Credenciais do Admin:"
+        echo "    Email: $ADMIN_EMAIL"
+        echo "    Senha: (a que você digitou)"
+    else
+        echo -e "  ${YELLOW}Admin não foi criado automaticamente.${NC}"
+        echo "  Crie manualmente acessando https://$DOMAIN"
+        echo "  ou usando: curl -X POST http://localhost:8000/auth/v1/signup ..."
+    fi
+    echo ""
+    echo "  Engine WhatsApp: $WHATSAPP_ENGINE"
+    echo ""
 
-if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-    echo "  Serviços WAHA:"
-    echo "    Frontend:     https://$DOMAIN"
-    echo "    API:          https://$DOMAIN/rest/v1/"
-    echo "    WAHA:         http://localhost:3000"
-    echo "    Dashboard:    http://localhost:3000"
-    echo ""
-    echo "  Credenciais WAHA:"
-    echo "    Usuário: admin"
-    echo "    Senha:   (igual WAHA_API_KEY no .env)"
-    echo ""
-    echo -e "${YELLOW}  IMPORTANTE:${NC}"
-    echo "    - O dashboard WAHA está em http://localhost:3000"
-    echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
-    echo "    - A sessão será criada automaticamente"
-else
-    echo "  Serviços WPPConnect:"
-    echo "    Frontend:    https://$DOMAIN"
-    echo "    API:         https://$DOMAIN/rest/v1/"
-    echo "    WPPConnect:  http://localhost:21465"
-    echo ""
-    echo -e "${YELLOW}  IMPORTANTE:${NC}"
-    echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
-    echo "    - O WPPConnect resolve automaticamente números LID"
-fi
+    if [ "$WHATSAPP_ENGINE" = "waha" ]; then
+        echo "  Serviços WAHA:"
+        echo "    Frontend:     https://$DOMAIN"
+        echo "    API:          https://$DOMAIN/rest/v1/"
+        echo "    WAHA:         http://localhost:3000"
+        echo "    Dashboard:    http://localhost:3000"
+        echo ""
+        echo "  Credenciais WAHA:"
+        echo "    Usuário: admin"
+        echo "    Senha:   (igual WAHA_API_KEY no .env)"
+        echo ""
+        echo -e "${YELLOW}  IMPORTANTE:${NC}"
+        echo "    - O dashboard WAHA está em http://localhost:3000"
+        echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
+        echo "    - A sessão será criada automaticamente"
+    else
+        echo "  Serviços WPPConnect:"
+        echo "    Frontend:    https://$DOMAIN"
+        echo "    API:         https://$DOMAIN/rest/v1/"
+        echo "    WPPConnect:  http://localhost:21465"
+        echo ""
+        echo -e "${YELLOW}  IMPORTANTE:${NC}"
+        echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
+        echo "    - O WPPConnect resolve automaticamente números LID"
+    fi
 
-echo ""
-echo -e "${YELLOW}  LEMBRETE:${NC}"
-echo "    - Guarde a senha do banco de dados em local seguro"
-echo ""
-echo "  Comandos úteis:"
-echo "    Ver logs:     $DOCKER_COMPOSE logs -f"
-echo "    Reiniciar:    $DOCKER_COMPOSE restart"
-echo "    Parar:        $DOCKER_COMPOSE down"
-echo "    Backup:       ./scripts/backup.sh"
-echo ""
-echo -e "${GREEN}============================================${NC}"
+    echo ""
+    echo -e "${YELLOW}  LEMBRETE:${NC}"
+    echo "    - Guarde a senha do banco de dados em local seguro"
+    echo ""
+    echo "  Comandos úteis:"
+    echo "    Ver logs:     $DOCKER_COMPOSE logs -f"
+    echo "    Reiniciar:    $DOCKER_COMPOSE restart"
+    echo "    Parar:        $DOCKER_COMPOSE down"
+    echo "    Backup:       ./scripts/backup.sh"
+    echo ""
+    echo -e "${GREEN}============================================${NC}"
+}
+
+# Sempre exibir resumo, independente do resultado da criação do admin
+show_summary
