@@ -14,17 +14,31 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
-    const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
 
-    if (!evolutionUrl || !evolutionKey) {
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Get Baileys server URL from settings
+    const { data: baileysUrlSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: baileysApiKeySetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = baileysUrlSetting?.value;
+    const baileysApiKey = baileysApiKeySetting?.value;
+
+    if (!baileysUrl) {
       return new Response(
-        JSON.stringify({ error: "Evolution API not configured" }),
+        JSON.stringify({ error: "Baileys server URL not configured in system settings" }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Get an active WhatsApp connection
     const { data: connection, error: connError } = await supabase
@@ -42,18 +56,23 @@ serve(async (req) => {
       );
     }
 
-    const instanceName = (connection.session_data as Record<string, unknown>)?.instanceName as string || connection.name;
-    console.log(`[SyncContacts] Using instance: ${instanceName}`);
+    const sessionData = connection.session_data as Record<string, unknown> | null;
+    const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
+    console.log(`[SyncContacts] Using instance: ${sessionName}`);
 
-    // Fetch ALL WhatsApp contacts from Evolution API
-    console.log(`[SyncContacts] Fetching contacts from Evolution API...`);
-    const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instanceName}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': evolutionKey,
-      },
-      body: JSON.stringify({ where: {} }),
+    // Build headers for Baileys API
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (baileysApiKey) {
+      headers['X-API-Key'] = baileysApiKey;
+    }
+
+    // Fetch ALL WhatsApp contacts from Baileys API
+    console.log(`[SyncContacts] Fetching contacts from Baileys API...`);
+    const contactResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/contacts`, {
+      method: 'GET',
+      headers,
     });
 
     if (!contactResponse.ok) {
@@ -65,39 +84,45 @@ serve(async (req) => {
       );
     }
 
-    const allWhatsAppContacts = await contactResponse.json();
-    const whatsAppContactsArray = Array.isArray(allWhatsAppContacts) ? allWhatsAppContacts : [];
+    const contactResult = await contactResponse.json();
+    const whatsAppContactsArray = Array.isArray(contactResult.data) ? contactResult.data : 
+                                   Array.isArray(contactResult) ? contactResult : [];
     console.log(`[SyncContacts] Got ${whatsAppContactsArray.length} contacts from WhatsApp`);
 
     // Build lookup maps for faster access
     // Map: LID -> WhatsApp contact info
+    // deno-lint-ignore no-explicit-any
     const lidToContact = new Map<string, any>();
     // Map: Phone -> WhatsApp contact info
+    // deno-lint-ignore no-explicit-any
     const phoneToContact = new Map<string, any>();
     // Map: LID -> Real phone (via pushName matching)
     const lidToRealPhone = new Map<string, string>();
 
     for (const waContact of whatsAppContactsArray) {
-      const remoteJid = waContact.remoteJid || '';
+      const remoteJid = waContact.id || waContact.remoteJid || '';
+      const pushName = waContact.name || waContact.pushName || waContact.notify || '';
       
       if (remoteJid.includes('@lid')) {
         const lid = remoteJid.replace('@lid', '').split(':')[0];
-        lidToContact.set(lid, waContact);
+        lidToContact.set(lid, { ...waContact, pushName });
         
         // Try to find real phone via pushName
-        if (waContact.pushName) {
-          const linkedContact = whatsAppContactsArray.find((c: any) => 
-            c.pushName === waContact.pushName && 
-            c.remoteJid?.includes('@s.whatsapp.net')
-          );
+        if (pushName) {
+          // deno-lint-ignore no-explicit-any
+          const linkedContact = whatsAppContactsArray.find((c: any) => {
+            const cName = c.name || c.pushName || c.notify || '';
+            const cJid = c.id || c.remoteJid || '';
+            return cName === pushName && cJid.includes('@s.whatsapp.net');
+          });
           if (linkedContact) {
-            const realPhone = linkedContact.remoteJid.replace('@s.whatsapp.net', '');
+            const realPhone = (linkedContact.id || linkedContact.remoteJid || '').replace('@s.whatsapp.net', '');
             lidToRealPhone.set(lid, realPhone);
           }
         }
       } else if (remoteJid.includes('@s.whatsapp.net')) {
         const phone = remoteJid.replace('@s.whatsapp.net', '');
-        phoneToContact.set(phone, waContact);
+        phoneToContact.set(phone, { ...waContact, pushName });
       }
     }
 
@@ -144,6 +169,7 @@ serve(async (req) => {
     for (const contact of uniqueContacts) {
       try {
         const updates: Record<string, string> = {};
+        // deno-lint-ignore no-explicit-any
         let waContact: any = null;
 
         // Try to find WhatsApp contact info
@@ -164,7 +190,6 @@ serve(async (req) => {
         }
 
         // Update name if we found a pushName and current name is bad
-        const badNames = ['Chatbot Whats', 'Contato Desconhecido'];
         const nameIsBad = badNames.includes(contact.name) || 
                          contact.name === contact.phone || 
                          contact.name?.match(/^\d{15,}$/);

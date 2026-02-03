@@ -6,12 +6,6 @@ verify_jwt = false
 [functions.send-whatsapp]
 verify_jwt = false
 
-[functions.waha-instance]
-verify_jwt = false
-
-[functions.waha-webhook]
-verify_jwt = false
-
 [functions.fetch-whatsapp-profile]
 verify_jwt = false
 

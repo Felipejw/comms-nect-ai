@@ -5,9 +5,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// WAHA API configuration
-const WAHA_API_URL = Deno.env.get("WAHA_API_URL") || Deno.env.get("EVOLUTION_API_URL");
-const WAHA_API_KEY = Deno.env.get("WAHA_API_KEY") || Deno.env.get("EVOLUTION_API_KEY");
 const META_API_URL = "https://graph.facebook.com/v18.0";
 
 interface SendMessagePayload {
@@ -21,7 +18,7 @@ interface SessionData {
   sessionName?: string;
   token?: string;
   instanceName?: string;
-  engine?: string; // "waha" | "baileys"
+  engine?: string;
   // Meta API fields
   access_token?: string;
   phone_number_id?: string;
@@ -182,150 +179,6 @@ async function sendViaMetaAPI(
   return { success: true, messageId: result.messages?.[0]?.id };
 }
 
-async function sendViaWAHA(
-  connection: Connection,
-  phoneToSend: string,
-  content: string,
-  messageType: string,
-  mediaUrl: string | undefined,
-  // deno-lint-ignore no-explicit-any
-  supabaseAdmin: any
-): Promise<{ success: boolean; messageId?: string; error?: string; needsReconnection?: boolean }> {
-  if (!WAHA_API_URL) {
-    return { success: false, error: "WAHA API URL not configured" };
-  }
-
-  const sessionData = connection.session_data;
-  const sessionName = sessionData?.sessionName || sessionData?.instanceName || connection.name.toLowerCase().replace(/\s+/g, "_");
-
-  console.log(`[WAHA] Using session: ${sessionName}`);
-
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (WAHA_API_KEY) {
-    headers["X-Api-Key"] = WAHA_API_KEY;
-  }
-
-  // Verify connection status
-  try {
-    const statusCheck = await fetch(`${WAHA_API_URL}/api/sessions/${sessionName}`, {
-      headers,
-    });
-    const statusResult = await statusCheck.json();
-    console.log(`[WAHA] Session ${sessionName} status:`, JSON.stringify(statusResult));
-    
-    if (statusResult.status !== "WORKING") {
-      await supabaseAdmin
-        .from("connections")
-        .update({ status: "disconnected" })
-        .eq("id", connection.id);
-      
-      return {
-        success: false, 
-        error: "WhatsApp desconectado. Por favor, reconecte na página de Conexões.",
-        needsReconnection: true 
-      };
-    }
-  } catch (statusError) {
-    console.error("[WAHA] Error checking connection status:", statusError);
-  }
-
-  // Format the number for WAHA - uses @c.us format
-  let formattedNumber = phoneToSend.replace(/\D/g, "");
-  
-  // Add country code if needed
-  if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
-    formattedNumber = "55" + formattedNumber;
-  }
-  
-  // WAHA uses chatId format with @c.us
-  const chatId = `${formattedNumber}@c.us`;
-  
-  console.log(`[WAHA] Sending to: ${chatId}`);
-
-  let wahaResponse;
-
-  if (messageType === "text") {
-    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendText`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session: sessionName,
-        chatId,
-        text: content,
-      }),
-    });
-  } else if (messageType === "image" && mediaUrl) {
-    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendImage`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session: sessionName,
-        chatId,
-        file: { url: mediaUrl },
-        caption: content,
-      }),
-    });
-  } else if (messageType === "document" && mediaUrl) {
-    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendFile`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session: sessionName,
-        chatId,
-        file: { url: mediaUrl },
-        filename: content || "document",
-      }),
-    });
-  } else if (messageType === "audio" && mediaUrl) {
-    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendVoice`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session: sessionName,
-        chatId,
-        file: { url: mediaUrl },
-      }),
-    });
-  } else if (messageType === "video" && mediaUrl) {
-    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendVideo`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session: sessionName,
-        chatId,
-        file: { url: mediaUrl },
-        caption: content,
-      }),
-    });
-  } else {
-    // Default to text
-    wahaResponse = await fetch(`${WAHA_API_URL}/api/sendText`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        session: sessionName,
-        chatId,
-        text: content,
-      }),
-    });
-  }
-
-  const wahaResult = await wahaResponse.json();
-  console.log("[WAHA] Response:", JSON.stringify(wahaResult));
-
-  if (!wahaResponse.ok || wahaResult.error) {
-    console.error("[WAHA] Error:", wahaResult);
-    return { 
-      success: false, 
-      error: wahaResult.message || wahaResult.error || "Erro ao enviar mensagem" 
-    };
-  }
-
-  return { success: true, messageId: wahaResult.id || wahaResult.key?.id };
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -414,7 +267,7 @@ Deno.serve(async (req) => {
     let connection: Connection | null = conversation.connection;
     
     if (!connection || connection.status !== "connected") {
-      // Find any available connected connection (prefer Meta API, then WPPConnect)
+      // Find any available connected connection (prefer Meta API, then Baileys)
       const { data: connections } = await supabaseAdmin
         .from("connections")
         .select("id, type, status, session_data, name, is_default, tenant_id")
@@ -438,15 +291,14 @@ Deno.serve(async (req) => {
 
     console.log(`Using connection: ${connection.name} (type: ${connection.type})`);
 
-    // Send message based on connection type and engine
-    let result: { success: boolean; messageId?: string; error?: string; needsReconnection?: boolean };
+    // Send message based on connection type - only Meta API or Baileys
+    let result: { success: boolean; messageId?: string; error?: string };
 
     if (connection.type === "meta_api") {
       result = await sendViaMetaAPI(connection, phoneToSend!, content, messageType, mediaUrl);
-    } else if (connection.session_data?.engine === "baileys") {
-      result = await sendViaBaileys(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
     } else {
-      result = await sendViaWAHA(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
+      // Default to Baileys for all WhatsApp QR Code connections
+      result = await sendViaBaileys(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
     }
 
     if (!result.success) {
@@ -454,10 +306,9 @@ Deno.serve(async (req) => {
         JSON.stringify({ 
           success: false, 
           error: result.error,
-          needsReconnection: result.needsReconnection,
           connectionId: connection.id 
         }),
-        { status: result.needsReconnection ? 503 : 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
@@ -500,7 +351,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: false, 
-        error: error instanceof Error ? error.message : "Erro interno" 
+        error: error instanceof Error ? error.message : "Unknown error" 
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );

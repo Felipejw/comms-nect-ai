@@ -96,30 +96,17 @@ tar -czf "$CONFIG_BACKUP" \
 log_success "Configurações: config_backup_$DATE.tar.gz"
 
 # ==========================================
-# 4. Backup do WPPConnect (Multi-Instance)
+# 4. Backup do Baileys (Sessões WhatsApp)
 # ==========================================
-log_info "Fazendo backup das sessões do WhatsApp..."
+log_info "Fazendo backup das sessões do WhatsApp (Baileys)..."
 
-WPPCONNECT_BACKUP="$BACKUP_DIR/wppconnect_backup_$DATE.tar.gz"
+BAILEYS_BACKUP="$BACKUP_DIR/baileys_backup_$DATE.tar.gz"
 
-# Backup de todas as instâncias
-WPPCONNECT_DIRS=""
-for i in 1 2 3; do
-    if [ -d "volumes/wppconnect-$i" ]; then
-        WPPCONNECT_DIRS="$WPPCONNECT_DIRS wppconnect-$i"
-    fi
-done
-
-# Fallback para estrutura antiga
-if [ -d "volumes/wppconnect" ] && [ -z "$WPPCONNECT_DIRS" ]; then
-    WPPCONNECT_DIRS="wppconnect"
-fi
-
-if [ -n "$WPPCONNECT_DIRS" ]; then
-    tar -czf "$WPPCONNECT_BACKUP" -C volumes $WPPCONNECT_DIRS
-    log_success "WPPConnect: wppconnect_backup_$DATE.tar.gz (instâncias: $WPPCONNECT_DIRS)"
+if [ -d "/opt/baileys/sessions" ]; then
+    tar -czf "$BAILEYS_BACKUP" -C /opt/baileys sessions
+    log_success "Baileys: baileys_backup_$DATE.tar.gz"
 else
-    log_info "Pasta wppconnect não encontrada, pulando..."
+    log_info "Pasta baileys/sessions não encontrada, pulando..."
 fi
 
 # ==========================================
