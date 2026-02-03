@@ -59,7 +59,7 @@ export default function Conexoes() {
   const fetchServerInfo = async () => {
     setIsLoadingServerInfo(true);
     try {
-      const result = await checkServerHealth.mutateAsync('baileys');
+      const result = await checkServerHealth.mutateAsync();
       setServerInfo({
         status: result.data?.status === 'ok' ? "online" : "offline",
         version: result.data?.version || "Baileys",
@@ -145,8 +145,7 @@ export default function Conexoes() {
 
     try {
       const result = await createConnection.mutateAsync({ 
-        instanceName: newInstanceName.trim(),
-        engine: 'baileys'
+        instanceName: newInstanceName.trim()
       });
       setIsCreateDialogOpen(false);
       setNewInstanceName("");

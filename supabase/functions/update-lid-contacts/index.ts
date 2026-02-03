@@ -14,17 +14,31 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionUrl = Deno.env.get("EVOLUTION_API_URL");
-    const evolutionKey = Deno.env.get("EVOLUTION_API_KEY");
 
-    if (!evolutionUrl || !evolutionKey) {
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Get Baileys server URL from settings
+    const { data: baileysUrlSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: baileysApiKeySetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = baileysUrlSetting?.value;
+    const baileysApiKey = baileysApiKeySetting?.value;
+
+    if (!baileysUrl) {
       return new Response(
-        JSON.stringify({ error: "Evolution API not configured" }),
+        JSON.stringify({ error: "Baileys server URL not configured in system settings" }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Get all contacts with whatsapp_lid
     const { data: contacts, error: contactsError } = await supabase
@@ -55,30 +69,36 @@ serve(async (req) => {
       );
     }
 
-    const instanceName = (connection.session_data as Record<string, unknown>)?.instanceName as string || connection.name;
+    const sessionData = connection.session_data as Record<string, unknown> | null;
+    const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
     
+    // Build headers for Baileys API
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (baileysApiKey) {
+      headers['X-API-Key'] = baileysApiKey;
+    }
+
     // Fetch all WhatsApp contacts at once to avoid multiple API calls
-    console.log(`[UpdateLID] Fetching all contacts from Evolution API...`);
-    const contactResponse = await fetch(`${evolutionUrl}/chat/findContacts/${instanceName}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': evolutionKey,
-      },
-      body: JSON.stringify({ where: {} }),
+    console.log(`[UpdateLID] Fetching all contacts from Baileys API...`);
+    const contactResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/contacts`, {
+      method: 'GET',
+      headers,
     });
 
     if (!contactResponse.ok) {
       const errorText = await contactResponse.text();
-      console.error(`[UpdateLID] Failed to fetch contacts from Evolution:`, errorText);
+      console.error(`[UpdateLID] Failed to fetch contacts from Baileys:`, errorText);
       return new Response(
         JSON.stringify({ error: "Failed to fetch contacts from WhatsApp" }),
         { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    const allWhatsAppContacts = await contactResponse.json();
-    const whatsAppContactsArray = Array.isArray(allWhatsAppContacts) ? allWhatsAppContacts : [];
+    const contactResult = await contactResponse.json();
+    const whatsAppContactsArray = Array.isArray(contactResult.data) ? contactResult.data : 
+                                   Array.isArray(contactResult) ? contactResult : [];
     console.log(`[UpdateLID] Got ${whatsAppContactsArray.length} contacts from WhatsApp`);
 
     const results = {
@@ -115,20 +135,30 @@ serve(async (req) => {
 
         // Find the LID contact in WhatsApp contacts
         const lidRemoteJid = `${lid}@lid`;
-        const lidContact = whatsAppContactsArray.find((c: any) => c.remoteJid === lidRemoteJid);
+        // deno-lint-ignore no-explicit-any
+        const lidContact = whatsAppContactsArray.find((c: any) => {
+          const cJid = c.id || c.remoteJid || '';
+          return cJid === lidRemoteJid || cJid.includes(lid);
+        });
         
         let realPhone: string | null = null;
         
-        if (lidContact && lidContact.pushName) {
-          // Find linked contact with same pushName and real number
-          const linkedContact = whatsAppContactsArray.find((c: any) => 
-            c.pushName === lidContact.pushName && 
-            c.remoteJid?.includes('@s.whatsapp.net')
-          );
+        if (lidContact) {
+          const pushName = lidContact.name || lidContact.pushName || lidContact.notify || '';
           
-          if (linkedContact) {
-            realPhone = linkedContact.remoteJid.replace('@s.whatsapp.net', '');
-            console.log(`[UpdateLID] Found real phone via pushName for ${contact.name}: ${realPhone}`);
+          if (pushName) {
+            // Find linked contact with same pushName and real number
+            // deno-lint-ignore no-explicit-any
+            const linkedContact = whatsAppContactsArray.find((c: any) => {
+              const cName = c.name || c.pushName || c.notify || '';
+              const cJid = c.id || c.remoteJid || '';
+              return cName === pushName && cJid.includes('@s.whatsapp.net');
+            });
+            
+            if (linkedContact) {
+              realPhone = (linkedContact.id || linkedContact.remoteJid || '').replace('@s.whatsapp.net', '');
+              console.log(`[UpdateLID] Found real phone via pushName for ${contact.name}: ${realPhone}`);
+            }
           }
         }
 

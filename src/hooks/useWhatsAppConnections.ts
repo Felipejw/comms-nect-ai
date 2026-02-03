@@ -14,12 +14,14 @@ export interface WhatsAppConnection {
     sessionName?: string; 
     token?: string; 
     instanceName?: string;
-    engine?: 'waha' | 'baileys';
   } | null;
   color: string | null;
   created_at: string;
   updated_at: string;
 }
+
+// All WhatsApp QR Code connections use Baileys
+const EDGE_FUNCTION = 'baileys-instance';
 
 export function useWhatsAppConnections() {
   const queryClient = useQueryClient();
@@ -40,9 +42,8 @@ export function useWhatsAppConnections() {
   });
 
   const createConnection = useMutation({
-    mutationFn: async ({ instanceName, engine = 'baileys' }: { instanceName: string; engine?: 'waha' | 'baileys' }) => {
-      const functionName = engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
-      const { data, error } = await supabase.functions.invoke(functionName, {
+    mutationFn: async ({ instanceName }: { instanceName: string }) => {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "create", instanceName },
       });
 
@@ -66,15 +67,9 @@ export function useWhatsAppConnections() {
     },
   });
 
-  const getEdgeFunctionName = (connectionId: string): string => {
-    const connection = connections.find(c => c.id === connectionId);
-    return connection?.session_data?.engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
-  };
-
   const getQrCode = useMutation({
     mutationFn: async (connectionId: string) => {
-      const functionName = getEdgeFunctionName(connectionId);
-      const { data, error } = await supabase.functions.invoke(functionName, {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "getQrCode", connectionId },
       });
 
@@ -89,8 +84,7 @@ export function useWhatsAppConnections() {
 
   const checkStatus = useMutation({
     mutationFn: async (connectionId: string) => {
-      const functionName = getEdgeFunctionName(connectionId);
-      const { data, error } = await supabase.functions.invoke(functionName, {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "status", connectionId },
       });
 
@@ -105,8 +99,7 @@ export function useWhatsAppConnections() {
 
   const disconnect = useMutation({
     mutationFn: async (connectionId: string) => {
-      const functionName = getEdgeFunctionName(connectionId);
-      const { data, error } = await supabase.functions.invoke(functionName, {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "disconnect", connectionId },
       });
 
@@ -132,8 +125,7 @@ export function useWhatsAppConnections() {
 
   const deleteConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const functionName = getEdgeFunctionName(connectionId);
-      const { data, error } = await supabase.functions.invoke(functionName, {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "delete", connectionId },
       });
 
@@ -192,8 +184,7 @@ export function useWhatsAppConnections() {
 
   const recreateConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const functionName = getEdgeFunctionName(connectionId);
-      const { data, error } = await supabase.functions.invoke(functionName, {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "recreate", connectionId },
       });
 
@@ -218,9 +209,8 @@ export function useWhatsAppConnections() {
   });
 
   const checkServerHealth = useMutation({
-    mutationFn: async (engine: 'waha' | 'baileys' = 'baileys') => {
-      const functionName = engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
-      const { data, error } = await supabase.functions.invoke(functionName, {
+    mutationFn: async () => {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "serverHealth" },
       });
 
@@ -232,7 +222,7 @@ export function useWhatsAppConnections() {
 
   const cleanupOrphaned = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+      const { data, error } = await supabase.functions.invoke(EDGE_FUNCTION, {
         body: { action: "cleanupOrphanedInstances" },
       });
 

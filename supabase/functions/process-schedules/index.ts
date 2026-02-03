@@ -13,8 +13,6 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -44,6 +42,22 @@ Deno.serve(async (req) => {
 
     console.log(`Found ${pendingSchedules?.length || 0} pending schedules to process`);
 
+    // Get Baileys server configuration from system settings
+    const { data: baileysUrlSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: baileysApiKeySetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = baileysUrlSetting?.value;
+    const baileysApiKey = baileysApiKeySetting?.value;
+
     const results: { id: string; success: boolean; error?: string }[] = [];
 
     for (const schedule of pendingSchedules || []) {
@@ -55,40 +69,54 @@ Deno.serve(async (req) => {
           schedule.conversation_id &&
           schedule.message_content &&
           schedule.conversation?.contact?.phone &&
-          evolutionApiUrl &&
-          evolutionApiKey
+          baileysUrl
         ) {
           const phone = schedule.conversation.contact.phone.replace(/\D/g, "");
 
           // Get default connection
           const { data: connection } = await supabase
             .from("connections")
-            .select("name")
+            .select("name, session_data")
             .eq("is_default", true)
             .eq("status", "connected")
             .single();
 
           if (connection) {
-            console.log(`Sending message to ${phone} via instance ${connection.name}`);
+            const sessionData = connection.session_data as Record<string, unknown> | null;
+            const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
+            
+            console.log(`Sending message to ${phone} via Baileys session ${sessionName}`);
+
+            // Build headers for Baileys API
+            const headers: Record<string, string> = {
+              "Content-Type": "application/json",
+            };
+            if (baileysApiKey) {
+              headers["X-API-Key"] = baileysApiKey;
+            }
+
+            // Format phone number
+            let formattedNumber = phone;
+            if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
+              formattedNumber = "55" + formattedNumber;
+            }
 
             const messageResponse = await fetch(
-              `${evolutionApiUrl}/message/sendText/${connection.name}`,
+              `${baileysUrl}/sessions/${sessionName}/send/text`,
               {
                 method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  apikey: evolutionApiKey,
-                },
+                headers,
                 body: JSON.stringify({
-                  number: phone,
+                  to: formattedNumber,
                   text: schedule.message_content,
                 }),
               }
             );
 
-            if (!messageResponse.ok) {
-              const errorText = await messageResponse.text();
-              console.error(`Failed to send message for schedule ${schedule.id}:`, errorText);
+            const messageResult = await messageResponse.json();
+
+            if (!messageResult.success) {
+              console.error(`Failed to send message for schedule ${schedule.id}:`, messageResult.error);
             } else {
               console.log(`Message sent successfully for schedule ${schedule.id}`);
 

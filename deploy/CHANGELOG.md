@@ -2,6 +2,37 @@
 
 Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
 
+## [3.0.0] - 2025-02-03
+
+### Mudanças Importantes
+- **Consolidação para Baileys como único engine WhatsApp (QR Code)**
+  - Removido suporte a WAHA
+  - Removido suporte a Evolution API
+  - Removido suporte a WPPConnect
+  - Meta Cloud API continua suportada para conexões oficiais
+
+### Removido
+- Edge functions `waha-instance` e `waha-webhook`
+- Diretório `deploy/waha/`
+- Variáveis de ambiente `WAHA_*`, `EVOLUTION_*`, `WPPCONNECT_*`
+
+### Atualizado
+- `send-whatsapp`: Usa apenas Baileys ou Meta API
+- `sync-contacts`: Migrado para Baileys API
+- `update-lid-contacts`: Migrado para Baileys API
+- `resolve-lid-contact`: Migrado para Baileys API
+- `process-schedules`: Usa Baileys API diretamente
+- `useWhatsAppConnections.ts`: Simplificado, sempre usa `baileys-instance`
+- `backup.sh`: Faz backup de `/opt/baileys/sessions` em vez de WPPConnect
+
+### Notas de Migração
+Para usuários atualizando da versão 2.x:
+1. Conexões existentes com engine WAHA precisarão ser recriadas
+2. Instale o servidor Baileys: `curl -fsSL https://seu-servidor/baileys/bootstrap.sh | sudo bash`
+3. Configure `baileys_server_url` e `baileys_api_key` em Configurações > Sistema
+
+---
+
 ## [2.0.0] - 2025-01-07
 
 ### Mudanças Importantes
@@ -69,7 +100,7 @@ Para usuários atualizando da versão 1.x:
 Para instalar uma atualização:
 
 1. Faça backup: `./scripts/backup.sh`
-2. Baixe o arquivo de atualização (ex: `v2.1-update.zip`)
+2. Baixe o arquivo de atualização (ex: `v3.0-update.zip`)
 3. Extraia sobre a instalação existente
 4. Execute: `./scripts/update.sh`
 5. Verifique os logs: `docker-compose logs -f`
