@@ -13,12 +13,26 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL")!;
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY")!;
 
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
     console.log("Starting connection health check...");
+
+    // Get Baileys server URL from settings
+    const { data: baileysUrlSetting } = await supabaseAdmin
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: baileysApiKeySetting } = await supabaseAdmin
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = baileysUrlSetting?.value || Deno.env.get("BAILEYS_API_URL") || "http://baileys:3000";
+    const baileysApiKey = baileysApiKeySetting?.value || Deno.env.get("BAILEYS_API_KEY");
 
     // Get all connections that are marked as connected
     const { data: connections, error: connError } = await supabaseAdmin
@@ -43,7 +57,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    console.log(`Checking ${connections.length} connections...`);
+    console.log(`Checking ${connections.length} connections via Baileys API...`);
 
     const results = {
       checked: 0,
@@ -53,20 +67,29 @@ Deno.serve(async (req) => {
       details: [] as { id: string; name: string; status: string; newStatus?: string }[],
     };
 
+    // Build headers for Baileys API
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (baileysApiKey) {
+      headers['X-API-Key'] = baileysApiKey;
+    }
+
     for (const connection of connections) {
       results.checked++;
-      const instanceName = connection.session_data?.instanceName || connection.name;
+      const sessionData = connection.session_data as Record<string, unknown> | null;
+      const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
       
       try {
-        console.log(`Checking instance: ${instanceName} (${connection.id})`);
+        console.log(`Checking session: ${sessionName} (${connection.id})`);
         
-        // Check real status with Evolution API
-        const statusResponse = await fetch(`${evolutionApiUrl}/instance/connectionState/${instanceName}`, {
-          headers: { "apikey": evolutionApiKey }
+        // Check real status with Baileys API
+        const statusResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/status`, {
+          headers,
         });
 
         if (!statusResponse.ok) {
-          console.error(`Error checking ${instanceName}: HTTP ${statusResponse.status}`);
+          console.error(`Error checking ${sessionName}: HTTP ${statusResponse.status}`);
           results.errors++;
           results.details.push({
             id: connection.id,
@@ -77,22 +100,22 @@ Deno.serve(async (req) => {
         }
 
         const statusResult = await statusResponse.json();
-        console.log(`Status for ${instanceName}:`, JSON.stringify(statusResult));
+        console.log(`Status for ${sessionName}:`, JSON.stringify(statusResult));
         
-        // Extract state from response (different API versions may have different formats)
-        const connectionState = statusResult?.instance?.state || statusResult?.state;
+        // Extract state from response
+        const isConnected = statusResult?.data?.connected || statusResult?.connected || statusResult?.status === 'connected';
         
-        if (connectionState === 'open') {
+        if (isConnected) {
           results.stillConnected++;
           results.details.push({
             id: connection.id,
             name: connection.name,
             status: "connected",
           });
-          console.log(`${instanceName} is still connected`);
+          console.log(`${sessionName} is still connected`);
         } else {
           // Connection is actually disconnected
-          console.log(`${instanceName} is disconnected (state: ${connectionState}), updating database...`);
+          console.log(`${sessionName} is disconnected, updating database...`);
           
           await supabaseAdmin
             .from("connections")
@@ -108,7 +131,7 @@ Deno.serve(async (req) => {
           });
         }
       } catch (error) {
-        console.error(`Error checking ${instanceName}:`, error);
+        console.error(`Error checking ${sessionName}:`, error);
         results.errors++;
         results.details.push({
           id: connection.id,

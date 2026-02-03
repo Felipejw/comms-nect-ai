@@ -22,8 +22,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL") ?? "";
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY") ?? "";
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
@@ -36,6 +34,22 @@ serve(async (req) => {
     };
 
     console.log("[MergeContacts] Starting duplicate contact cleanup...");
+
+    // Get Baileys server URL from settings
+    const { data: baileysUrlSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: baileysApiKeySetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = baileysUrlSetting?.value || Deno.env.get("BAILEYS_API_URL") || "http://baileys:3000";
+    const baileysApiKey = baileysApiKeySetting?.value || Deno.env.get("BAILEYS_API_KEY");
 
     // 1. Find contacts with LID stored as phone (phone > 15 digits or matches whatsapp_lid)
     const { data: problematicContacts, error: fetchError } = await supabase
@@ -77,7 +91,7 @@ serve(async (req) => {
     result.total = uniqueContacts.length;
     console.log(`[MergeContacts] Found ${result.total} contacts to process`);
 
-    // Get default WhatsApp connection for Evolution API calls
+    // Get default WhatsApp connection for Baileys API calls
     const { data: connection } = await supabase
       .from("connections")
       .select("*")
@@ -86,24 +100,32 @@ serve(async (req) => {
       .limit(1)
       .single();
 
+    // deno-lint-ignore no-explicit-any
     let allWhatsAppContacts: any[] = [];
     
-    if (connection && evolutionApiUrl && evolutionApiKey) {
-      const instanceName = connection.session_data?.instanceName || connection.name;
+    if (connection && baileysUrl) {
+      const sessionData = connection.session_data as Record<string, unknown> | null;
+      const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
       
       try {
-        const contactResponse = await fetch(`${evolutionApiUrl}/chat/findContacts/${instanceName}`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'apikey': evolutionApiKey,
-          },
-          body: JSON.stringify({ where: {} }),
+        // Build headers for Baileys API
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        if (baileysApiKey) {
+          headers['X-API-Key'] = baileysApiKey;
+        }
+
+        const contactResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/contacts`, {
+          method: 'GET',
+          headers,
         });
         
         if (contactResponse.ok) {
-          allWhatsAppContacts = await contactResponse.json();
-          console.log(`[MergeContacts] Fetched ${allWhatsAppContacts.length} WhatsApp contacts`);
+          const contactResult = await contactResponse.json();
+          allWhatsAppContacts = Array.isArray(contactResult.data) ? contactResult.data : 
+                               Array.isArray(contactResult) ? contactResult : [];
+          console.log(`[MergeContacts] Fetched ${allWhatsAppContacts.length} WhatsApp contacts from Baileys`);
         }
       } catch (e) {
         console.error("[MergeContacts] Failed to fetch WhatsApp contacts:", e);
@@ -111,16 +133,19 @@ serve(async (req) => {
     }
 
     // Build lookup maps
+    // deno-lint-ignore no-explicit-any
     const phoneLookup = new Map<string, any>();
+    // deno-lint-ignore no-explicit-any
     const lidLookup = new Map<string, any>();
     
     for (const waContact of allWhatsAppContacts) {
-      if (waContact.remoteJid?.includes('@s.whatsapp.net')) {
-        const phone = waContact.remoteJid.replace('@s.whatsapp.net', '');
+      const remoteJid = waContact.id || waContact.remoteJid || '';
+      if (remoteJid.includes('@s.whatsapp.net')) {
+        const phone = remoteJid.replace('@s.whatsapp.net', '');
         phoneLookup.set(phone, waContact);
       }
-      if (waContact.remoteJid?.includes('@lid')) {
-        const lid = waContact.remoteJid.replace('@lid', '').split(':')[0];
+      if (remoteJid.includes('@lid')) {
+        const lid = remoteJid.replace('@lid', '').split(':')[0];
         lidLookup.set(lid, waContact);
       }
     }
@@ -140,15 +165,19 @@ serve(async (req) => {
 
         // 1. Check if LID exists in WhatsApp contacts
         const lidContact = lidLookup.get(lid);
-        if (lidContact?.pushName) {
-          realName = lidContact.pushName;
-          
-          // Find matching contact by pushName with real phone
-          for (const waContact of allWhatsAppContacts) {
-            if (waContact.pushName === lidContact.pushName && 
-                waContact.remoteJid?.includes('@s.whatsapp.net')) {
-              realPhone = waContact.remoteJid.replace('@s.whatsapp.net', '');
-              break;
+        if (lidContact) {
+          const pushName = lidContact.name || lidContact.pushName || lidContact.notify || '';
+          if (pushName) {
+            realName = pushName;
+            
+            // Find matching contact by pushName with real phone
+            for (const waContact of allWhatsAppContacts) {
+              const waName = waContact.name || waContact.pushName || waContact.notify || '';
+              const waJid = waContact.id || waContact.remoteJid || '';
+              if (waName === pushName && waJid.includes('@s.whatsapp.net')) {
+                realPhone = waJid.replace('@s.whatsapp.net', '');
+                break;
+              }
             }
           }
         }
@@ -156,9 +185,10 @@ serve(async (req) => {
         if (!realPhone && contact.name) {
           // Try finding by name
           for (const waContact of allWhatsAppContacts) {
-            if (waContact.pushName === contact.name && 
-                waContact.remoteJid?.includes('@s.whatsapp.net')) {
-              realPhone = waContact.remoteJid.replace('@s.whatsapp.net', '');
+            const waName = waContact.name || waContact.pushName || waContact.notify || '';
+            const waJid = waContact.id || waContact.remoteJid || '';
+            if (waName === contact.name && waJid.includes('@s.whatsapp.net')) {
+              realPhone = waJid.replace('@s.whatsapp.net', '');
               break;
             }
           }
@@ -238,6 +268,7 @@ serve(async (req) => {
             result.details.push(`Merged: ${contact.name} (${contact.id}) -> ${existingContact.name} (${existingContact.id})`);
           } else {
             // UPDATE: Just update the phone and LID
+            // deno-lint-ignore no-explicit-any
             const updates: Record<string, any> = {
               phone: realPhone,
             };
@@ -309,15 +340,17 @@ serve(async (req) => {
 
         if (phone && phone.length <= 15) {
           const waContact = phoneLookup.get(phone);
-          if (waContact?.pushName) {
-            realName = waContact.pushName;
+          const pushName = waContact?.name || waContact?.pushName || waContact?.notify || '';
+          if (pushName) {
+            realName = pushName;
           }
         }
 
         if (!realName && lid) {
           const lidContact = lidLookup.get(lid);
-          if (lidContact?.pushName) {
-            realName = lidContact.pushName;
+          const pushName = lidContact?.name || lidContact?.pushName || lidContact?.notify || '';
+          if (pushName) {
+            realName = pushName;
           }
         }
 

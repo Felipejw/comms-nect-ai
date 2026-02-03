@@ -1,9 +1,7 @@
-version: "3.8"
-
 # ===========================================
 # Sistema de Atendimento WhatsApp - Self-Hosted
-# Docker Compose para Supabase + Frontend + WAHA/WPPConnect
-# Suporta profiles: waha ou wppconnect
+# Docker Compose para Supabase + Frontend + Baileys
+# Engine única: Baileys (QR Code)
 # ===========================================
 
 services:
@@ -261,22 +259,9 @@ services:
       SUPABASE_DB_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-postgres}
       DENO_JOBS: 4
       
-      # WAHA (Usado quando WHATSAPP_ENGINE=waha)
-      WAHA_API_URL: ${WAHA_API_URL:-http://waha:3000}
-      WAHA_API_KEY: ${WAHA_API_KEY:-}
-      
-      # WPPConnect (Usado quando WHATSAPP_ENGINE=wppconnect)
-      WPPCONNECT_API_URL: ${WPPCONNECT_API_URL:-http://wppconnect-1:21465}
-      WPPCONNECT_SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-}
-      WPPCONNECT_API_URL_2: ${WPPCONNECT_API_URL_2:-}
-      WPPCONNECT_API_URL_3: ${WPPCONNECT_API_URL_3:-}
-      
-      # Baileys (Usado quando WHATSAPP_ENGINE=baileys)
+      # Baileys - WhatsApp Engine
       BAILEYS_API_URL: ${BAILEYS_INTERNAL_URL:-http://baileys:3000}
       BAILEYS_API_KEY: ${BAILEYS_API_KEY:-}
-      
-      # Identificador da engine em uso
-      WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-baileys}
       
       # Google Calendar (opcional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -358,190 +343,7 @@ services:
       - supabase-network
 
   # ==========================================
-  # WAHA - WhatsApp HTTP API (Profile: waha)
-  # ==========================================
-  waha:
-    image: devlikeapro/waha:latest
-    container_name: waha-server
-    restart: unless-stopped
-    profiles:
-      - waha
-    ports:
-      - "${WAHA_PORT:-3000}:3000"
-    environment:
-      # API Key para autenticação
-      WHATSAPP_API_KEY: ${WAHA_API_KEY}
-      
-      # Webhook para receber mensagens
-      WHATSAPP_HOOK_URL: ${WEBHOOK_URL:-}
-      WHATSAPP_HOOK_EVENTS: "message,message.any,message.ack,session.status,state.change"
-      
-      # Reiniciar sessões ao iniciar
-      WHATSAPP_RESTART_ALL_SESSIONS: "true"
-      
-      # Dashboard de administração
-      WAHA_DASHBOARD_ENABLED: "true"
-      WAHA_DASHBOARD_USERNAME: admin
-      WAHA_DASHBOARD_PASSWORD: ${WAHA_API_KEY}
-      
-      # Configurações de mídia
-      WHATSAPP_FILES_MIMETYPES: "image/jpeg,image/png,image/gif,video/mp4,audio/mpeg,audio/ogg,application/pdf,application/msword"
-      WHATSAPP_FILES_LIFETIME: "180"
-    volumes:
-      - ./volumes/waha/sessions:/app/.waha/sessions
-      - ./volumes/waha/media:/app/.waha/media
-    healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-    networks:
-      - supabase-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  # ==========================================
-  # WPPCONNECT SERVERS - WhatsApp (Profile: wppconnect)
-  # ==========================================
-  
-  # Instance 1 (Primary)
-  wppconnect-1:
-    image: wppconnect/server-cli:latest
-    container_name: wppconnect-server-1
-    restart: unless-stopped
-    profiles:
-      - wppconnect
-    ports:
-      - "${WPPCONNECT_PORT_1:-21465}:21465"
-    environment:
-      SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
-      HOST: "0.0.0.0"
-      PORT: "21465"
-      START_ALL_SESSION: "true"
-      TOKEN_STORE_TYPE: "file"
-      WEBHOOK_URL: ${WEBHOOK_URL:-}
-      WEBHOOK_AUTO_DOWNLOAD: "true"
-      WEBHOOK_READ_MESSAGE: "true"
-      WEBHOOK_LISTEN_ACKS: "true"
-      WEBHOOK_ON_PRESENCE_CHANGED: "true"
-    volumes:
-      - ./volumes/wppconnect-1/tokens:/home/node/tokens
-      - ./volumes/wppconnect-1/userDataDir:/home/node/userDataDir
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:21465/api/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - supabase-network
-    labels:
-      - "wppconnect.instance=1"
-      - "wppconnect.priority=primary"
-
-  # Instance 2 (Secondary - Optional)
-  wppconnect-2:
-    image: wppconnect/server-cli:latest
-    container_name: wppconnect-server-2
-    restart: unless-stopped
-    profiles:
-      - wppconnect
-      - multi-instance
-    ports:
-      - "${WPPCONNECT_PORT_2:-21466}:21465"
-    environment:
-      SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
-      HOST: "0.0.0.0"
-      PORT: "21465"
-      START_ALL_SESSION: "true"
-      TOKEN_STORE_TYPE: "file"
-      WEBHOOK_URL: ${WEBHOOK_URL:-}
-      WEBHOOK_AUTO_DOWNLOAD: "true"
-      WEBHOOK_READ_MESSAGE: "true"
-      WEBHOOK_LISTEN_ACKS: "true"
-      WEBHOOK_ON_PRESENCE_CHANGED: "true"
-    volumes:
-      - ./volumes/wppconnect-2/tokens:/home/node/tokens
-      - ./volumes/wppconnect-2/userDataDir:/home/node/userDataDir
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:21465/api/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - supabase-network
-    labels:
-      - "wppconnect.instance=2"
-      - "wppconnect.priority=secondary"
-
-  # Instance 3 (Tertiary - Optional)
-  wppconnect-3:
-    image: wppconnect/server-cli:latest
-    container_name: wppconnect-server-3
-    restart: unless-stopped
-    profiles:
-      - wppconnect
-      - multi-instance
-      - high-availability
-    ports:
-      - "${WPPCONNECT_PORT_3:-21467}:21465"
-    environment:
-      SECRET_KEY: ${WPPCONNECT_SECRET_KEY:-THISISMYSECURETOKEN}
-      HOST: "0.0.0.0"
-      PORT: "21465"
-      START_ALL_SESSION: "true"
-      TOKEN_STORE_TYPE: "file"
-      WEBHOOK_URL: ${WEBHOOK_URL:-}
-      WEBHOOK_AUTO_DOWNLOAD: "true"
-      WEBHOOK_READ_MESSAGE: "true"
-      WEBHOOK_LISTEN_ACKS: "true"
-      WEBHOOK_ON_PRESENCE_CHANGED: "true"
-    volumes:
-      - ./volumes/wppconnect-3/tokens:/home/node/tokens
-      - ./volumes/wppconnect-3/userDataDir:/home/node/userDataDir
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:21465/api/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-    networks:
-      - supabase-network
-    labels:
-      - "wppconnect.instance=3"
-      - "wppconnect.priority=tertiary"
-
-  # ==========================================
-  # NGINX LOAD BALANCER - WPPConnect (Optional)
-  # ==========================================
-  wppconnect-lb:
-    image: nginx:alpine
-    container_name: wppconnect-loadbalancer
-    restart: unless-stopped
-    profiles:
-      - wppconnect
-      - multi-instance
-    ports:
-      - "${WPPCONNECT_LB_PORT:-21400}:80"
-    volumes:
-      - ./nginx/wppconnect-lb.conf:/etc/nginx/nginx.conf:ro
-    depends_on:
-      - wppconnect-1
-    networks:
-      - supabase-network
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-
-  # ==========================================
-  # BAILEYS - WhatsApp via QR Code (Profile: baileys)
+  # BAILEYS - WhatsApp via QR Code
   # ==========================================
   baileys:
     build: ./baileys

@@ -12,23 +12,27 @@ Todas as alterações notáveis neste projeto serão documentadas neste arquivo.
   - Meta Cloud API continua suportada para conexões oficiais
 
 ### Removido
-- Edge functions `waha-instance` e `waha-webhook`
-- Diretório `deploy/waha/`
-- Variáveis de ambiente `WAHA_*`, `EVOLUTION_*`, `WPPCONNECT_*`
+- Edge functions: Referências a `EVOLUTION_API_*` e `WPPCONNECT_*`
+- Docker Compose: Serviços `waha`, `wppconnect-1/2/3`, `wppconnect-lb`
+- Variáveis de ambiente: `WAHA_*`, `EVOLUTION_*`, `WPPCONNECT_*`, `WHATSAPP_ENGINE`
+- Scripts: Lógica de escolha de engine e verificações de health para engines legados
 
 ### Atualizado
-- `send-whatsapp`: Usa apenas Baileys ou Meta API
-- `sync-contacts`: Migrado para Baileys API
-- `update-lid-contacts`: Migrado para Baileys API
-- `resolve-lid-contact`: Migrado para Baileys API
-- `process-schedules`: Usa Baileys API diretamente
-- `useWhatsAppConnections.ts`: Simplificado, sempre usa `baileys-instance`
-- `backup.sh`: Faz backup de `/opt/baileys/sessions` em vez de WPPConnect
+- `docker-compose.yml`: Simplificado, apenas Baileys como engine WhatsApp
+- `download-whatsapp-media`: Usa apenas Baileys API
+- `check-connections`: Migrado para Baileys API
+- `merge-duplicate-contacts`: Migrado para Baileys API
+- `install.sh`: Simplificado, sem menu de escolha de engine
+- `update.sh`: Usa apenas `--profile baileys`
+- `diagnostico.sh`: Verifica apenas Baileys
+- `restore.sh`: Restaura sessões do Baileys
+- `backup.sh`: Faz backup de `/opt/baileys/sessions`
+- `.env.example`: Apenas variáveis do Baileys
 
 ### Notas de Migração
 Para usuários atualizando da versão 2.x:
-1. Conexões existentes com engine WAHA precisarão ser recriadas
-2. Instale o servidor Baileys: `curl -fsSL https://seu-servidor/baileys/bootstrap.sh | sudo bash`
+1. Conexões existentes com engine WAHA/WPPConnect precisarão ser recriadas
+2. Execute: `docker compose --profile baileys up -d`
 3. Configure `baileys_server_url` e `baileys_api_key` em Configurações > Sistema
 
 ---
@@ -40,32 +44,6 @@ Para usuários atualizando da versão 2.x:
   - Resolução nativa de números LID (privacidade do WhatsApp)
   - API mais simples e documentada
   - Melhor estabilidade nas conexões
-
-### Adicionado
-- Suporte completo ao WPPConnect Server
-- Endpoint dedicado para resolver LID (`/contact/pn-lid/{pnLid}`)
-- Health check automático do WPPConnect no script de instalação
-- Retry automático para serviços que demoram a iniciar
-- Scripts de backup, restore e update atualizados para WPPConnect
-
-### Alterado
-- `docker-compose.yml`: Substituído container Evolution por WPPConnect
-- Todas as edge functions de WhatsApp atualizadas para WPPConnect
-- Documentação atualizada para refletir nova arquitetura
-- `.env.example`: Variáveis de Evolution removidas, WPPConnect adicionadas
-
-### Removido
-- Dependência da Evolution API
-- Variáveis `EVOLUTION_*` do ambiente
-
-### Notas de Migração
-Para usuários atualizando da versão 1.x:
-1. Faça backup: `./scripts/backup.sh`
-2. Atualize as variáveis no `.env`:
-   - Remova: `EVOLUTION_API_KEY`, `EVOLUTION_PORT`, `EVOLUTION_SERVER_URL`
-   - Adicione: `WPPCONNECT_SECRET_KEY`, `WPPCONNECT_PORT=21465`
-3. Execute: `./scripts/update.sh`
-4. Reconecte suas instâncias WhatsApp (será necessário escanear QR Code novamente)
 
 ---
 
@@ -92,15 +70,3 @@ Para usuários atualizando da versão 1.x:
 - Row Level Security (RLS) em todas as tabelas
 - Senhas criptografadas
 - HTTPS obrigatório
-
----
-
-## Formato de Atualizações
-
-Para instalar uma atualização:
-
-1. Faça backup: `./scripts/backup.sh`
-2. Baixe o arquivo de atualização (ex: `v3.0-update.zip`)
-3. Extraia sobre a instalação existente
-4. Execute: `./scripts/update.sh`
-5. Verifique os logs: `docker-compose logs -f`

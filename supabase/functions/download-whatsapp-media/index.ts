@@ -6,10 +6,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-// WPPConnect API configuration
-const WPPCONNECT_API_URL = Deno.env.get("WPPCONNECT_API_URL") || Deno.env.get("EVOLUTION_API_URL");
-const WPPCONNECT_SECRET_KEY = Deno.env.get("WPPCONNECT_SECRET_KEY") || Deno.env.get("EVOLUTION_API_KEY");
-
 interface DownloadMediaPayload {
   sessionName?: string;
   instanceName?: string;
@@ -48,35 +44,54 @@ serve(async (req) => {
     let base64Data = payload.base64Data;
     let mimetype = payload.mimetype;
 
-    // If no base64 data provided, try to fetch from WPPConnect
-    if (!base64Data && WPPCONNECT_API_URL) {
+    // If no base64 data provided, try to fetch from Baileys
+    if (!base64Data) {
+      // Get Baileys server URL from settings
+      const { data: baileysUrlSetting } = await supabase
+        .from("system_settings")
+        .select("value")
+        .eq("key", "baileys_server_url")
+        .single();
+
+      const { data: baileysApiKeySetting } = await supabase
+        .from("system_settings")
+        .select("value")
+        .eq("key", "baileys_api_key")
+        .single();
+
+      const baileysUrl = baileysUrlSetting?.value || Deno.env.get("BAILEYS_API_URL") || "http://baileys:3000";
+      const baileysApiKey = baileysApiKeySetting?.value || Deno.env.get("BAILEYS_API_KEY");
       const sessionName = payload.sessionName || payload.instanceName;
       
-      if (sessionName) {
+      if (sessionName && baileysUrl) {
         try {
-          console.log('[download-whatsapp-media] Fetching media from WPPConnect...');
+          console.log('[download-whatsapp-media] Fetching media from Baileys API...');
           
-          const wppResponse = await fetch(`${WPPCONNECT_API_URL}/api/${sessionName}/download-media`, {
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (baileysApiKey) {
+            headers['X-API-Key'] = baileysApiKey;
+          }
+          
+          const baileysResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/download-media`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${WPPCONNECT_SECRET_KEY}`,
-            },
+            headers,
             body: JSON.stringify({
               messageId: payload.messageId,
             }),
           });
 
-          if (wppResponse.ok) {
-            const mediaData = await wppResponse.json();
-            base64Data = mediaData.base64 || mediaData.data;
-            mimetype = mediaData.mimetype || mediaData.mimeType;
-            console.log('[download-whatsapp-media] Media fetched from WPPConnect');
+          if (baileysResponse.ok) {
+            const mediaData = await baileysResponse.json();
+            base64Data = mediaData.data?.base64 || mediaData.base64 || mediaData.data;
+            mimetype = mediaData.data?.mimetype || mediaData.mimetype || mediaData.mimeType;
+            console.log('[download-whatsapp-media] Media fetched from Baileys');
           } else {
-            console.log('[download-whatsapp-media] WPPConnect response not ok:', wppResponse.status);
+            console.log('[download-whatsapp-media] Baileys response not ok:', baileysResponse.status);
           }
         } catch (e) {
-          console.error('[download-whatsapp-media] Error fetching from WPPConnect:', e);
+          console.error('[download-whatsapp-media] Error fetching from Baileys:', e);
         }
       }
     }

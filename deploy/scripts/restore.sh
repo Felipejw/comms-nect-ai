@@ -94,7 +94,7 @@ fi
 # ==========================================
 log_info "Parando serviços..."
 
-$DOCKER_COMPOSE stop auth rest storage functions nginx wppconnect 2>/dev/null || true
+$DOCKER_COMPOSE stop auth rest storage functions nginx baileys 2>/dev/null || true
 
 log_success "Serviços parados"
 
@@ -130,19 +130,19 @@ else
 fi
 
 # ==========================================
-# 6. Restaurar WPPConnect (se disponível)
+# 6. Restaurar Baileys (se disponível)
 # ==========================================
-WPPCONNECT_BACKUP="$BACKUP_DIR/wppconnect_backup_$BACKUP_DATE.tar.gz"
+BAILEYS_BACKUP="$BACKUP_DIR/baileys_backup_$BACKUP_DATE.tar.gz"
 
-if [ -f "$WPPCONNECT_BACKUP" ]; then
-    log_info "Restaurando sessões do WhatsApp..."
+if [ -f "$BAILEYS_BACKUP" ]; then
+    log_info "Restaurando sessões do WhatsApp (Baileys)..."
     
-    rm -rf volumes/wppconnect/*
-    tar -xzf "$WPPCONNECT_BACKUP" -C volumes/
+    rm -rf volumes/baileys/*
+    tar -xzf "$BAILEYS_BACKUP" -C volumes/
     
     log_success "Sessões do WhatsApp restauradas"
 else
-    log_warning "Backup do WPPConnect não encontrado para esta data"
+    log_warning "Backup do Baileys não encontrado para esta data"
 fi
 
 # ==========================================
@@ -150,7 +150,7 @@ fi
 # ==========================================
 log_info "Reiniciando serviços..."
 
-$DOCKER_COMPOSE up -d
+$DOCKER_COMPOSE --profile baileys up -d
 
 log_success "Serviços reiniciados"
 
@@ -170,14 +170,14 @@ for service in db auth rest storage nginx; do
     fi
 done
 
-# Verificar WPPConnect
-log_info "Verificando WPPConnect..."
+# Verificar Baileys
+log_info "Verificando Baileys..."
 MAX_RETRIES=15
 RETRY=0
 while [ $RETRY -lt $MAX_RETRIES ]; do
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/health 2>/dev/null || echo "000")
-    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
-        log_success "WPPConnect Server: OK"
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/health 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ]; then
+        log_success "Baileys Server: OK"
         break
     fi
     RETRY=$((RETRY + 1))
