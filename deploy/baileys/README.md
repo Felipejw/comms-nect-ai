@@ -2,18 +2,53 @@
 
 Servidor WhatsApp usando a biblioteca Baileys para conexao via QR Code.
 
+## Instalacao Rapida (Uma Linha)
+
+Execute apenas este comando na sua VPS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/baileys/scripts/bootstrap.sh | sudo bash
+```
+
+Este comando ira automaticamente:
+1. Detectar seu sistema operacional (Ubuntu/Debian)
+2. Verificar requisitos minimos (RAM, disco)
+3. Instalar Docker e dependencias
+4. Configurar SSL com Let's Encrypt
+5. Gerar API Key segura
+6. Iniciar o servidor
+
 ## Requisitos
 
 - VPS com Ubuntu 20.04+ ou Debian 11+
 - Minimo 1GB RAM, 1 vCPU
-- Dominio apontando para o servidor
-- Portas 80 e 443 liberadas
+- Dominio apontando para o servidor (DNS A record)
+- Portas 80 e 443 liberadas no firewall
 
-## Instalacao Rapida
+## Diagnostico
+
+Apos instalado, para verificar o status completo do sistema:
+
+```bash
+cd /opt/baileys
+./scripts/diagnostico.sh
+```
+
+O diagnostico verifica:
+- ✓ Status do Docker e containers
+- ✓ Portas abertas (3000, 80, 443)
+- ✓ Certificado SSL (existencia e validade)
+- ✓ Conectividade interna e externa
+- ✓ Uso de disco e memoria
+- ✓ Logs recentes e erros
+
+## Instalacao Manual (Alternativa)
+
+Se preferir instalar manualmente:
 
 ```bash
 # Clonar repositorio
-git clone https://github.com/seu-usuario/comms-nect-ai.git
+git clone https://github.com/Felipejw/comms-nect-ai.git
 cd comms-nect-ai/deploy/baileys
 
 # Dar permissao e executar instalador
