@@ -1,165 +1,192 @@
 
-# Plano: Limpeza Completa de WAHA, WPPConnect e Evolution
+# Plano: Instalacao Simplificada em Um Comando
 
-## Resumo Executivo
+## Diagnostico Completo
 
-Vou remover todas as referencias a WAHA, WPPConnect e Evolution API do projeto, consolidando exclusivamente o Baileys como engine de WhatsApp via QR Code. O sistema manteve suporte aos engines antigos como fallback durante a transicao, mas agora podem ser completamente removidos.
+Apos analise detalhada do codigo fonte, identifiquei os seguintes problemas que causam falhas na instalacao:
 
-## Escopo da Limpeza
+### Problemas Identificados
 
-| Categoria | Arquivos Afetados | Ocorrencias |
-|-----------|------------------|-------------|
-| Edge Functions | 6 arquivos | ~309 ocorrencias |
-| Scripts de Deploy | 8 arquivos | ~400 ocorrencias |
-| Docker Compose | 1 arquivo | ~160 ocorrencias |
-| Configuracoes | 2 arquivos | Varias |
-| **TOTAL** | **17 arquivos** | **~872 ocorrencias** |
-
----
-
-## Arquivos a Modificar
-
-### Edge Functions (Backend)
-
-| Arquivo | Acao | Mudanca |
-|---------|------|---------|
-| `supabase/functions/download-whatsapp-media/index.ts` | Modificar | Remover referencias WPPConnect, usar Baileys API |
-| `supabase/functions/check-connections/index.ts` | Modificar | Remover Evolution API, usar Baileys API |
-| `supabase/functions/execute-flow/index.ts` | Modificar | Substituir sendWhatsAppMessage para usar Baileys |
-| `supabase/functions/merge-duplicate-contacts/index.ts` | Modificar | Remover Evolution API para buscar contatos |
-| `supabase/functions/sync-contacts/index.ts` | Verificar | Garantir que usa Baileys |
-| `supabase/functions/resolve-lid-contact/index.ts` | Verificar | Garantir que usa Baileys |
-
-### Scripts de Deploy
-
-| Arquivo | Acao | Mudanca |
-|---------|------|---------|
-| `deploy/scripts/install.sh` | Reescrever | Remover escolha WAHA/WPPConnect, usar apenas Baileys |
-| `deploy/scripts/install-unified.sh` | Modificar | Remover opcoes legadas |
-| `deploy/scripts/backup.sh` | Modificar | Remover backup de volumes WAHA/WPPConnect |
-| `deploy/scripts/restore.sh` | Modificar | Remover restore de volumes legados |
-| `deploy/scripts/update.sh` | Modificar | Remover logica de engines multiplos |
-| `deploy/scripts/diagnostico.sh` | Modificar | Remover checks WAHA/WPPConnect |
-| `deploy/scripts/package.sh` | Modificar | Remover diretorios evolution |
-
-### Docker Compose
-
-| Arquivo | Acao | Mudanca |
-|---------|------|---------|
-| `deploy/docker-compose.yml` | Modificar | Remover servicos WAHA e WPPConnect (linhas 360-575), remover variaveis de ambiente, manter apenas Baileys |
-
-### Configuracoes
-
-| Arquivo | Acao | Mudanca |
-|---------|------|---------|
-| `deploy/.env.example` | Modificar | Remover secoes WAHA e WPPConnect |
-| `deploy/CHANGELOG.md` | Atualizar | Documentar a remocao final |
+| Problema | Causa Raiz | Impacto |
+|----------|-----------|---------|
+| **Frontend vazio (403 Forbidden)** | O script `install.sh` assume que o frontend sera compilado, mas pode falhar silenciosamente | Site nao carrega |
+| **Kong em loop de restart** | Erro de sintaxe no `kong.yml` - uso de `${VARIABLE}` sem escapar corretamente no heredoc | API Gateway falha |
+| **Nginx com config incompleta** | Arquivo `nginx.conf` pode ser corrompido durante instalacao manual | Proxy reverso nao funciona |
+| **Dependencia do Edge Functions local** | O sistema self-hosted tenta buscar URL do Baileys no `system_settings` que nao existe inicialmente | Baileys nao conecta |
 
 ---
 
-## Detalhes Tecnicos
+## Solucao Proposta
 
-### 1. Edge Functions - Padrao Baileys
+### Mudanca 1: Corrigir Heredoc do Kong no install.sh
 
-Todas as edge functions que enviam mensagens WhatsApp serao atualizadas para usar este padrao:
+**Arquivo:** `deploy/scripts/install.sh` (linhas 290-454)
 
-```typescript
-// Configuracao Baileys
-const BAILEYS_API_URL = Deno.env.get("BAILEYS_API_URL") || "http://baileys:3000";
-const BAILEYS_API_KEY = Deno.env.get("BAILEYS_API_KEY");
+**Problema:** O heredoc usa `<< KONG_EOF` que faz substituicao de variaveis, mas as variaveis `${ANON_KEY}` e `${SERVICE_ROLE_KEY}` sao substituidas corretamente. O problema real esta em quando o arquivo e criado antes das variaveis serem definidas.
 
-// Enviar mensagem via Baileys
-async function sendWhatsAppMessage(
-  instanceName: string,
-  phone: string,
-  content: string
-): Promise<boolean> {
-  const response = await fetch(`${BAILEYS_API_URL}/send-message`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": BAILEYS_API_KEY,
-    },
-    body: JSON.stringify({
-      sessionId: instanceName,
-      to: `${phone}@s.whatsapp.net`,
-      text: content,
-    }),
-  });
-  return response.ok;
+**Solucao:** Garantir que a geracao do `kong.yml` aconteca APOS as variaveis JWT serem geradas, e usar aspas simples para evitar problemas.
+
+### Mudanca 2: Adicionar Configuracao Automatica do Baileys no Banco
+
+**Arquivo:** `deploy/scripts/install.sh`
+
+**Problema:** O sistema busca `baileys_server_url` e `baileys_api_key` na tabela `system_settings`, mas esses valores nunca sao inseridos durante a instalacao.
+
+**Solucao:** Adicionar SQL no final da instalacao para inserir essas configuracoes:
+
+```sql
+INSERT INTO system_settings (key, value, category) VALUES 
+  ('baileys_server_url', 'http://baileys:3000', 'baileys'),
+  ('baileys_api_key', '$BAILEYS_API_KEY', 'baileys')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+```
+
+### Mudanca 3: Melhorar Robustez da Compilacao do Frontend
+
+**Arquivo:** `deploy/scripts/install.sh` (linhas 91-181)
+
+**Problema:** Se a compilacao falhar parcialmente, o script continua mas o `dist/` fica vazio ou incompleto.
+
+**Solucao:** Adicionar verificacao mais rigorosa e fallback:
+
+```bash
+# Verificar se build gerou arquivos
+if [ ! -f "$PROJECT_ROOT/dist/index.html" ]; then
+    log_error "Build nao gerou index.html. Verifique os erros acima."
+    exit 1
+fi
+```
+
+### Mudanca 4: Criar nginx.conf Robusto no install.sh
+
+**Arquivo:** `deploy/scripts/install.sh`
+
+**Problema:** O `nginx.conf` atual nao e criado pelo script, dependendo de arquivo pre-existente que pode estar corrompido.
+
+**Solucao:** Gerar o `nginx.conf` programaticamente durante a instalacao, garantindo sintaxe correta.
+
+### Mudanca 5: Adicionar Passo de Validacao Pre-Start
+
+**Arquivo:** `deploy/scripts/install.sh`
+
+**Problema:** O script inicia os containers sem validar se todas as configuracoes estao corretas.
+
+**Solucao:** Adicionar funcao de validacao:
+
+```bash
+validate_configuration() {
+    local errors=0
+    
+    # Verificar arquivos criticos
+    [ ! -f "volumes/kong/kong.yml" ] && log_error "kong.yml nao existe" && errors=$((errors+1))
+    [ ! -f "nginx/nginx.conf" ] && log_error "nginx.conf nao existe" && errors=$((errors+1))
+    [ ! -f "frontend/dist/index.html" ] && log_error "Frontend nao compilado" && errors=$((errors+1))
+    [ ! -f "nginx/ssl/fullchain.pem" ] && log_error "Certificado SSL nao existe" && errors=$((errors+1))
+    
+    # Verificar .env
+    grep -q "^JWT_SECRET=.\{32,\}" .env || { log_error "JWT_SECRET invalido"; errors=$((errors+1)); }
+    grep -q "^ANON_KEY=.\{50,\}" .env || { log_error "ANON_KEY invalido"; errors=$((errors+1)); }
+    
+    return $errors
 }
 ```
 
-### 2. Docker Compose - Servicos Removidos
-
-Serao removidos completamente:
-- `waha` (linhas 361-405)
-- `wppconnect-1` (linhas 411-444)
-- `wppconnect-2` (linhas 446-480)
-- `wppconnect-3` (linhas 482-515)
-- `wppconnect-lb` (se existir)
-
-### 3. Variaveis de Ambiente Removidas
-
-Do `docker-compose.yml` e `.env.example`:
-- `WAHA_API_URL`, `WAHA_API_KEY`, `WAHA_PORT`
-- `WPPCONNECT_API_URL`, `WPPCONNECT_SECRET_KEY`, `WPPCONNECT_PORT_*`
-- `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`
-- `WHATSAPP_ENGINE` (sera removida pois so existe Baileys)
-
-### 4. Script de Instalacao Simplificado
-
-O `install.sh` atual tem 983 linhas com logica para escolher WAHA/WPPConnect. Sera simplificado para:
-- Remover menu de escolha de engine (linhas 233-256)
-- Remover criacao de diretorios WAHA/WPPConnect (linhas 329-339)
-- Remover verificacao de health WAHA/WPPConnect (linhas 714-758)
-- Usar sempre `--profile baileys`
-
 ---
 
-## Impacto
+## Implementacao Detalhada
 
-### Beneficios
+### Arquivo 1: deploy/scripts/install.sh
 
-1. **Codigo mais limpo**: Remocao de ~870 linhas de codigo legado
-2. **Menos confusao**: Um unico caminho de integracao
-3. **Manutencao simplificada**: Menos variaveis de ambiente
-4. **Instalacao mais rapida**: Sem perguntas sobre engine
+Modificacoes necessarias:
 
-### Riscos
+1. **Linhas 290-454 (Kong config):** Mudar heredoc para usar escape correto e garantir que variaveis estejam definidas
 
-1. **Instalacoes existentes**: Usuarios com WAHA/WPPConnect precisarao migrar
-2. **Compatibilidade**: Garantir que Baileys cobre todos os casos de uso
-
-### Mitigacao
-
-- Documentar processo de migracao no CHANGELOG
-- Manter backward compatibility no banco de dados
-
----
-
-## Ordem de Execucao
-
-1. **Edge Functions** (6 arquivos) - Atualizar logica de envio/recebimento
-2. **Docker Compose** - Remover servicos e variaveis
-3. **.env.example** - Limpar variaveis obsoletas
-4. **Scripts** (7 arquivos) - Simplificar instalacao
-5. **Testes** - Verificar funcionamento
-
----
-
-## Comandos de Verificacao (Apos Implementacao)
+2. **Apos linha 697 (Migrations):** Adicionar insercao das configuracoes do Baileys:
 
 ```bash
-# Verificar se ainda existem referencias
-grep -r "waha\|wppconnect\|evolution" deploy/ supabase/functions/ --include="*.ts" --include="*.sh" --include="*.yml"
-
-# Reiniciar com novo docker-compose
-cd /opt/sistema/deploy
-sudo docker compose down
-sudo docker compose --profile baileys up -d
-
-# Verificar logs
-sudo docker logs app-nginx -f
-sudo docker logs baileys-server -f
+# Inserir configuracoes do Baileys no banco
+log_info "Configurando Baileys no banco de dados..."
+$DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "
+INSERT INTO public.system_settings (key, value, category, description) VALUES 
+  ('baileys_server_url', 'http://baileys:3000', 'baileys', 'URL interna do servidor Baileys'),
+  ('baileys_api_key', '$BAILEYS_API_KEY', 'baileys', 'Chave de API do Baileys')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+" 2>/dev/null || log_warning "Configuracoes Baileys podem ja existir"
 ```
+
+3. **Apos linha 500 (SSL):** Adicionar geracao automatica do nginx.conf:
+
+```bash
+# Gerar nginx.conf
+log_info "Gerando configuracao do Nginx..."
+cat > nginx/nginx.conf << 'NGINX_EOF'
+[conteudo completo do nginx.conf]
+NGINX_EOF
+```
+
+4. **Antes da linha 535 (Iniciar containers):** Adicionar validacao:
+
+```bash
+# Validar configuracao antes de iniciar
+log_info "Validando configuracao..."
+if ! validate_configuration; then
+    log_error "Falha na validacao. Corrija os erros acima e execute novamente."
+    exit 1
+fi
+```
+
+### Arquivo 2: deploy/supabase/init.sql
+
+Adicionar tabela system_settings se nao existir (ja existe no arquivo atual, linha 500+).
+
+Adicionar insercao das configuracoes padrao do Baileys no final do arquivo.
+
+---
+
+## Script de Um Comando
+
+Apos as correcoes, o usuario podera instalar com:
+
+```bash
+curl -sSL https://raw.githubusercontent.com/SEU_REPO/main/deploy/scripts/bootstrap.sh | sudo bash
+```
+
+Ou se ja tiver os arquivos:
+
+```bash
+cd /opt/sistema/deploy
+sudo ./scripts/install.sh
+```
+
+---
+
+## Resumo das Mudancas
+
+| Arquivo | Mudanca | Razao |
+|---------|---------|-------|
+| `deploy/scripts/install.sh` | Corrigir heredoc do Kong | Evitar erro de sintaxe no kong.yml |
+| `deploy/scripts/install.sh` | Inserir configuracoes Baileys no DB | Edge functions precisam dessas configs |
+| `deploy/scripts/install.sh` | Gerar nginx.conf programaticamente | Garantir config valida |
+| `deploy/scripts/install.sh` | Adicionar validacao pre-start | Detectar erros antes de iniciar |
+| `deploy/scripts/install.sh` | Melhorar verificacao do frontend build | Evitar dist/ vazio |
+| `deploy/supabase/init.sql` | Adicionar configs Baileys padrao | Valores iniciais corretos |
+
+---
+
+## Cronograma de Implementacao
+
+1. Atualizar `deploy/scripts/install.sh` com todas as correcoes
+2. Atualizar `deploy/supabase/init.sql` com configuracoes padrao
+3. Testar instalacao completa em ambiente limpo
+
+---
+
+## Resultado Esperado
+
+Apos aprovar este plano e implementar as mudancas:
+
+- O comando `sudo ./scripts/install.sh` funcionara sem intervencao manual
+- Kong iniciara corretamente sem erros de sintaxe
+- Nginx servira o frontend compilado
+- Baileys estara configurado automaticamente no banco
+- O sistema estara funcional imediatamente apos a instalacao
