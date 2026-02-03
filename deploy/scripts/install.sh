@@ -257,87 +257,84 @@ log_success "Frontend pronto"
 # ==========================================
 log_info "Configurando variáveis de ambiente..."
 
+# Backup do .env existente (sem prompt)
 if [ -f .env ]; then
-    log_warning "Arquivo .env já existe"
-    read -p "Deseja sobrescrever? (s/N): " overwrite
-    if [ "$overwrite" != "s" ] && [ "$overwrite" != "S" ]; then
-        log_info "Mantendo .env existente"
-        # Carregar variáveis existentes
-        source .env 2>/dev/null || true
-    else
-        cp .env .env.backup
-        log_info "Backup salvo em .env.backup"
-        cp .env.example .env
-    fi
-else
-    cp .env.example .env
+    cp .env .env.backup.$(date +%Y%m%d_%H%M%S)
+    log_info "Backup do .env anterior salvo"
 fi
 
-# Verificar se precisamos configurar
+# Copiar template
+cp .env.example .env
+
+# ==========================================
+# CONFIGURAÇÃO 100% AUTOMÁTICA (ZERO PROMPTS)
+# ==========================================
+
+# Detectar domínio: usar variável de ambiente ou IP público
 if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "seu-dominio.com.br" ]; then
-    # Solicitar informações básicas
-    echo ""
-    log_info "Configure as informações do seu servidor:"
-    echo ""
-
-    read -p "Domínio ou IP do servidor (ex: meusite.com.br): " DOMAIN
-    read -p "Email para SSL (opcional, pressione Enter para pular): " SSL_EMAIL
-    read -p "Senha do banco de dados (mínimo 12 caracteres): " -s POSTGRES_PASSWORD
-    echo ""
-
-    # Validar senha
-    if [ ${#POSTGRES_PASSWORD} -lt 12 ]; then
-        log_error "Senha deve ter no mínimo 12 caracteres"
-        exit 1
-    fi
-
-    # Gerar JWT Secret (64 caracteres hexadecimais)
-    JWT_SECRET=$(openssl rand -hex 32)
-    log_success "JWT Secret gerado"
-
-    # Gerar chaves JWT usando o formato correto
-    generate_jwt_key() {
-        local role=$1
-        local header='{"alg":"HS256","typ":"JWT"}'
-        local payload="{\"role\":\"$role\",\"iss\":\"supabase\",\"iat\":$(date +%s),\"exp\":$(($(date +%s) + 315360000))}"
-        
-        local header_base64=$(echo -n "$header" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-        local payload_base64=$(echo -n "$payload" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-        
-        local signature=$(echo -n "$header_base64.$payload_base64" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-        
-        echo "$header_base64.$payload_base64.$signature"
-    }
-
-    ANON_KEY=$(generate_jwt_key "anon")
-    SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
-    log_success "Chaves JWT geradas"
-
-    # Gerar chave do Baileys
-    BAILEYS_API_KEY=$(openssl rand -hex 32)
-    log_success "Chave BAILEYS_API_KEY gerada"
-    
-    WEBHOOK_URL="http://kong:8000/functions/v1/baileys-webhook"
-
-    # Atualizar .env
-    sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
-    sed -i "s|^SSL_EMAIL=.*|SSL_EMAIL=$SSL_EMAIL|" .env
-    sed -i "s|^API_EXTERNAL_URL=.*|API_EXTERNAL_URL=https://$DOMAIN|" .env
-    sed -i "s|^SITE_URL=.*|SITE_URL=https://$DOMAIN|" .env
-    sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
-    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
-    sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
-    sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
-    sed -i "s|^BAILEYS_API_KEY=.*|BAILEYS_API_KEY=$BAILEYS_API_KEY|" .env
-    sed -i "s|^BAILEYS_EXTERNAL_URL=.*|BAILEYS_EXTERNAL_URL=https://$DOMAIN/baileys|" .env
-    sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=$WEBHOOK_URL|" .env
-    sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
-    sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
-else
-    log_info "Usando configurações existentes do .env"
-    # Carregar variáveis do .env
-    source .env 2>/dev/null || true
+    log_info "Detectando IP público do servidor..."
+    DOMAIN=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "localhost")
+    log_success "Usando IP/Domínio: $DOMAIN"
 fi
+
+# SSL Email: usar variável de ambiente ou gerar baseado no domínio
+if [ -z "$SSL_EMAIL" ]; then
+    SSL_EMAIL="admin@${DOMAIN}"
+fi
+log_info "Email SSL: $SSL_EMAIL"
+
+# Gerar senha do banco automaticamente (24 caracteres alfanuméricos)
+POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24)
+log_success "Senha do banco gerada automaticamente"
+
+# Gerar JWT Secret (64 caracteres hexadecimais)
+JWT_SECRET=$(openssl rand -hex 32)
+log_success "JWT Secret gerado"
+
+# Gerar chaves JWT usando o formato correto
+generate_jwt_key() {
+    local role=$1
+    local header='{"alg":"HS256","typ":"JWT"}'
+    local payload="{\"role\":\"$role\",\"iss\":\"supabase\",\"iat\":$(date +%s),\"exp\":$(($(date +%s) + 315360000))}"
+    
+    local header_base64=$(echo -n "$header" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+    local payload_base64=$(echo -n "$payload" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+    
+    local signature=$(echo -n "$header_base64.$payload_base64" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+    
+    echo "$header_base64.$payload_base64.$signature"
+}
+
+ANON_KEY=$(generate_jwt_key "anon")
+SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
+log_success "Chaves JWT geradas"
+
+# Gerar chave do Baileys
+BAILEYS_API_KEY=$(openssl rand -hex 32)
+log_success "Chave BAILEYS_API_KEY gerada"
+
+WEBHOOK_URL="http://kong:8000/functions/v1/baileys-webhook"
+
+# Gerar credenciais do admin automaticamente
+ADMIN_EMAIL="admin@${DOMAIN}"
+ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+ADMIN_NAME="Administrador"
+log_success "Credenciais do admin geradas automaticamente"
+
+# Atualizar .env
+sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
+sed -i "s|^SSL_EMAIL=.*|SSL_EMAIL=$SSL_EMAIL|" .env
+sed -i "s|^API_EXTERNAL_URL=.*|API_EXTERNAL_URL=https://$DOMAIN|" .env
+sed -i "s|^SITE_URL=.*|SITE_URL=https://$DOMAIN|" .env
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
+sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
+sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
+sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
+sed -i "s|^BAILEYS_API_KEY=.*|BAILEYS_API_KEY=$BAILEYS_API_KEY|" .env
+sed -i "s|^BAILEYS_EXTERNAL_URL=.*|BAILEYS_EXTERNAL_URL=https://$DOMAIN/baileys|" .env
+sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=$WEBHOOK_URL|" .env
+sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
+sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
 
 log_success "Arquivo .env configurado"
 
@@ -1033,22 +1030,14 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
 " 2>/dev/null && log_success "Configurações Baileys inseridas no banco" || log_warning "Configurações Baileys podem já existir"
 
 # ==========================================
-# 17. Criar Usuário Admin
+# 17. Criar Usuário Admin (AUTOMÁTICO)
 # ==========================================
-echo ""
-log_info "Criar usuário administrador inicial"
-echo ""
-
-read -p "Email do admin: " ADMIN_EMAIL
-read -p "Senha do admin (mínimo 8 caracteres): " -s ADMIN_PASSWORD
-echo ""
-read -p "Nome do admin: " ADMIN_NAME
+log_info "Criando usuário administrador automaticamente..."
 
 # Variável para controlar se admin foi criado
 ADMIN_CREATED=false
 
 # Criar usuário via API interna (localhost:8000) em vez de HTTPS externo
-log_info "Criando usuário administrador..."
 RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://localhost:8000/auth/v1/signup" \
     -H "apikey: $ANON_KEY" \
     -H "Content-Type: application/json" \
@@ -1066,23 +1055,11 @@ if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
             -c "UPDATE user_roles SET role = 'admin' WHERE user_id = '$USER_ID';" 2>/dev/null || true
         log_success "Usuário admin criado com sucesso!"
         ADMIN_CREATED=true
-    else
-        log_warning "Resposta da API não contém ID do usuário"
     fi
 else
-    log_warning "Falha ao criar admin via API (HTTP $HTTP_CODE)"
-    
-    # Mostrar erro se disponível
-    if [ -n "$BODY" ] && [ "$BODY" != "" ]; then
-        ERROR_MSG=$(echo "$BODY" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4 2>/dev/null || true)
-        if [ -n "$ERROR_MSG" ]; then
-            log_info "Detalhes: $ERROR_MSG"
-        fi
-    fi
+    log_warning "API não disponível (HTTP $HTTP_CODE). Criando admin via SQL..."
     
     # FALLBACK: Criar admin diretamente no banco via SQL
-    log_info "Tentando criar admin diretamente no banco de dados..."
-    
     SQL_RESULT=$($DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "
         DO \$\$
         DECLARE
@@ -1132,48 +1109,94 @@ else
         log_success "Admin criado via SQL com sucesso!"
         ADMIN_CREATED=true
     else
-        log_error "Falha ao criar admin via SQL"
-        log_info "Erro: $SQL_RESULT"
-        log_info ""
-        log_info "Você pode criar manualmente após a instalação acessando:"
-        log_info "  https://$DOMAIN"
+        log_error "Falha ao criar admin via SQL: $SQL_RESULT"
     fi
 fi
 
 # ==========================================
-# 18. Resumo Final
+# 18. Resumo Final - TODAS AS CREDENCIAIS
 # ==========================================
 show_summary() {
     echo ""
-    echo -e "${GREEN}============================================${NC}"
-    echo -e "${GREEN}  Instalação Concluída!${NC}"
-    echo -e "${GREEN}============================================${NC}"
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                                                               ║${NC}"
+    echo -e "${GREEN}║              INSTALAÇÃO CONCLUÍDA COM SUCESSO!               ║${NC}"
+    echo -e "${GREEN}║                                                               ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo "  URL do Sistema: https://$DOMAIN"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}                    CREDENCIAIS DE ACESSO                        ${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
     echo ""
-    
-    if [ "$ADMIN_CREATED" = "true" ]; then
-        echo "  Credenciais do Admin:"
-        echo "    Email: $ADMIN_EMAIL"
-        echo "    Senha: (a que você digitou)"
-    else
-        echo -e "  ${YELLOW}Admin não foi criado automaticamente.${NC}"
-        echo "  Crie manualmente acessando https://$DOMAIN"
-    fi
+    echo -e "  ${YELLOW}URL do Sistema:${NC}    https://$DOMAIN"
     echo ""
-    echo "  Engine WhatsApp: Baileys"
+    echo -e "  ${YELLOW}Admin:${NC}"
+    echo "    Email:           $ADMIN_EMAIL"
+    echo "    Senha:           $ADMIN_PASSWORD"
     echo ""
-    echo "  Serviços:"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}                    BANCO DE DADOS                               ${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "    Senha PostgreSQL: $POSTGRES_PASSWORD"
+    echo ""
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}                    CHAVES API                                   ${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "    Baileys API Key:  $BAILEYS_API_KEY"
+    echo "    ANON_KEY:         ${ANON_KEY:0:50}..."
+    echo "    SERVICE_ROLE_KEY: ${SERVICE_ROLE_KEY:0:50}..."
+    echo ""
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}                    SERVIÇOS                                     ${NC}"
+    echo -e "${CYAN}════════════════════════════════════════════════════════════════${NC}"
+    echo ""
     echo "    Frontend:     https://$DOMAIN"
     echo "    API:          https://$DOMAIN/rest/v1/"
+    echo "    Auth:         https://$DOMAIN/auth/v1/"
     echo "    Baileys:      https://$DOMAIN/baileys"
     echo ""
-    echo -e "${YELLOW}  IMPORTANTE:${NC}"
-    echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
-    echo "    - A sessão será criada automaticamente"
+    echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${RED}║                                                               ║${NC}"
+    echo -e "${RED}║   ⚠️  GUARDE ESSAS INFORMAÇÕES EM LOCAL SEGURO!  ⚠️          ║${NC}"
+    echo -e "${RED}║                                                               ║${NC}"
+    echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    echo -e "${YELLOW}  LEMBRETE:${NC}"
-    echo "    - Guarde a senha do banco de dados em local seguro"
+    echo -e "  ${YELLOW}Próximos passos:${NC}"
+    echo "    1. Acesse https://$DOMAIN"
+    echo "    2. Faça login com as credenciais acima"
+    echo "    3. Vá em Conexões e escaneie o QR Code do WhatsApp"
+    echo ""
+    
+    # Salvar credenciais em arquivo seguro
+    CREDS_FILE="$DEPLOY_DIR/CREDENCIAIS.txt"
+    cat > "$CREDS_FILE" << CREDS_EOF
+============================================
+CREDENCIAIS DO SISTEMA - GERADO AUTOMATICAMENTE
+Data: $(date)
+============================================
+
+URL: https://$DOMAIN
+
+ADMIN:
+  Email: $ADMIN_EMAIL
+  Senha: $ADMIN_PASSWORD
+
+BANCO DE DADOS:
+  Senha: $POSTGRES_PASSWORD
+
+API KEYS:
+  Baileys: $BAILEYS_API_KEY
+  ANON_KEY: $ANON_KEY
+  SERVICE_ROLE_KEY: $SERVICE_ROLE_KEY
+
+============================================
+GUARDE ESTE ARQUIVO EM LOCAL SEGURO!
+============================================
+CREDS_EOF
+    chmod 600 "$CREDS_FILE"
+    echo -e "  ${GREEN}Credenciais salvas em: $CREDS_FILE${NC}"
     echo ""
 }
 
