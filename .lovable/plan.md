@@ -1,58 +1,55 @@
 
 
-# Plano: Corrigir Erro de Build do Docker (Baileys)
+# Plano: Corrigir Erros de Tipo TypeScript no Baileys Server
 
 ## Problema Identificado
 
-O comando `npm run build` falha porque faltam dependências no `package.json`:
+O build do TypeScript falha com 10 erros de tipo:
 
-1. **`@hapi/boom`** - Usado no arquivo `baileys.ts` linha 9:
-   ```typescript
-   import { Boom } from '@hapi/boom';
-   ```
-
-2. **`pino-pretty`** - Usado no arquivo `logger.ts` linha 5-8:
-   ```typescript
-   transport: process.env.NODE_ENV !== 'production' ? {
-     target: 'pino-pretty',  // <-- Requer pino-pretty instalado
-     ...
-   }
-   ```
+| Arquivo | Linha | Erro | Causa |
+|---------|-------|------|-------|
+| `baileys.ts` | 215, 220, 224, 229, 234 | `null` nao e atribuivel a `string \| undefined` | Propriedades `mimetype` do Baileys podem retornar `null` |
+| `index.ts` | 83, 98, 114, 135, 152 | `string \| string[]` nao e atribuivel a `string` | `req.params.name` em Express pode ser array |
 
 ## Solucao
 
-Adicionar as dependências faltantes ao `package.json`:
+### 1. Corrigir `baileys.ts` (linhas 215-234)
 
-| Pacote | Tipo | Motivo |
-|--------|------|--------|
-| `@hapi/boom` | dependencies | Tratamento de erros de conexão Baileys |
-| `pino-pretty` | devDependencies | Formatação de logs em desenvolvimento |
-| `@types/qrcode` | devDependencies | Tipos TypeScript para qrcode (já existe) |
+Converter `null` para `undefined` usando nullish coalescing:
 
-## Alteracoes no Arquivo
+```typescript
+// Antes
+mimetype = messageContent.imageMessage?.mimetype;
 
-**Arquivo:** `deploy/baileys/package.json`
-
-```json
-{
-  "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.16",
-    "@hapi/boom": "^10.0.1",       // ADICIONAR
-    "express": "^4.21.2",
-    "pino": "^9.6.0",
-    "qrcode": "^1.5.4",
-    "dotenv": "^16.4.7"
-  },
-  "devDependencies": {
-    "@types/express": "^5.0.0",
-    "@types/node": "^22.10.5",
-    "@types/qrcode": "^1.5.5",
-    "pino-pretty": "^11.0.0",      // ADICIONAR
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.7.2"
-  }
-}
+// Depois
+mimetype = messageContent.imageMessage?.mimetype ?? undefined;
 ```
+
+Aplicar em todas as 5 ocorrencias.
+
+### 2. Corrigir `index.ts` (linhas 83-152)
+
+Extrair o nome da sessao como string segura:
+
+```typescript
+// Antes
+const session = getSession(req.params.name);
+
+// Depois
+const sessionName = Array.isArray(req.params.name) 
+  ? req.params.name[0] 
+  : req.params.name;
+const session = getSession(sessionName);
+```
+
+Aplicar em todas as 5 rotas que usam `req.params.name`.
+
+## Arquivos a Modificar
+
+| Arquivo | Mudancas |
+|---------|----------|
+| `deploy/baileys/src/baileys.ts` | Adicionar `?? undefined` em 5 atribuicoes de mimetype |
+| `deploy/baileys/src/index.ts` | Adicionar conversao segura de `req.params.name` em 5 rotas |
 
 ## Apos Correcao
 
@@ -62,17 +59,5 @@ Execute novamente no servidor:
 cd /opt/baileys
 sudo docker compose build --no-cache
 sudo docker compose up -d
-```
-
-## Alternativa Rapida (no Servidor)
-
-Se preferir corrigir diretamente no servidor sem esperar deploy:
-
-```bash
-cd /opt/baileys
-nano package.json
-# Adicionar @hapi/boom e pino-pretty manualmente
-docker compose build --no-cache
-docker compose up -d
 ```
 
