@@ -926,7 +926,10 @@ INSERT INTO public.system_settings (key, value, description, category) VALUES
   ('platform_name', 'TalkFlow', 'Nome da plataforma', 'branding'),
   ('platform_logo', '', 'URL do logotipo da plataforma', 'branding'),
   ('primary_color', '', 'Cor primária da plataforma (HSL)', 'branding'),
-  ('secondary_color', '', 'Cor secundária da plataforma (HSL)', 'branding')
+  ('secondary_color', '', 'Cor secundária da plataforma (HSL)', 'branding'),
+  -- Configurações do Baileys (importante para self-hosted)
+  ('baileys_server_url', 'http://baileys:3000', 'URL interna do servidor Baileys', 'baileys'),
+  ('baileys_api_key', '', 'Chave de API do Baileys (será preenchida pelo install.sh)', 'baileys')
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================

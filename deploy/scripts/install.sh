@@ -3,7 +3,7 @@
 # ============================================
 # Script de Instalação - Sistema de Atendimento
 # Self-Hosted com Supabase + Baileys
-# Distribuição via arquivo (sem Git)
+# Versão: Instalação Automatizada Robusta
 # ============================================
 
 set -e
@@ -38,6 +38,62 @@ echo "  Self-Hosted com Supabase + Baileys"
 echo "  Versão: $VERSION"
 echo "============================================"
 echo -e "${NC}"
+
+# ==========================================
+# FUNÇÕES AUXILIARES
+# ==========================================
+
+# Função para validar configuração antes de iniciar
+validate_configuration() {
+    local errors=0
+    
+    log_info "Validando configuração..."
+    
+    # Verificar arquivos críticos
+    if [ ! -f "volumes/kong/kong.yml" ]; then
+        log_error "kong.yml não existe"
+        errors=$((errors+1))
+    fi
+    
+    if [ ! -f "nginx/nginx.conf" ]; then
+        log_error "nginx.conf não existe"
+        errors=$((errors+1))
+    fi
+    
+    if [ ! -f "frontend/dist/index.html" ]; then
+        log_error "Frontend não compilado (frontend/dist/index.html não existe)"
+        errors=$((errors+1))
+    fi
+    
+    if [ ! -f "nginx/ssl/fullchain.pem" ]; then
+        log_error "Certificado SSL não existe"
+        errors=$((errors+1))
+    fi
+    
+    # Verificar .env
+    if ! grep -q "^JWT_SECRET=.\{32,\}" .env 2>/dev/null; then
+        log_error "JWT_SECRET inválido ou não definido"
+        errors=$((errors+1))
+    fi
+    
+    if ! grep -q "^ANON_KEY=.\{50,\}" .env 2>/dev/null; then
+        log_error "ANON_KEY inválido ou não definido"
+        errors=$((errors+1))
+    fi
+    
+    if ! grep -q "^SERVICE_ROLE_KEY=.\{50,\}" .env 2>/dev/null; then
+        log_error "SERVICE_ROLE_KEY inválido ou não definido"
+        errors=$((errors+1))
+    fi
+    
+    if [ $errors -gt 0 ]; then
+        log_error "Validação falhou com $errors erro(s)"
+        return 1
+    fi
+    
+    log_success "Validação concluída sem erros"
+    return 0
+}
 
 # ==========================================
 # 1. Verificar Requisitos
@@ -167,6 +223,13 @@ EOF
     fi
     log_success "Frontend compilado"
     
+    # Verificar se build gerou index.html
+    if [ ! -f "$PROJECT_ROOT/dist/index.html" ]; then
+        log_error "Build não gerou index.html. Verifique os erros acima."
+        rm -f .env
+        exit 1
+    fi
+    
     # Remover .env temporário
     rm -f .env
     
@@ -182,7 +245,8 @@ fi
 
 # Verificação final
 if [ ! -f "frontend/dist/index.html" ]; then
-    log_error "Falha na preparação do frontend"
+    log_error "Falha na preparação do frontend. Arquivo index.html não encontrado."
+    log_error "Verifique se o build do frontend foi executado corretamente."
     exit 1
 fi
 
@@ -198,6 +262,8 @@ if [ -f .env ]; then
     read -p "Deseja sobrescrever? (s/N): " overwrite
     if [ "$overwrite" != "s" ] && [ "$overwrite" != "S" ]; then
         log_info "Mantendo .env existente"
+        # Carregar variáveis existentes
+        source .env 2>/dev/null || true
     else
         cp .env .env.backup
         log_info "Backup salvo em .env.backup"
@@ -207,63 +273,71 @@ else
     cp .env.example .env
 fi
 
-# Solicitar informações básicas
-echo ""
-log_info "Configure as informações do seu servidor:"
-echo ""
+# Verificar se precisamos configurar
+if [ -z "$DOMAIN" ] || [ "$DOMAIN" = "seu-dominio.com.br" ]; then
+    # Solicitar informações básicas
+    echo ""
+    log_info "Configure as informações do seu servidor:"
+    echo ""
 
-read -p "Domínio ou IP do servidor (ex: meusite.com.br): " DOMAIN
-read -p "Email para SSL (opcional, pressione Enter para pular): " SSL_EMAIL
-read -p "Senha do banco de dados (mínimo 12 caracteres): " -s POSTGRES_PASSWORD
-echo ""
+    read -p "Domínio ou IP do servidor (ex: meusite.com.br): " DOMAIN
+    read -p "Email para SSL (opcional, pressione Enter para pular): " SSL_EMAIL
+    read -p "Senha do banco de dados (mínimo 12 caracteres): " -s POSTGRES_PASSWORD
+    echo ""
 
-# Validar senha
-if [ ${#POSTGRES_PASSWORD} -lt 12 ]; then
-    log_error "Senha deve ter no mínimo 12 caracteres"
-    exit 1
+    # Validar senha
+    if [ ${#POSTGRES_PASSWORD} -lt 12 ]; then
+        log_error "Senha deve ter no mínimo 12 caracteres"
+        exit 1
+    fi
+
+    # Gerar JWT Secret (64 caracteres hexadecimais)
+    JWT_SECRET=$(openssl rand -hex 32)
+    log_success "JWT Secret gerado"
+
+    # Gerar chaves JWT usando o formato correto
+    generate_jwt_key() {
+        local role=$1
+        local header='{"alg":"HS256","typ":"JWT"}'
+        local payload="{\"role\":\"$role\",\"iss\":\"supabase\",\"iat\":$(date +%s),\"exp\":$(($(date +%s) + 315360000))}"
+        
+        local header_base64=$(echo -n "$header" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+        local payload_base64=$(echo -n "$payload" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+        
+        local signature=$(echo -n "$header_base64.$payload_base64" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | base64 -w 0 | tr '+/' '-_' | tr -d '=')
+        
+        echo "$header_base64.$payload_base64.$signature"
+    }
+
+    ANON_KEY=$(generate_jwt_key "anon")
+    SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
+    log_success "Chaves JWT geradas"
+
+    # Gerar chave do Baileys
+    BAILEYS_API_KEY=$(openssl rand -hex 32)
+    log_success "Chave BAILEYS_API_KEY gerada"
+    
+    WEBHOOK_URL="http://kong:8000/functions/v1/baileys-webhook"
+
+    # Atualizar .env
+    sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
+    sed -i "s|^SSL_EMAIL=.*|SSL_EMAIL=$SSL_EMAIL|" .env
+    sed -i "s|^API_EXTERNAL_URL=.*|API_EXTERNAL_URL=https://$DOMAIN|" .env
+    sed -i "s|^SITE_URL=.*|SITE_URL=https://$DOMAIN|" .env
+    sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
+    sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
+    sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
+    sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
+    sed -i "s|^BAILEYS_API_KEY=.*|BAILEYS_API_KEY=$BAILEYS_API_KEY|" .env
+    sed -i "s|^BAILEYS_EXTERNAL_URL=.*|BAILEYS_EXTERNAL_URL=https://$DOMAIN/baileys|" .env
+    sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=$WEBHOOK_URL|" .env
+    sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
+    sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
+else
+    log_info "Usando configurações existentes do .env"
+    # Carregar variáveis do .env
+    source .env 2>/dev/null || true
 fi
-
-# Gerar JWT Secret (64 caracteres hexadecimais)
-JWT_SECRET=$(openssl rand -hex 32)
-log_success "JWT Secret gerado"
-
-# Gerar chaves JWT usando o formato correto
-generate_jwt_key() {
-    local role=$1
-    local header='{"alg":"HS256","typ":"JWT"}'
-    local payload="{\"role\":\"$role\",\"iss\":\"supabase\",\"iat\":$(date +%s),\"exp\":$(($(date +%s) + 315360000))}"
-    
-    local header_base64=$(echo -n "$header" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-    local payload_base64=$(echo -n "$payload" | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-    
-    local signature=$(echo -n "$header_base64.$payload_base64" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | base64 -w 0 | tr '+/' '-_' | tr -d '=')
-    
-    echo "$header_base64.$payload_base64.$signature"
-}
-
-ANON_KEY=$(generate_jwt_key "anon")
-SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
-log_success "Chaves JWT geradas"
-
-# Gerar chave do Baileys
-BAILEYS_API_KEY=$(openssl rand -hex 32)
-log_success "Chave BAILEYS_API_KEY gerada"
-WEBHOOK_URL="http://kong:8000/functions/v1/baileys-webhook"
-
-# Atualizar .env
-sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
-sed -i "s|^SSL_EMAIL=.*|SSL_EMAIL=$SSL_EMAIL|" .env
-sed -i "s|^API_EXTERNAL_URL=.*|API_EXTERNAL_URL=https://$DOMAIN|" .env
-sed -i "s|^SITE_URL=.*|SITE_URL=https://$DOMAIN|" .env
-sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
-sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
-sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
-sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
-sed -i "s|^BAILEYS_API_KEY=.*|BAILEYS_API_KEY=$BAILEYS_API_KEY|" .env
-sed -i "s|^BAILEYS_EXTERNAL_URL=.*|BAILEYS_EXTERNAL_URL=https://$DOMAIN/baileys|" .env
-sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=$WEBHOOK_URL|" .env
-sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
-sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
 
 log_success "Arquivo .env configurado"
 
@@ -283,21 +357,34 @@ mkdir -p backups
 log_success "Diretórios criados"
 
 # ==========================================
-# 5. Copiar Configurações do Kong
+# 5. Gerar Configuração do Kong (APÓS variáveis definidas)
 # ==========================================
 log_info "Configurando Kong API Gateway..."
 
-cat > volumes/kong/kong.yml << KONG_EOF
+# Verificar se as chaves foram definidas
+if [ -z "$ANON_KEY" ] || [ -z "$SERVICE_ROLE_KEY" ]; then
+    # Carregar do .env se não estiverem definidas
+    source .env 2>/dev/null || true
+fi
+
+# Verificar novamente
+if [ -z "$ANON_KEY" ] || [ -z "$SERVICE_ROLE_KEY" ]; then
+    log_error "ANON_KEY ou SERVICE_ROLE_KEY não definidas. Verifique o arquivo .env"
+    exit 1
+fi
+
+# Gerar kong.yml usando cat com variáveis interpoladas CORRETAMENTE
+cat > volumes/kong/kong.yml << EOF
 _format_version: "2.1"
 _transform: true
 
 consumers:
   - username: anon
     keyauth_credentials:
-      - key: ${ANON_KEY}
+      - key: $ANON_KEY
   - username: service_role
     keyauth_credentials:
-      - key: ${SERVICE_ROLE_KEY}
+      - key: $SERVICE_ROLE_KEY
 
 acls:
   - consumer: anon
@@ -451,12 +538,241 @@ plugins:
         - Content-Range
       max_age: 3600
       credentials: true
-KONG_EOF
+EOF
 
 log_success "Kong configurado"
 
 # ==========================================
-# 6. Copiar Migrations do Banco
+# 6. Gerar Configuração do Nginx
+# ==========================================
+log_info "Gerando configuração do Nginx..."
+
+cat > nginx/nginx.conf << 'NGINX_EOF'
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+    use epoll;
+    multi_accept on;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+
+    # Docker DNS resolver
+    resolver 127.0.0.11 valid=10s ipv6=off;
+    resolver_timeout 5s;
+
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log /var/log/nginx/access.log main;
+
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 50M;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/rss+xml application/atom+xml image/svg+xml;
+
+    limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+    limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+
+    # HTTP -> HTTPS redirect
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name _;
+
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+
+        location / {
+            return 301 https://$host$request_uri;
+        }
+    }
+
+    # HTTPS Server
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+        server_name _;
+
+        ssl_certificate /etc/nginx/ssl/fullchain.pem;
+        ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+        
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+        ssl_session_cache shared:SSL:10m;
+        ssl_session_timeout 1d;
+        ssl_session_tickets off;
+
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # Frontend SPA
+        location / {
+            try_files $uri $uri/ /index.html;
+            
+            location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+                expires 1y;
+                add_header Cache-Control "public, immutable";
+            }
+        }
+
+        # Supabase REST API
+        location /rest/v1/ {
+            limit_req zone=api burst=20 nodelay;
+            
+            set $upstream_kong kong:8000;
+            proxy_pass http://$upstream_kong/rest/v1/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            
+            add_header Access-Control-Allow-Origin * always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info" always;
+            
+            if ($request_method = OPTIONS) {
+                return 204;
+            }
+        }
+
+        # Supabase Auth API
+        location /auth/v1/ {
+            limit_req zone=auth burst=10 nodelay;
+            
+            set $upstream_kong kong:8000;
+            proxy_pass http://$upstream_kong/auth/v1/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            
+            add_header Access-Control-Allow-Origin * always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info" always;
+            
+            if ($request_method = OPTIONS) {
+                return 204;
+            }
+        }
+
+        # Supabase Storage API
+        location /storage/v1/ {
+            set $upstream_kong kong:8000;
+            proxy_pass http://$upstream_kong/storage/v1/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            
+            client_max_body_size 50M;
+            
+            add_header Access-Control-Allow-Origin * always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, x-upsert" always;
+            
+            if ($request_method = OPTIONS) {
+                return 204;
+            }
+        }
+
+        # Supabase Edge Functions
+        location /functions/v1/ {
+            limit_req zone=api burst=30 nodelay;
+            
+            set $upstream_kong kong:8000;
+            proxy_pass http://$upstream_kong/functions/v1/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            
+            proxy_read_timeout 300s;
+            proxy_connect_timeout 75s;
+            
+            add_header Access-Control-Allow-Origin * always;
+            add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+            add_header Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info" always;
+            
+            if ($request_method = OPTIONS) {
+                return 204;
+            }
+        }
+
+        # Supabase Realtime (WebSocket)
+        location /realtime/v1/ {
+            set $upstream_kong kong:8000;
+            proxy_pass http://$upstream_kong/realtime/v1/;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            proxy_read_timeout 86400;
+        }
+
+        # Baileys API Proxy
+        location /baileys/ {
+            set $upstream_baileys baileys:3000;
+            proxy_pass http://$upstream_baileys/;
+            proxy_http_version 1.1;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            proxy_set_header Connection "";
+            
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_read_timeout 86400;
+        }
+
+        # Health check
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}
+NGINX_EOF
+
+log_success "Nginx configurado"
+
+# ==========================================
+# 7. Copiar Migrations do Banco
 # ==========================================
 log_info "Preparando migrations do banco de dados..."
 
@@ -468,7 +784,7 @@ else
 fi
 
 # ==========================================
-# 7. Gerar Certificado SSL
+# 8. Gerar Certificado SSL
 # ==========================================
 log_info "Configurando SSL..."
 
@@ -507,7 +823,7 @@ fi
 log_success "Certificados SSL configurados"
 
 # ==========================================
-# 8. Atualizar Frontend com Configurações
+# 9. Atualizar Frontend com Configurações
 # ==========================================
 log_info "Configurando frontend..."
 
@@ -530,7 +846,15 @@ EOF
 fi
 
 # ==========================================
-# 9. Iniciar Containers
+# 10. Validar Configuração Antes de Iniciar
+# ==========================================
+if ! validate_configuration; then
+    log_error "Falha na validação. Corrija os erros acima e execute novamente."
+    exit 1
+fi
+
+# ==========================================
+# 11. Iniciar Containers
 # ==========================================
 log_info "Iniciando containers Docker..."
 
@@ -544,7 +868,7 @@ $DOCKER_COMPOSE --profile baileys up -d
 log_success "Containers iniciados"
 
 # ==========================================
-# 10. Aguardar Serviços Iniciarem
+# 12. Aguardar Serviços Iniciarem
 # ==========================================
 log_info "Aguardando serviços iniciarem..."
 
@@ -601,7 +925,7 @@ done
 log_success "Banco de dados pronto"
 
 # ==========================================
-# 11. Verificar Disponibilidade da API (Kong)
+# 13. Verificar Disponibilidade da API (Kong)
 # ==========================================
 wait_for_api() {
     local max_attempts=60
@@ -643,7 +967,7 @@ wait_for_api() {
 wait_for_api
 
 # ==========================================
-# 12. Verificar Saúde do Baileys
+# 14. Verificar Saúde do Baileys
 # ==========================================
 check_baileys_health() {
     local max_retries=30
@@ -685,7 +1009,7 @@ else
 fi
 
 # ==========================================
-# 13. Executar Migrations
+# 15. Executar Migrations
 # ==========================================
 log_info "Executando migrations do banco de dados..."
 
@@ -697,7 +1021,19 @@ if [ -f "volumes/db/init/init.sql" ]; then
 fi
 
 # ==========================================
-# 14. Criar Usuário Admin
+# 16. Inserir Configurações do Baileys no Banco
+# ==========================================
+log_info "Configurando Baileys no banco de dados..."
+
+$DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "
+INSERT INTO public.system_settings (key, value, category, description) VALUES 
+  ('baileys_server_url', 'http://baileys:3000', 'baileys', 'URL interna do servidor Baileys'),
+  ('baileys_api_key', '$BAILEYS_API_KEY', 'baileys', 'Chave de API do Baileys')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();
+" 2>/dev/null && log_success "Configurações Baileys inseridas no banco" || log_warning "Configurações Baileys podem já existir"
+
+# ==========================================
+# 17. Criar Usuário Admin
 # ==========================================
 echo ""
 log_info "Criar usuário administrador inicial"
@@ -805,7 +1141,7 @@ else
 fi
 
 # ==========================================
-# 15. Resumo Final
+# 18. Resumo Final
 # ==========================================
 show_summary() {
     echo ""
