@@ -5,8 +5,11 @@
 -- em uma nova instância Supabase Self-Hosted
 -- ============================================================
 
--- Extensões necessárias
-CREATE EXTENSION IF NOT EXISTS "pg_graphql" WITH SCHEMA "graphql";
+-- Criar schema para extensões (necessário para self-hosted)
+CREATE SCHEMA IF NOT EXISTS extensions;
+
+-- Extensões necessárias (compatíveis com PostgreSQL padrão)
+-- NOTA: pg_graphql não está disponível em self-hosted, removido
 CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
