@@ -21,6 +21,7 @@ interface SessionData {
   sessionName?: string;
   token?: string;
   instanceName?: string;
+  engine?: string; // "waha" | "baileys"
   // Meta API fields
   access_token?: string;
   phone_number_id?: string;
@@ -34,6 +35,87 @@ interface Connection {
   name: string;
   is_default: boolean;
   tenant_id: string;
+}
+
+async function sendViaBaileys(
+  connection: Connection,
+  phoneToSend: string,
+  content: string,
+  messageType: string,
+  mediaUrl: string | undefined,
+  // deno-lint-ignore no-explicit-any
+  supabaseAdmin: any
+): Promise<{ success: boolean; messageId?: string; error?: string }> {
+  // Get Baileys server URL from settings
+  const { data: settings } = await supabaseAdmin
+    .from("system_settings")
+    .select("value")
+    .eq("key", "baileys_server_url")
+    .single();
+
+  const { data: apiKeySettings } = await supabaseAdmin
+    .from("system_settings")
+    .select("value")
+    .eq("key", "baileys_api_key")
+    .single();
+
+  const baileysUrl = settings?.value;
+  const baileysApiKey = apiKeySettings?.value;
+
+  if (!baileysUrl) {
+    return { success: false, error: "Baileys server URL not configured" };
+  }
+
+  const sessionData = connection.session_data;
+  const sessionName = sessionData?.sessionName || connection.name.toLowerCase().replace(/\s+/g, "_");
+
+  console.log(`[Baileys] Using session: ${sessionName}`);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (baileysApiKey) {
+    headers["X-API-Key"] = baileysApiKey;
+  }
+
+  // Format phone number
+  let formattedNumber = phoneToSend.replace(/\D/g, "");
+  if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
+    formattedNumber = "55" + formattedNumber;
+  }
+
+  let response;
+
+  if (mediaUrl && messageType !== "text") {
+    response = await fetch(`${baileysUrl}/sessions/${sessionName}/send/media`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        to: formattedNumber,
+        mediaUrl,
+        caption: content,
+        mediaType: messageType,
+      }),
+    });
+  } else {
+    response = await fetch(`${baileysUrl}/sessions/${sessionName}/send/text`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        to: formattedNumber,
+        text: content,
+      }),
+    });
+  }
+
+  const result = await response.json();
+  console.log("[Baileys] Response:", JSON.stringify(result));
+
+  if (!result.success) {
+    return { success: false, error: result.error || "Failed to send message" };
+  }
+
+  return { success: true, messageId: result.data?.messageId };
 }
 
 async function sendViaMetaAPI(
@@ -356,11 +438,13 @@ Deno.serve(async (req) => {
 
     console.log(`Using connection: ${connection.name} (type: ${connection.type})`);
 
-    // Send message based on connection type
+    // Send message based on connection type and engine
     let result: { success: boolean; messageId?: string; error?: string; needsReconnection?: boolean };
 
     if (connection.type === "meta_api") {
       result = await sendViaMetaAPI(connection, phoneToSend!, content, messageType, mediaUrl);
+    } else if (connection.session_data?.engine === "baileys") {
+      result = await sendViaBaileys(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
     } else {
       result = await sendViaWAHA(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
     }

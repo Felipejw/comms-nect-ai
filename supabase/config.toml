@@ -59,3 +59,9 @@ verify_jwt = false
 
 [functions.send-meta-message]
 verify_jwt = false
+
+[functions.baileys-instance]
+verify_jwt = false
+
+[functions.baileys-webhook]
+verify_jwt = false
