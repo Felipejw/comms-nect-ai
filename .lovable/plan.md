@@ -1,151 +1,165 @@
 
+# Plano: Limpeza Completa de WAHA, WPPConnect e Evolution
 
-# Plano: Corrigir Nginx e Disponibilizar o Sistema
+## Resumo Executivo
 
-## Problemas Identificados
+Vou remover todas as referencias a WAHA, WPPConnect e Evolution API do projeto, consolidando exclusivamente o Baileys como engine de WhatsApp via QR Code. O sistema manteve suporte aos engines antigos como fallback durante a transicao, mas agora podem ser completamente removidos.
 
-### Problema 1: Nginx Crashando
-O erro nos logs:
-```
-host not found in upstream "kong:8000" in /etc/nginx/nginx.conf:47
-```
+## Escopo da Limpeza
 
-**Causa**: O Nginx define upstreams para containers que podem nao existir (`evolution`, `studio`) ou que ainda nao iniciaram quando o Nginx tenta resolver os nomes DNS.
-
-### Problema 2: Firewall/Portas
-O erro `ERR_CONNECTION_REFUSED` indica que as portas 80/443 podem estar bloqueadas no firewall do servidor.
-
----
-
-## Solucao
-
-### Parte 1: Corrigir nginx.conf
-
-Vou modificar o arquivo para:
-1. Usar `resolver` do Docker para resolucao DNS dinamica
-2. Usar `set $upstream` com variaveis para upstreams que podem nao existir
-3. Adicionar fallback para quando Kong nao estiver disponivel
-
-### Parte 2: Verificacoes no Servidor
-
-Voce precisara executar alguns comandos para verificar e liberar as portas.
+| Categoria | Arquivos Afetados | Ocorrencias |
+|-----------|------------------|-------------|
+| Edge Functions | 6 arquivos | ~309 ocorrencias |
+| Scripts de Deploy | 8 arquivos | ~400 ocorrencias |
+| Docker Compose | 1 arquivo | ~160 ocorrencias |
+| Configuracoes | 2 arquivos | Varias |
+| **TOTAL** | **17 arquivos** | **~872 ocorrencias** |
 
 ---
 
 ## Arquivos a Modificar
 
-| Arquivo | Acao | Descricao |
-|---------|------|-----------|
-| `deploy/nginx/nginx.conf` | Modificar | Corrigir resolucao DNS e remover upstreams inexistentes |
+### Edge Functions (Backend)
+
+| Arquivo | Acao | Mudanca |
+|---------|------|---------|
+| `supabase/functions/download-whatsapp-media/index.ts` | Modificar | Remover referencias WPPConnect, usar Baileys API |
+| `supabase/functions/check-connections/index.ts` | Modificar | Remover Evolution API, usar Baileys API |
+| `supabase/functions/execute-flow/index.ts` | Modificar | Substituir sendWhatsAppMessage para usar Baileys |
+| `supabase/functions/merge-duplicate-contacts/index.ts` | Modificar | Remover Evolution API para buscar contatos |
+| `supabase/functions/sync-contacts/index.ts` | Verificar | Garantir que usa Baileys |
+| `supabase/functions/resolve-lid-contact/index.ts` | Verificar | Garantir que usa Baileys |
+
+### Scripts de Deploy
+
+| Arquivo | Acao | Mudanca |
+|---------|------|---------|
+| `deploy/scripts/install.sh` | Reescrever | Remover escolha WAHA/WPPConnect, usar apenas Baileys |
+| `deploy/scripts/install-unified.sh` | Modificar | Remover opcoes legadas |
+| `deploy/scripts/backup.sh` | Modificar | Remover backup de volumes WAHA/WPPConnect |
+| `deploy/scripts/restore.sh` | Modificar | Remover restore de volumes legados |
+| `deploy/scripts/update.sh` | Modificar | Remover logica de engines multiplos |
+| `deploy/scripts/diagnostico.sh` | Modificar | Remover checks WAHA/WPPConnect |
+| `deploy/scripts/package.sh` | Modificar | Remover diretorios evolution |
+
+### Docker Compose
+
+| Arquivo | Acao | Mudanca |
+|---------|------|---------|
+| `deploy/docker-compose.yml` | Modificar | Remover servicos WAHA e WPPConnect (linhas 360-575), remover variaveis de ambiente, manter apenas Baileys |
+
+### Configuracoes
+
+| Arquivo | Acao | Mudanca |
+|---------|------|---------|
+| `deploy/.env.example` | Modificar | Remover secoes WAHA e WPPConnect |
+| `deploy/CHANGELOG.md` | Atualizar | Documentar a remocao final |
 
 ---
 
-## Alteracoes Tecnicas
+## Detalhes Tecnicos
 
-### nginx.conf - Antes (problematico)
-```nginx
-upstream supabase_kong {
-    server kong:8000;
-    keepalive 32;
-}
+### 1. Edge Functions - Padrao Baileys
 
-upstream evolution_api {
-    server evolution:8080;  # NAO EXISTE!
-    keepalive 8;
+Todas as edge functions que enviam mensagens WhatsApp serao atualizadas para usar este padrao:
+
+```typescript
+// Configuracao Baileys
+const BAILEYS_API_URL = Deno.env.get("BAILEYS_API_URL") || "http://baileys:3000";
+const BAILEYS_API_KEY = Deno.env.get("BAILEYS_API_KEY");
+
+// Enviar mensagem via Baileys
+async function sendWhatsAppMessage(
+  instanceName: string,
+  phone: string,
+  content: string
+): Promise<boolean> {
+  const response = await fetch(`${BAILEYS_API_URL}/send-message`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": BAILEYS_API_KEY,
+    },
+    body: JSON.stringify({
+      sessionId: instanceName,
+      to: `${phone}@s.whatsapp.net`,
+      text: content,
+    }),
+  });
+  return response.ok;
 }
 ```
 
-### nginx.conf - Depois (corrigido)
-```nginx
-# Usar resolver do Docker
-resolver 127.0.0.11 valid=10s ipv6=off;
+### 2. Docker Compose - Servicos Removidos
 
-# Remover upstreams estaticos problematicos
-# Usar variaveis com set $upstream para resolucao dinamica
+Serao removidos completamente:
+- `waha` (linhas 361-405)
+- `wppconnect-1` (linhas 411-444)
+- `wppconnect-2` (linhas 446-480)
+- `wppconnect-3` (linhas 482-515)
+- `wppconnect-lb` (se existir)
 
-server {
-    # Kong proxy com fallback
-    location /rest/v1/ {
-        set $upstream_kong kong:8000;
-        proxy_pass http://$upstream_kong/rest/v1/;
-        # ...
-    }
-}
-```
+### 3. Variaveis de Ambiente Removidas
+
+Do `docker-compose.yml` e `.env.example`:
+- `WAHA_API_URL`, `WAHA_API_KEY`, `WAHA_PORT`
+- `WPPCONNECT_API_URL`, `WPPCONNECT_SECRET_KEY`, `WPPCONNECT_PORT_*`
+- `EVOLUTION_API_URL`, `EVOLUTION_API_KEY`
+- `WHATSAPP_ENGINE` (sera removida pois so existe Baileys)
+
+### 4. Script de Instalacao Simplificado
+
+O `install.sh` atual tem 983 linhas com logica para escolher WAHA/WPPConnect. Sera simplificado para:
+- Remover menu de escolha de engine (linhas 233-256)
+- Remover criacao de diretorios WAHA/WPPConnect (linhas 329-339)
+- Remover verificacao de health WAHA/WPPConnect (linhas 714-758)
+- Usar sempre `--profile baileys`
 
 ---
 
-## Comandos que Voce Precisara Executar
+## Impacto
 
-### 1. Verificar se as portas estao abertas no firewall
+### Beneficios
+
+1. **Codigo mais limpo**: Remocao de ~870 linhas de codigo legado
+2. **Menos confusao**: Um unico caminho de integracao
+3. **Manutencao simplificada**: Menos variaveis de ambiente
+4. **Instalacao mais rapida**: Sem perguntas sobre engine
+
+### Riscos
+
+1. **Instalacoes existentes**: Usuarios com WAHA/WPPConnect precisarao migrar
+2. **Compatibilidade**: Garantir que Baileys cobre todos os casos de uso
+
+### Mitigacao
+
+- Documentar processo de migracao no CHANGELOG
+- Manter backward compatibility no banco de dados
+
+---
+
+## Ordem de Execucao
+
+1. **Edge Functions** (6 arquivos) - Atualizar logica de envio/recebimento
+2. **Docker Compose** - Remover servicos e variaveis
+3. **.env.example** - Limpar variaveis obsoletas
+4. **Scripts** (7 arquivos) - Simplificar instalacao
+5. **Testes** - Verificar funcionamento
+
+---
+
+## Comandos de Verificacao (Apos Implementacao)
 
 ```bash
-# Ver status do firewall
-sudo ufw status
+# Verificar se ainda existem referencias
+grep -r "waha\|wppconnect\|evolution" deploy/ supabase/functions/ --include="*.ts" --include="*.sh" --include="*.yml"
 
-# Se estiver ativo, liberar as portas
-sudo ufw allow 80/tcp
-sudo ufw allow 443/tcp
-sudo ufw reload
-```
-
-### 2. Verificar se ha algo ja usando as portas
-
-```bash
-sudo ss -tulpn | grep -E ':80|:443'
-```
-
-### 3. Verificar o DNS do dominio
-
-```bash
-# Verificar se o dominio aponta para o IP do servidor
-dig chatbotvital.store +short
-
-# Pegar o IP publico do servidor
-curl -s ifconfig.me
-```
-
-### 4. Apos eu aplicar a correcao, reiniciar
-
-```bash
+# Reiniciar com novo docker-compose
 cd /opt/sistema/deploy
 sudo docker compose down
 sudo docker compose --profile baileys up -d
+
+# Verificar logs
+sudo docker logs app-nginx -f
+sudo docker logs baileys-server -f
 ```
-
----
-
-## Fluxo de Correcao
-
-```text
-1. Vou corrigir o nginx.conf
-   |
-2. Voce executa os comandos de verificacao
-   |
-3. Confirma se o IP do dominio esta correto
-   |
-4. Reinicia os containers
-   |
-5. Sistema deve estar acessivel em https://chatbotvital.store
-```
-
----
-
-## Secao Tecnica Detalhada
-
-### Por que o Nginx falha ao resolver "kong"?
-
-O Nginx por padrao resolve nomes de host no momento da inicializacao. Se o container `kong` ainda nao estiver pronto na rede Docker, a resolucao falha e o Nginx nao inicia.
-
-A solucao e usar:
-1. **`resolver 127.0.0.11`** - O DNS interno do Docker
-2. **Variaveis com `set $upstream`** - Forca resolucao dinamica em runtime
-
-### Upstreams que nao existem
-
-O arquivo atual define upstreams para:
-- `evolution:8080` - Nao existe no docker-compose.yml
-- `studio:3000` - So existe se voce subir o profile studio
-
-Isso causa erro fatal porque o Nginx valida todos os upstreams na inicializacao.
-
