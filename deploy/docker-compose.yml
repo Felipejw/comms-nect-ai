@@ -271,8 +271,12 @@ services:
       WPPCONNECT_API_URL_2: ${WPPCONNECT_API_URL_2:-}
       WPPCONNECT_API_URL_3: ${WPPCONNECT_API_URL_3:-}
       
+      # Baileys (Usado quando WHATSAPP_ENGINE=baileys)
+      BAILEYS_API_URL: ${BAILEYS_INTERNAL_URL:-http://baileys:3000}
+      BAILEYS_API_KEY: ${BAILEYS_API_KEY:-}
+      
       # Identificador da engine em uso
-      WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-waha}
+      WHATSAPP_ENGINE: ${WHATSAPP_ENGINE:-baileys}
       
       # Google Calendar (opcional)
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
@@ -535,6 +539,36 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+
+  # ==========================================
+  # BAILEYS - WhatsApp via QR Code (Profile: baileys)
+  # ==========================================
+  baileys:
+    build: ./baileys
+    container_name: baileys-server
+    restart: unless-stopped
+    profiles:
+      - baileys
+    environment:
+      API_KEY: ${BAILEYS_API_KEY}
+      WEBHOOK_URL: http://kong:8000/functions/v1/baileys-webhook
+      NODE_ENV: production
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./volumes/baileys/sessions:/app/sessions
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - supabase-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 networks:
   supabase-network:
