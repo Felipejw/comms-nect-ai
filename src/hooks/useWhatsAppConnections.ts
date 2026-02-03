@@ -10,7 +10,12 @@ export interface WhatsAppConnection {
   phone_number: string | null;
   qr_code: string | null;
   is_default: boolean;
-  session_data: { sessionName?: string; token?: string; instanceName?: string } | null;
+  session_data: { 
+    sessionName?: string; 
+    token?: string; 
+    instanceName?: string;
+    engine?: 'waha' | 'baileys';
+  } | null;
   color: string | null;
   created_at: string;
   updated_at: string;
@@ -35,8 +40,9 @@ export function useWhatsAppConnections() {
   });
 
   const createConnection = useMutation({
-    mutationFn: async (instanceName: string) => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+    mutationFn: async ({ instanceName, engine = 'baileys' }: { instanceName: string; engine?: 'waha' | 'baileys' }) => {
+      const functionName = engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "create", instanceName },
       });
 
@@ -60,9 +66,15 @@ export function useWhatsAppConnections() {
     },
   });
 
+  const getEdgeFunctionName = (connectionId: string): string => {
+    const connection = connections.find(c => c.id === connectionId);
+    return connection?.session_data?.engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
+  };
+
   const getQrCode = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+      const functionName = getEdgeFunctionName(connectionId);
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "getQrCode", connectionId },
       });
 
@@ -77,7 +89,8 @@ export function useWhatsAppConnections() {
 
   const checkStatus = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+      const functionName = getEdgeFunctionName(connectionId);
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "status", connectionId },
       });
 
@@ -92,7 +105,8 @@ export function useWhatsAppConnections() {
 
   const disconnect = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+      const functionName = getEdgeFunctionName(connectionId);
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "disconnect", connectionId },
       });
 
@@ -118,7 +132,8 @@ export function useWhatsAppConnections() {
 
   const deleteConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+      const functionName = getEdgeFunctionName(connectionId);
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "delete", connectionId },
       });
 
@@ -177,7 +192,8 @@ export function useWhatsAppConnections() {
 
   const recreateConnection = useMutation({
     mutationFn: async (connectionId: string) => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+      const functionName = getEdgeFunctionName(connectionId);
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "recreate", connectionId },
       });
 
@@ -202,8 +218,9 @@ export function useWhatsAppConnections() {
   });
 
   const checkServerHealth = useMutation({
-    mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("waha-instance", {
+    mutationFn: async (engine: 'waha' | 'baileys' = 'baileys') => {
+      const functionName = engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
+      const { data, error } = await supabase.functions.invoke(functionName, {
         body: { action: "serverHealth" },
       });
 

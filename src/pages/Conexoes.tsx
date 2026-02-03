@@ -55,16 +55,16 @@ export default function Conexoes() {
   const [pollCount, setPollCount] = useState(0);
   const [qrError, setQrError] = useState<string | null>(null);
 
-  // Fetch WAHA server info
+  // Fetch Baileys server info
   const fetchServerInfo = async () => {
     setIsLoadingServerInfo(true);
     try {
-      const result = await checkServerHealth.mutateAsync();
+      const result = await checkServerHealth.mutateAsync('baileys');
       setServerInfo({
-        status: result.healthy ? "online" : "offline",
-        version: result.version,
-        engine: result.engine,
-        sessionsCount: result.sessionsCount,
+        status: result.data?.status === 'ok' ? "online" : "offline",
+        version: result.data?.version || "Baileys",
+        engine: "Baileys",
+        sessionsCount: result.data?.sessions ?? 0,
       });
     } catch (error) {
       console.error("[Conexoes] Error fetching server info:", error);
@@ -144,18 +144,21 @@ export default function Conexoes() {
     if (!newInstanceName.trim()) return;
 
     try {
-      const result = await createConnection.mutateAsync(newInstanceName.trim());
+      const result = await createConnection.mutateAsync({ 
+        instanceName: newInstanceName.trim(),
+        engine: 'baileys'
+      });
       setIsCreateDialogOpen(false);
       setNewInstanceName("");
       
       await refetch();
-      if (result.connection) {
-        setSelectedConnection(result.connection);
-        setPollingConnection(result.connection.id);
+      if (result.data) {
+        setSelectedConnection(result.data);
+        setPollingConnection(result.data.id);
         setIsQrModalOpen(true);
         
-        if (!result.qrCode) {
-          await getQrCode.mutateAsync(result.connection.id).catch((e) => {
+        if (!result.data.qr_code) {
+          await getQrCode.mutateAsync(result.data.id).catch((e) => {
             console.error("[Create] Failed to fetch QR:", e);
           });
           await refetch();
@@ -178,7 +181,7 @@ export default function Conexoes() {
       refetch();
     } catch (error) {
       console.error("Error refreshing QR code:", error);
-      setQrError("Erro ao recriar instância. Verifique se o servidor WAHA está acessível.");
+      setQrError("Erro ao recriar instância. Verifique se o servidor Baileys está acessível.");
     }
   };
 
@@ -428,12 +431,12 @@ export default function Conexoes() {
         </div>
       </div>
 
-      {/* WAHA Server Info */}
+      {/* Baileys Server Info */}
       <Card className="mb-2">
         <CardHeader className="pb-2 py-3">
           <CardTitle className="text-sm flex items-center gap-2">
             <Server className="w-4 h-4" />
-            Servidor WAHA
+            Servidor Baileys
             {isLoadingServerInfo ? (
               <Loader2 className="w-3 h-3 animate-spin" />
             ) : serverInfo ? (
