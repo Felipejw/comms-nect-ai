@@ -27,6 +27,34 @@ echo "║       Instalacao automatica via curl                       ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
+# ==========================================
+# Instrucoes Iniciais
+# ==========================================
+echo ""
+echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${YELLOW}║   INFORMACOES IMPORTANTES                                  ║${NC}"
+echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${YELLOW}║                                                            ║${NC}"
+echo -e "${YELLOW}║   Este instalador oferece dois modos:                      ║${NC}"
+echo -e "${YELLOW}║                                                            ║${NC}"
+echo -e "${YELLOW}║   1. PRODUCAO (recomendado):                              ║${NC}"
+echo -e "${YELLOW}║      - Requer dominio configurado (DNS apontando aqui)    ║${NC}"
+echo -e "${YELLOW}║      - Portas 80 e 443 liberadas                          ║${NC}"
+echo -e "${YELLOW}║      - Email valido para certificado SSL                  ║${NC}"
+echo -e "${YELLOW}║      - Acesso via HTTPS                                   ║${NC}"
+echo -e "${YELLOW}║                                                            ║${NC}"
+echo -e "${YELLOW}║   2. DESENVOLVIMENTO/TESTE:                               ║${NC}"
+echo -e "${YELLOW}║      - Nao requer dominio                                 ║${NC}"
+echo -e "${YELLOW}║      - Apenas porta 3000 liberada                         ║${NC}"
+echo -e "${YELLOW}║      - Acesso via HTTP (sem SSL)                          ║${NC}"
+echo -e "${YELLOW}║      - Ideal para testes iniciais                         ║${NC}"
+echo -e "${YELLOW}║                                                            ║${NC}"
+echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+echo ""
+
+read -p "Pressione ENTER para continuar ou Ctrl+C para cancelar..."
+echo ""
+
 # Verificar root
 if [ "$EUID" -ne 0 ]; then
     log_error "Execute como root!"
@@ -89,10 +117,21 @@ if [ "$FREE_DISK" -lt 5000 ]; then
 fi
 log_success "Disco livre: ${FREE_DISK}MB"
 
+# Obter e mostrar IP publico
+log_info "Obtendo IP publico do servidor..."
+SERVER_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || curl -s ipinfo.io/ip)
+if [ -n "$SERVER_IP" ]; then
+    log_success "IP publico: $SERVER_IP"
+    echo ""
+    echo -e "${CYAN}DICA: Se for usar modo producao, configure seu dominio${NC}"
+    echo -e "${CYAN}      para apontar para este IP: $SERVER_IP${NC}"
+    echo ""
+fi
+
 # Instalar dependencias basicas
 log_info "Instalando dependencias basicas..."
 apt-get update -qq
-apt-get install -y -qq git curl wget ca-certificates gnupg lsb-release
+apt-get install -y -qq git curl wget ca-certificates gnupg lsb-release dnsutils
 
 # Definir variaveis
 INSTALL_DIR="/opt/baileys"
