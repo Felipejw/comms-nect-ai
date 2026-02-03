@@ -25,14 +25,18 @@ export function BaileysConfigSection() {
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "unknown">("unknown");
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
 
-  // Load initial values from settings
+  // Load initial values from settings ONLY on first load
   useEffect(() => {
-    if (!isLoading) {
-      setServerUrl(getSetting("baileys_server_url"));
-      setApiKey(getSetting("baileys_api_key"));
+    if (!isLoading && !initialLoadDone) {
+      const savedUrl = getSetting("baileys_server_url");
+      const savedKey = getSetting("baileys_api_key");
+      if (savedUrl) setServerUrl(savedUrl);
+      if (savedKey) setApiKey(savedKey);
+      setInitialLoadDone(true);
     }
-  }, [isLoading, getSetting]);
+  }, [isLoading, initialLoadDone, getSetting]);
 
   const handleSave = async () => {
     if (!serverUrl || !apiKey) {
@@ -75,23 +79,33 @@ export function BaileysConfigSection() {
     setConnectionStatus("unknown");
     
     try {
+      console.log("Testing Baileys connection...");
       const { data, error } = await supabase.functions.invoke("baileys-instance", {
         body: { action: "serverHealth" },
       });
 
-      if (error) throw error;
+      console.log("Baileys test response:", { data, error });
 
-      if (data?.status === "online" || data?.success) {
+      if (error) {
+        console.error("Baileys test error:", error);
+        setConnectionStatus("offline");
+        toast.error(`Servidor Baileys não está respondendo: ${error.message}`);
+        return;
+      }
+
+      if (data?.success) {
         setConnectionStatus("online");
         toast.success("Servidor Baileys está online!");
       } else {
         setConnectionStatus("offline");
-        toast.error("Servidor Baileys não está respondendo");
+        const errorMsg = data?.error || "Erro desconhecido";
+        console.error("Baileys server error:", errorMsg);
+        toast.error(`Servidor Baileys não está respondendo: ${errorMsg}`);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error testing Baileys connection:", error);
       setConnectionStatus("offline");
-      toast.error("Erro ao conectar com o servidor Baileys");
+      toast.error(`Erro ao conectar: ${error?.message || "Conexão recusada"}`);
     } finally {
       setIsTesting(false);
     }

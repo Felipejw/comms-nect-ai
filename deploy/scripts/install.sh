@@ -785,36 +785,73 @@ fi
 # ==========================================
 log_info "Configurando SSL..."
 
-if [ -n "$SSL_EMAIL" ] && [ "$DOMAIN" != "localhost" ]; then
-    # Usar Let's Encrypt via certbot
-    if command -v certbot &> /dev/null; then
-        log_info "Obtendo certificado SSL via Let's Encrypt..."
-        $SUDO certbot certonly --standalone -d "$DOMAIN" --email "$SSL_EMAIL" --agree-tos --non-interactive || {
-            log_warning "Não foi possível obter certificado. Gerando certificado auto-assinado..."
-            openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout nginx/ssl/privkey.pem \
-                -out nginx/ssl/fullchain.pem \
-                -subj "/CN=$DOMAIN"
-        }
-        
-        # Copiar certificados
-        if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
-            cp /etc/letsencrypt/live/$DOMAIN/fullchain.pem nginx/ssl/
-            cp /etc/letsencrypt/live/$DOMAIN/privkey.pem nginx/ssl/
-        fi
-    else
-        log_warning "Certbot não encontrado. Gerando certificado auto-assinado..."
-        openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout nginx/ssl/privkey.pem \
-            -out nginx/ssl/fullchain.pem \
-            -subj "/CN=$DOMAIN"
+# Função para detectar se é IP
+is_ip_address() {
+    [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+}
+
+# Função para tentar Let's Encrypt
+try_letsencrypt() {
+    local domain=$1
+    local email=${SSL_EMAIL:-ssl@$domain}
+    
+    # Instalar certbot se necessário
+    if ! command -v certbot &> /dev/null; then
+        log_info "Instalando certbot..."
+        apt-get update -qq && apt-get install -y -qq certbot 2>/dev/null || return 1
     fi
-else
-    log_info "Gerando certificado auto-assinado para desenvolvimento..."
+    
+    # Parar serviços na porta 80 temporariamente
+    $DOCKER_COMPOSE stop nginx 2>/dev/null || true
+    
+    log_info "Obtendo certificado Let's Encrypt para $domain..."
+    certbot certonly --standalone \
+        --preferred-challenges http \
+        -d "$domain" \
+        --email "$email" \
+        --agree-tos \
+        --non-interactive || return 1
+    
+    # Copiar certificados
+    if [ -d "/etc/letsencrypt/live/$domain" ]; then
+        cp /etc/letsencrypt/live/$domain/fullchain.pem nginx/ssl/
+        cp /etc/letsencrypt/live/$domain/privkey.pem nginx/ssl/
+        return 0
+    fi
+    
+    return 1
+}
+
+# Gerar certificado auto-assinado
+generate_self_signed() {
+    local domain=${1:-localhost}
+    log_info "Gerando certificado auto-assinado para $domain..."
     openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
         -keyout nginx/ssl/privkey.pem \
         -out nginx/ssl/fullchain.pem \
-        -subj "/CN=${DOMAIN:-localhost}"
+        -subj "/CN=$domain"
+}
+
+# Lógica principal de SSL
+if is_ip_address "$DOMAIN"; then
+    # IP não suporta Let's Encrypt
+    log_warning "Domínio é um IP. Let's Encrypt não suportado."
+    generate_self_signed "$DOMAIN"
+elif [ "$DOMAIN" = "localhost" ]; then
+    generate_self_signed "localhost"
+else
+    # Domínio real - tentar Let's Encrypt automaticamente
+    if try_letsencrypt "$DOMAIN"; then
+        log_success "Certificado Let's Encrypt obtido com sucesso!"
+    else
+        log_warning "Let's Encrypt falhou. Usando certificado auto-assinado..."
+        generate_self_signed "$DOMAIN"
+        echo ""
+        log_info "Para obter SSL válido manualmente depois, execute:"
+        echo "  sudo certbot certonly --standalone -d $DOMAIN --email seu@email.com"
+        echo "  sudo cp /etc/letsencrypt/live/$DOMAIN/*.pem $INSTALL_DIR/nginx/ssl/"
+        echo "  cd $INSTALL_DIR && docker compose restart nginx"
+    fi
 fi
 
 log_success "Certificados SSL configurados"
