@@ -288,10 +288,89 @@ log_success "Arquivo .env criado"
 
 # Configurar nginx (apenas se usar SSL)
 if [ "$USE_SSL" = true ]; then
-    mkdir -p nginx
-    if [ -f nginx/nginx.conf.template ]; then
-        sed "s/\${DOMAIN}/$DOMAIN/g" nginx/nginx.conf.template > nginx/nginx.conf
-        log_success "Nginx configurado"
+    # Criar estrutura de diretorios
+    mkdir -p nginx/ssl
+    
+    # Verificar se nginx.conf existe como diretorio (erro comum) e remover
+    if [ -d "nginx/nginx.conf" ]; then
+        log_warning "Removendo diretorio nginx/nginx.conf incorreto..."
+        rm -rf "nginx/nginx.conf"
+    fi
+    
+    # Gerar nginx.conf a partir do template
+    if [ -f "nginx/nginx.conf.template" ]; then
+        sed "s/\${DOMAIN}/$DOMAIN/g" "nginx/nginx.conf.template" > "nginx/nginx.conf"
+        log_success "Nginx configurado para $DOMAIN"
+    else
+        log_warning "Template nginx.conf.template nao encontrado. Criando configuracao padrao..."
+        cat > "nginx/nginx.conf" << NGINX_EOF
+# Configuracao Nginx gerada automaticamente
+events {
+    worker_connections 1024;
+}
+
+http {
+    sendfile on;
+    tcp_nopush on;
+    tcp_nodelay on;
+    keepalive_timeout 65;
+    types_hash_max_size 2048;
+    client_max_body_size 50M;
+
+    access_log /var/log/nginx/access.log;
+    error_log /var/log/nginx/error.log;
+
+    upstream baileys {
+        server baileys:3000;
+    }
+
+    server {
+        listen 80;
+        server_name $DOMAIN;
+        
+        location /.well-known/acme-challenge/ {
+            root /var/www/certbot;
+        }
+        
+        location / {
+            return 301 https://\$host\$request_uri;
+        }
+    }
+
+    server {
+        listen 443 ssl http2;
+        server_name $DOMAIN;
+
+        ssl_certificate /etc/letsencrypt/live/$DOMAIN/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/$DOMAIN/privkey.pem;
+
+        ssl_session_timeout 1d;
+        ssl_session_cache shared:SSL:50m;
+        ssl_session_tickets off;
+
+        ssl_protocols TLSv1.2 TLSv1.3;
+        ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+        ssl_prefer_server_ciphers off;
+
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+
+        location / {
+            proxy_pass http://baileys;
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade \$http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host \$host;
+            proxy_set_header X-Real-IP \$remote_addr;
+            proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$scheme;
+            proxy_read_timeout 86400;
+        }
+    }
+}
+NGINX_EOF
+        log_success "Nginx configurado com configuracao padrao"
     fi
 fi
 

@@ -1,5 +1,3 @@
-version: '3.8'
-
 # ============================================
 # Baileys WhatsApp Server
 # Docker Compose para instalacao standalone
