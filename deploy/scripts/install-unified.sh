@@ -165,40 +165,45 @@ stop_existing_baileys() {
     fi
 }
 
-# Coletar informações do usuário
+# Coletar/Gerar informações automaticamente (ZERO PROMPTS)
 collect_user_info() {
-    log_step "Configuração do Sistema"
+    log_step "Configuração Automática do Sistema"
     
-    # Domínio
+    # Domínio: usar variável de ambiente ou detectar IP público
     if [ -z "$DOMAIN" ]; then
-        read -p "Digite o domínio do servidor (ex: chatbotvital.store): " DOMAIN
+        log_info "Detectando IP público do servidor..."
+        DOMAIN=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "localhost")
     fi
+    log_success "Domínio/IP: $DOMAIN"
     
-    # Email SSL
+    # Email SSL: usar variável de ambiente ou gerar
     if [ -z "$SSL_EMAIL" ]; then
-        read -p "Digite o email para SSL (Let's Encrypt): " SSL_EMAIL
+        SSL_EMAIL="admin@${DOMAIN}"
     fi
+    log_success "Email SSL: $SSL_EMAIL"
     
-    # Senha do banco
-    if [ -z "$POSTGRES_PASSWORD" ]; then
-        log_info "Gerando senha segura para o banco de dados..."
-        POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
-    fi
+    # Senha do banco - sempre gerar automaticamente
+    POSTGRES_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 24)
+    log_success "Senha do banco gerada"
     
     # API Key do Baileys
     if [ -n "$EXISTING_API_KEY" ]; then
         log_info "Usando API Key existente do Baileys"
         BAILEYS_API_KEY="$EXISTING_API_KEY"
     else
-        log_info "Gerando nova API Key para o Baileys..."
         BAILEYS_API_KEY=$(openssl rand -hex 32)
+        log_success "API Key Baileys gerada"
     fi
     
     # JWT Secret
-    log_info "Gerando JWT Secret..."
     JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 48)
+    log_success "JWT Secret gerado"
     
-    log_success "Configurações coletadas"
+    # Credenciais do admin
+    ADMIN_EMAIL="admin@${DOMAIN}"
+    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    ADMIN_NAME="Administrador"
+    log_success "Credenciais do admin geradas"
 }
 
 # Gerar chaves JWT

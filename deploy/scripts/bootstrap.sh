@@ -51,21 +51,33 @@ if ! command -v git &> /dev/null; then
     apt-get install -y git
 fi
 
-# Remover instalação anterior se existir
+# Remover instalação anterior automaticamente (ZERO PROMPTS)
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}[WARN]${NC} Diretório $INSTALL_DIR já existe"
-    read -p "Deseja remover e reinstalar? (s/N): " -r
-    if [[ $REPLY =~ ^[Ss]$ ]]; then
-        echo -e "${BLUE}[INFO]${NC} Fazendo backup das sessões..."
-        if [ -d "$INSTALL_DIR/deploy/volumes/baileys/sessions" ]; then
-            mkdir -p /tmp/baileys-backup
-            cp -r "$INSTALL_DIR/deploy/volumes/baileys/sessions/"* /tmp/baileys-backup/ 2>/dev/null || true
-        fi
-        rm -rf "$INSTALL_DIR"
-    else
-        echo -e "${RED}[ERRO]${NC} Instalação cancelada"
-        exit 1
+    echo -e "${BLUE}[INFO]${NC} Fazendo backup das sessões automaticamente..."
+    
+    # Backup das sessões WhatsApp
+    if [ -d "$INSTALL_DIR/deploy/volumes/baileys/sessions" ]; then
+        mkdir -p /tmp/baileys-backup
+        cp -r "$INSTALL_DIR/deploy/volumes/baileys/sessions/"* /tmp/baileys-backup/ 2>/dev/null || true
+        echo -e "${GREEN}[OK]${NC} Sessões WhatsApp salvas em /tmp/baileys-backup"
     fi
+    
+    # Backup do .env se existir
+    if [ -f "$INSTALL_DIR/deploy/.env" ]; then
+        cp "$INSTALL_DIR/deploy/.env" /tmp/sistema-env-backup 2>/dev/null || true
+        echo -e "${GREEN}[OK]${NC} Arquivo .env salvo em /tmp/sistema-env-backup"
+    fi
+    
+    # Parar containers existentes
+    if [ -f "$INSTALL_DIR/deploy/docker-compose.yml" ]; then
+        cd "$INSTALL_DIR/deploy"
+        docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
+    fi
+    
+    # Remover diretório antigo
+    rm -rf "$INSTALL_DIR"
+    echo -e "${GREEN}[OK]${NC} Instalação anterior removida"
 fi
 
 # Clonar repositório
