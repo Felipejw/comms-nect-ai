@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Loader2, RefreshCw, Users } from "lucide-react";
+import { BaileysConfigSection } from "./BaileysConfigSection";
 
 interface SettingOptionProps {
   label: string;
@@ -92,6 +93,9 @@ export function OptionsTab() {
 
   return (
     <div className="space-y-6">
+      {/* Configuração do Servidor Baileys */}
+      <BaileysConfigSection />
+
       {/* Ações de Manutenção */}
       <div className="bg-card rounded-lg p-6">
         <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
