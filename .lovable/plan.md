@@ -1,175 +1,299 @@
 
 
-# Plano: Melhorar Fluxo de Instalação do Baileys
+# Plano: Remover WAHA, Evolution API e WPPConnect - Manter apenas Baileys
 
-## Problema Identificado
+## Resumo das Mudancas
 
-O script atual falha imediatamente se o usuário não digitar um domínio. Isso acontece porque:
-1. Não há instrução prévia clara sobre o que é necessário ANTES de iniciar
-2. Não permite tentar novamente se errar
-3. Não oferece opção de usar apenas IP (sem SSL)
+Este plano remove completamente todas as referencias a engines legadas de WhatsApp (WAHA, Evolution API, WPPConnect), consolidando o sistema para usar exclusivamente **Baileys** como engine principal para conexoes via QR Code.
 
-## Melhorias Propostas
+## Inventario de Arquivos a Modificar
 
-### 1. Adicionar Checklist de Pré-requisitos
+### Edge Functions a DELETAR
 
-Antes de pedir qualquer informação, mostrar claramente o que é necessário:
+| Arquivo | Motivo |
+|---------|--------|
+| `supabase/functions/waha-instance/` | Engine WAHA removido |
+| `supabase/functions/waha-webhook/` | Engine WAHA removido |
 
-```text
-╔════════════════════════════════════════════════════════════╗
-║   ANTES DE CONTINUAR, VOCE PRECISA TER:                   ║
-╠════════════════════════════════════════════════════════════╣
-║   1. Um dominio apontando para este servidor              ║
-║      (ex: baileys.seusite.com.br)                         ║
-║                                                            ║
-║   2. Portas 80 e 443 liberadas no firewall                ║
-║                                                            ║
-║   3. Um email valido (para certificado SSL)               ║
-╚════════════════════════════════════════════════════════════╝
+### Edge Functions a ATUALIZAR
 
-Tem tudo pronto? [s/N]
+| Arquivo | Mudanca |
+|---------|---------|
+| `supabase/functions/send-whatsapp/index.ts` | Remover `sendViaWAHA()`, remover referencias a `EVOLUTION_API_*` |
+| `supabase/functions/sync-contacts/index.ts` | Reescrever para usar Baileys API |
+| `supabase/functions/update-lid-contacts/index.ts` | Reescrever para usar Baileys API |
+| `supabase/functions/resolve-lid-contact/index.ts` | Reescrever para usar Baileys API |
+| `supabase/functions/process-schedules/index.ts` | Remover referencias Evolution, usar Baileys |
+
+### Arquivos Frontend a ATUALIZAR
+
+| Arquivo | Mudanca |
+|---------|---------|
+| `src/hooks/useWhatsAppConnections.ts` | Remover logica de escolha WAHA vs Baileys, usar apenas Baileys |
+
+### Arquivos de Deploy a DELETAR
+
+| Arquivo/Diretorio | Motivo |
+|-------------------|--------|
+| `deploy/waha/` (diretorio inteiro) | Engine WAHA removido |
+
+### Arquivos de Deploy a ATUALIZAR
+
+| Arquivo | Mudanca |
+|---------|---------|
+| `deploy/scripts/backup.sh` | Remover secao WPPConnect, adicionar secao Baileys |
+| `deploy/CHANGELOG.md` | Adicionar entrada sobre migracao para Baileys |
+
+### Arquivos de Configuracao
+
+| Arquivo | Mudanca |
+|---------|---------|
+| `supabase/config.toml` | Remover entradas `waha-instance` e `waha-webhook` |
+
+## Detalhamento das Mudancas
+
+### 1. Deletar Edge Functions WAHA
+
+Remover completamente os diretorios:
+- `supabase/functions/waha-instance/`
+- `supabase/functions/waha-webhook/`
+
+### 2. Atualizar `send-whatsapp/index.ts`
+
+**Antes:**
+```typescript
+const WAHA_API_URL = Deno.env.get("WAHA_API_URL") || Deno.env.get("EVOLUTION_API_URL");
+const WAHA_API_KEY = Deno.env.get("WAHA_API_KEY") || Deno.env.get("EVOLUTION_API_KEY");
+
+// Roteamento por engine
+if (connection.type === "meta_api") {
+  result = await sendViaMetaAPI(...);
+} else if (connection.session_data?.engine === "baileys") {
+  result = await sendViaBaileys(...);
+} else {
+  result = await sendViaWAHA(...);
+}
 ```
 
-### 2. Validação com Retry
-
-Permitir que o usuário tente novamente se digitar errado:
-
-```bash
-while true; do
-    read -p "Digite o dominio (ex: baileys.meusite.com.br): " DOMAIN
-    if [ -z "$DOMAIN" ]; then
-        log_warning "Dominio nao pode ser vazio. Tente novamente."
-        continue
-    fi
-    # Validar formato basico
-    if [[ ! "$DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
-        log_warning "Formato invalido. Use algo como: baileys.seusite.com.br"
-        continue
-    fi
-    break
-done
+**Depois:**
+```typescript
+// Apenas duas opcoes: Meta API ou Baileys
+if (connection.type === "meta_api") {
+  result = await sendViaMetaAPI(...);
+} else {
+  result = await sendViaBaileys(...);
+}
 ```
 
-### 3. Verificar DNS Antes de Continuar
+Remover:
+- Constantes `WAHA_API_URL` e `WAHA_API_KEY`
+- Funcao `sendViaWAHA()`
+- Referencias a Evolution API
 
-Testar se o domínio realmente aponta para o servidor:
+### 3. Atualizar `sync-contacts/index.ts`
 
-```bash
-# Obter IP publico do servidor
-SERVER_IP=$(curl -s ifconfig.me || curl -s icanhazip.com)
+**Antes:** Usa `EVOLUTION_API_URL` e endpoints da Evolution API
+**Depois:** Usa Baileys API via `baileys_server_url`
 
-# Resolver dominio
-DOMAIN_IP=$(dig +short "$DOMAIN" | head -1)
+```typescript
+// Buscar configuracao do Baileys
+const { data: settings } = await supabase
+  .from("system_settings")
+  .select("value")
+  .eq("key", "baileys_server_url")
+  .single();
 
-if [ "$SERVER_IP" != "$DOMAIN_IP" ]; then
-    log_warning "ATENCAO: O dominio $DOMAIN nao aponta para este servidor!"
-    log_warning "  IP do servidor: $SERVER_IP"
-    log_warning "  IP do dominio:  $DOMAIN_IP"
-    echo ""
-    read -p "Deseja continuar mesmo assim? [s/N] " -n 1 -r
-    echo ""
-    if [[ ! $REPLY =~ ^[Ss]$ ]]; then
-        log_info "Configure o DNS e execute novamente."
-        exit 0
-    fi
-fi
+const baileysUrl = settings?.value;
+
+// Buscar contatos via Baileys
+const response = await fetch(
+  `${baileysUrl}/sessions/${sessionName}/contacts`,
+  { headers: { "X-API-Key": baileysApiKey } }
+);
 ```
 
-### 4. Opção de Instalação sem SSL (Desenvolvimento)
+### 4. Atualizar `update-lid-contacts/index.ts`
 
-Permitir usar apenas IP para testes:
+Mesma logica - migrar de Evolution API para Baileys API.
 
+### 5. Atualizar `resolve-lid-contact/index.ts`
+
+**Antes:** Usa WPPConnect endpoints (`/api/${sessionName}/contact/pn-lid/...`)
+**Depois:** Usa Baileys endpoints (`/sessions/${sessionName}/resolve-lid/...`)
+
+### 6. Atualizar `process-schedules/index.ts`
+
+**Antes:**
+```typescript
+const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
+const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
+// ...
+await fetch(`${evolutionApiUrl}/message/sendText/${connection.name}`, ...);
+```
+
+**Depois:**
+```typescript
+// Invocar send-whatsapp que ja sabe usar Baileys
+await supabase.functions.invoke('send-whatsapp', {
+  body: { conversationId, content: schedule.message_content }
+});
+```
+
+### 7. Simplificar `useWhatsAppConnections.ts`
+
+**Antes:**
+```typescript
+const createConnection = useMutation({
+  mutationFn: async ({ instanceName, engine = 'baileys' }: { instanceName: string; engine?: 'waha' | 'baileys' }) => {
+    const functionName = engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
+    // ...
+  }
+});
+
+const getEdgeFunctionName = (connectionId: string): string => {
+  const connection = connections.find(c => c.id === connectionId);
+  return connection?.session_data?.engine === 'baileys' ? 'baileys-instance' : 'waha-instance';
+};
+```
+
+**Depois:**
+```typescript
+const createConnection = useMutation({
+  mutationFn: async ({ instanceName }: { instanceName: string }) => {
+    const { data, error } = await supabase.functions.invoke('baileys-instance', {
+      body: { action: "create", instanceName },
+    });
+    // ...
+  }
+});
+
+// Sempre usar baileys-instance
+const EDGE_FUNCTION = 'baileys-instance';
+```
+
+### 8. Atualizar `supabase/config.toml`
+
+Remover:
+```toml
+[functions.waha-instance]
+verify_jwt = false
+
+[functions.waha-webhook]
+verify_jwt = false
+```
+
+### 9. Deletar `deploy/waha/`
+
+Remover diretorio inteiro:
+- `deploy/waha/.env.example`
+- `deploy/waha/README.md`
+- `deploy/waha/docker-compose.yml`
+- `deploy/waha/install-waha.sh`
+- `deploy/waha/nginx/`
+- `deploy/waha/scripts/`
+
+### 10. Atualizar `deploy/scripts/backup.sh`
+
+**Antes:**
 ```bash
-echo ""
-echo "Escolha o modo de instalacao:"
-echo "  1) Com dominio e SSL (producao) - RECOMENDADO"
-echo "  2) Apenas IP, sem SSL (desenvolvimento/teste)"
-echo ""
-read -p "Opcao [1]: " INSTALL_MODE
-INSTALL_MODE=${INSTALL_MODE:-1}
+# 4. Backup do WPPConnect (Multi-Instance)
+log_info "Fazendo backup das sessões do WhatsApp..."
+WPPCONNECT_BACKUP="$BACKUP_DIR/wppconnect_backup_$DATE.tar.gz"
+```
 
-if [ "$INSTALL_MODE" = "2" ]; then
-    # Modo desenvolvimento - sem SSL
-    DOMAIN=$(curl -s ifconfig.me)
-    USE_SSL=false
-    log_warning "Modo desenvolvimento: SSL desabilitado"
+**Depois:**
+```bash
+# 4. Backup do Baileys
+log_info "Fazendo backup das sessões do WhatsApp (Baileys)..."
+BAILEYS_BACKUP="$BACKUP_DIR/baileys_backup_$DATE.tar.gz"
+
+if [ -d "/opt/baileys/sessions" ]; then
+    tar -czf "$BAILEYS_BACKUP" -C /opt/baileys sessions
+    log_success "Baileys: baileys_backup_$DATE.tar.gz"
 else
-    # Modo producao - com SSL
-    USE_SSL=true
-    # ... pedir dominio
+    log_info "Pasta baileys/sessions não encontrada, pulando..."
 fi
 ```
 
-## Arquivos a Modificar
+### 11. Atualizar `deploy/CHANGELOG.md`
 
-| Arquivo | Alteração |
-|---------|-----------|
-| `deploy/baileys/scripts/install.sh` | Adicionar checklist, validação, verificação DNS, modo dev |
-| `deploy/baileys/scripts/bootstrap.sh` | Adicionar instrução inicial sobre pré-requisitos |
+Adicionar nova entrada:
 
-## Fluxo Corrigido
+```markdown
+## [3.0.0] - 2025-02-03
 
-```text
-bootstrap.sh inicia
-         │
-         ▼
-    Verifica OS, RAM, Disco
-         │
-         ▼
-    Baixa arquivos para /opt/baileys
-         │
-         ▼
-    Executa install.sh
-         │
-         ▼
-┌────────────────────────────────┐
-│   CHECKLIST PRE-REQUISITOS    │
-│   - Dominio configurado?      │
-│   - Portas liberadas?         │
-│   - Email valido?             │
-│                               │
-│   Tem tudo? [s/N]             │
-└───────────┬────────────────────┘
-            │
-            ▼
-┌────────────────────────────────┐
-│   MODO DE INSTALACAO          │
-│   1) Producao (com SSL)       │
-│   2) Desenvolvimento (sem SSL)│
-└───────────┬────────────────────┘
-            │
-     ┌──────┴──────┐
-     │             │
-     ▼             ▼
-  Modo 1        Modo 2
-(pede dominio) (usa IP)
-     │             │
-     ▼             ▼
-Valida formato  Pula SSL
-     │             │
-     ▼             │
-Verifica DNS    │
-     │             │
-     └──────┬──────┘
-            │
-            ▼
-     Gera API Key
-            │
-            ▼
-     Configura .env
-            │
-            ▼
-     Inicia Docker
-            │
-            ▼
-     SUCESSO!
+### Mudancas Importantes
+- **Consolidacao para Baileys como unico engine WhatsApp**
+  - Removido suporte a WAHA
+  - Removido suporte a Evolution API
+  - Removido suporte a WPPConnect
+
+### Removido
+- Edge functions `waha-instance` e `waha-webhook`
+- Diretorio `deploy/waha/`
+- Variaveis `WAHA_*`, `EVOLUTION_*`, `WPPCONNECT_*`
+
+### Atualizado
+- `send-whatsapp`: Usa apenas Baileys ou Meta API
+- `sync-contacts`: Migrado para Baileys API
+- `update-lid-contacts`: Migrado para Baileys API
+- `resolve-lid-contact`: Migrado para Baileys API
+- `process-schedules`: Usa send-whatsapp internamente
+
+### Notas de Migracao
+1. Conexoes existentes com engine WAHA precisarao ser recriadas
+2. Instale o servidor Baileys: `curl -fsSL .../bootstrap.sh | sudo bash`
+3. Configure `baileys_server_url` e `baileys_api_key` em Configuracoes
 ```
 
-## Benefícios
+## Arquitetura Final
 
-1. **Menos erros** - Usuário sabe o que precisa ANTES de começar
-2. **Retry amigável** - Pode corrigir erros sem reiniciar
-3. **Verificação DNS** - Detecta problemas de configuração cedo
-4. **Modo dev** - Permite testar sem domínio configurado
-5. **Mensagens claras** - Feedback em cada etapa
+```text
+┌─────────────────────────────────────────────────────────┐
+│                    CONEXOES WHATSAPP                    │
+├─────────────────────────────────────────────────────────┤
+│                                                         │
+│   ┌───────────────────┐     ┌───────────────────┐      │
+│   │   QR Code         │     │   Meta Cloud API  │      │
+│   │   (Baileys)       │     │   (Oficial)       │      │
+│   └─────────┬─────────┘     └─────────┬─────────┘      │
+│             │                         │                 │
+│             ▼                         ▼                 │
+│   ┌───────────────────┐     ┌───────────────────┐      │
+│   │ baileys-instance  │     │ meta-api-webhook  │      │
+│   │ baileys-webhook   │     │ send-meta-message │      │
+│   └───────────────────┘     └───────────────────┘      │
+│                                                         │
+└─────────────────────────────────────────────────────────┘
+
+         REMOVIDOS:
+         ✗ waha-instance
+         ✗ waha-webhook
+         ✗ Evolution API
+         ✗ WPPConnect
+```
+
+## Ordem de Execucao
+
+1. **Atualizar config.toml** - Remover entradas WAHA
+2. **Deletar edge functions WAHA** - waha-instance, waha-webhook
+3. **Atualizar send-whatsapp** - Remover sendViaWAHA
+4. **Atualizar sync-contacts** - Migrar para Baileys
+5. **Atualizar update-lid-contacts** - Migrar para Baileys
+6. **Atualizar resolve-lid-contact** - Migrar para Baileys
+7. **Atualizar process-schedules** - Usar send-whatsapp
+8. **Atualizar useWhatsAppConnections.ts** - Simplificar para Baileys
+9. **Deletar deploy/waha/** - Remover diretorio
+10. **Atualizar deploy/scripts/backup.sh** - Baileys em vez de WPPConnect
+11. **Atualizar CHANGELOG.md** - Documentar mudanca
+
+## Impacto
+
+| Aspecto | Impacto |
+|---------|---------|
+| Conexoes existentes WAHA | Precisam ser recriadas com Baileys |
+| Conexoes Meta API | Nenhum impacto |
+| Secrets no Supabase | `EVOLUTION_API_*` podem ser removidos |
+| Frontend | Simplificado - sem escolha de engine |
+| Deploy | Apenas `deploy/baileys/` necessario |
 
