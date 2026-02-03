@@ -1,52 +1,127 @@
-# Plano: Instalação Simplificada em Um Comando
 
-## ✅ IMPLEMENTADO
+# Plano: Instalacao 100% Automatica (Zero Prompts)
 
-Todas as correções foram aplicadas com sucesso:
+## Problema Identificado
 
-### Mudanças Realizadas
+O script de instalacao ainda possui varios prompts interativos que impedem a instalacao em um unico comando:
 
-| Arquivo | Mudança | Status |
-|---------|---------|--------|
-| `deploy/scripts/install.sh` | Reescrito com Kong após variáveis JWT | ✅ Completo |
-| `deploy/scripts/install.sh` | Inserir configurações Baileys no DB | ✅ Completo |
-| `deploy/scripts/install.sh` | Gerar nginx.conf programaticamente | ✅ Completo |
-| `deploy/scripts/install.sh` | Adicionar validação pre-start | ✅ Completo |
-| `deploy/scripts/install.sh` | Melhorar verificação do frontend build | ✅ Completo |
-| `deploy/supabase/init.sql` | Adicionar configs Baileys padrão | ✅ Completo |
+| Arquivo | Linha | Prompt Interativo |
+|---------|-------|-------------------|
+| `install.sh` | 262-263 | Confirmar sobrescrever .env |
+| `install.sh` | 283 | Dominio do servidor |
+| `install.sh` | 284 | Email SSL |
+| `install.sh` | 285 | Senha do banco de dados |
+| `install.sh` | 1042-1045 | Email/Senha/Nome do admin |
+| `install-unified.sh` | 173-179 | Dominio e Email SSL |
+| `bootstrap.sh` | 57-58 | Confirmar reinstalacao |
+
+Alem disso, o prompt "Escolha a engine de WhatsApp: WAHA/WPPConnect" que voce esta vendo **nao existe no codigo atual**. Isso significa que voce esta executando uma versao **antiga** do script no servidor que nao foi atualizada apos o clone do repositorio.
 
 ---
 
-## Como Usar
+## Solucao: Automatizar Tudo
 
-### Instalação Limpa
+Vou modificar os scripts para:
+
+1. **Gerar senha do banco automaticamente** (sem pedir ao usuario)
+2. **Gerar credenciais do admin automaticamente** (sem pedir ao usuario)
+3. **Aceitar dominio como argumento** ou usar IP automatico
+4. **Remover todos os prompts interativos**
+5. **Exibir credenciais geradas no final**
+
+---
+
+## Mudancas Tecnicas
+
+### Arquivo 1: `deploy/scripts/install.sh`
+
+**Remocao de prompts interativos:**
+
+- Linhas 260-274: Remover confirmacao de sobrescrever .env (sempre sobrescrever)
+- Linhas 277-292: Aceitar DOMAIN como variavel de ambiente ou argumento, gerar senha automaticamente
+- Linhas 1038-1045: Gerar email/senha/nome do admin automaticamente
+
+**Novas funcionalidades:**
 
 ```bash
-cd /opt/sistema/deploy
-sudo ./scripts/install.sh
+# Gerar senha do banco automaticamente
+POSTGRES_PASSWORD=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
+
+# Gerar credenciais do admin automaticamente
+ADMIN_EMAIL="admin@${DOMAIN}"
+ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+ADMIN_NAME="Administrador"
 ```
 
-### O que o script faz automaticamente:
+### Arquivo 2: `deploy/scripts/install-unified.sh`
 
-1. Verifica e instala Docker/Docker Compose se necessário
-2. Compila o frontend se não existir
-3. Gera chaves JWT (ANON_KEY, SERVICE_ROLE_KEY)
-4. Gera kong.yml COM as chaves corretas (sem erro de sintaxe)
-5. Gera nginx.conf completo
-6. Gera certificado SSL (Let's Encrypt ou auto-assinado)
-7. Valida toda a configuração ANTES de iniciar
-8. Inicia containers Docker
-9. Executa migrations do banco
-10. Insere configurações do Baileys no banco
-11. Cria usuário administrador
+**Remocao de prompts interativos:**
+
+- Linhas 173-179: Aceitar DOMAIN e SSL_EMAIL como variaveis de ambiente
+
+### Arquivo 3: `deploy/scripts/bootstrap.sh`
+
+**Remocao de prompts interativos:**
+
+- Linhas 55-68: Automatizar reinstalacao (fazer backup e continuar)
 
 ---
 
-## Resultado
+## Uso Apos Implementacao
 
-Após executar `sudo ./scripts/install.sh`:
+### Instalacao Rapida (IP automatico)
+```bash
+curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/scripts/bootstrap.sh | sudo bash
+```
 
-- ✅ Kong inicia corretamente (sem erros de sintaxe)
-- ✅ Nginx serve o frontend compilado
-- ✅ Baileys configurado automaticamente no banco
-- ✅ Sistema funcional imediatamente após instalação
+### Instalacao com Dominio
+```bash
+curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/scripts/bootstrap.sh | sudo DOMAIN=chatbotvital.store SSL_EMAIL=seu@email.com bash
+```
+
+### Instalacao Local
+```bash
+cd /opt/sistema/deploy
+sudo DOMAIN=chatbotvital.store ./scripts/install.sh
+```
+
+---
+
+## Credenciais Geradas Automaticamente
+
+No final da instalacao, o script exibira:
+
+```text
+============================================
+   INSTALACAO CONCLUIDA!
+============================================
+
+Credenciais de Acesso:
+  URL:   https://chatbotvital.store
+  Admin: admin@chatbotvital.store
+  Senha: xK7mP9nQ2wL5vB3r (gerada automaticamente)
+
+Banco de Dados:
+  Senha: Ab3dEf7hIj9kLmNo0pQr5tUv (gerada automaticamente)
+
+API Keys:
+  Baileys API Key: abc123...
+  ANON_KEY: eyJhbG...
+  SERVICE_ROLE_KEY: eyJhbG...
+
+GUARDE ESSAS INFORMACOES EM LOCAL SEGURO!
+============================================
+```
+
+---
+
+## Resultado Esperado
+
+Apos aprovar este plano:
+
+- **ZERO prompts interativos** durante a instalacao
+- Comando unico instala tudo automaticamente
+- Credenciais seguras geradas automaticamente
+- Todas as configuracoes exibidas no final
+- Dominio pode ser passado via variavel de ambiente
+- Se dominio nao informado, usa IP publico do servidor
