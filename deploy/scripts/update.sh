@@ -39,7 +39,7 @@ fi
 
 # Ler versões
 OLD_VERSION=$(cat VERSION.old 2>/dev/null || echo "desconhecida")
-NEW_VERSION=$(cat VERSION 2>/dev/null || echo "2.0.0")
+NEW_VERSION=$(cat VERSION 2>/dev/null || echo "3.0.0")
 
 echo -e "${BLUE}"
 echo "============================================"
@@ -159,7 +159,7 @@ fi
 # ==========================================
 log_info "Iniciando containers..."
 
-$DOCKER_COMPOSE up -d
+$DOCKER_COMPOSE --profile baileys up -d
 
 log_success "Containers iniciados"
 
@@ -183,24 +183,17 @@ for service in db auth rest storage nginx; do
 done
 
 # ==========================================
-# 8. Verificar Saúde do WPPConnect
+# 8. Verificar Saúde do Baileys
 # ==========================================
-log_info "Verificando WPPConnect Server..."
+log_info "Verificando Baileys Server..."
 
 MAX_RETRIES=20
 RETRY=0
 while [ $RETRY -lt $MAX_RETRIES ]; do
-    # Tentar endpoint principal
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/health 2>/dev/null || echo "000")
     
-    # Se falhar, tentar endpoint alternativo
-    if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "502" ] || [ "$HTTP_CODE" = "503" ]; then
-        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
-    fi
-    
-    # Qualquer resposta válida indica servidor funcionando
-    if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "500" ]; then
-        log_success "WPPConnect Server: OK (HTTP $HTTP_CODE)"
+    if [ "$HTTP_CODE" = "200" ]; then
+        log_success "Baileys Server: OK"
         break
     fi
     RETRY=$((RETRY + 1))
@@ -209,8 +202,8 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
 done
 
 if [ $RETRY -eq $MAX_RETRIES ]; then
-    log_warning "WPPConnect pode ainda estar inicializando"
-    log_info "Verifique com: $DOCKER_COMPOSE logs wppconnect"
+    log_warning "Baileys pode ainda estar inicializando"
+    log_info "Verifique com: $DOCKER_COMPOSE logs baileys"
 fi
 
 # ==========================================

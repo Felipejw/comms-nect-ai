@@ -2,7 +2,7 @@
 
 # ============================================
 # Script de Instalação - Sistema de Atendimento
-# Self-Hosted com Supabase + WAHA/WPPConnect
+# Self-Hosted com Supabase + Baileys
 # Distribuição via arquivo (sem Git)
 # ============================================
 
@@ -28,14 +28,13 @@ DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$DEPLOY_DIR"
 
 # Ler versão
-VERSION=$(cat VERSION 2>/dev/null || echo "2.0.0")
+VERSION=$(cat VERSION 2>/dev/null || echo "3.0.0")
 
 # Banner
 echo -e "${BLUE}"
 echo "============================================"
 echo "  Sistema de Atendimento - Instalação"
-echo "  Self-Hosted com Supabase"
-echo "  Suporte: WAHA ou WPPConnect"
+echo "  Self-Hosted com Supabase + Baileys"
 echo "  Versão: $VERSION"
 echo "============================================"
 echo -e "${NC}"
@@ -224,37 +223,6 @@ if [ ${#POSTGRES_PASSWORD} -lt 12 ]; then
     exit 1
 fi
 
-# ==========================================
-# 4. Escolher Engine de WhatsApp
-# ==========================================
-echo ""
-echo -e "${BLUE}============================================${NC}"
-echo -e "${BLUE}  Escolha a engine de WhatsApp:${NC}"
-echo -e "${BLUE}============================================${NC}"
-echo ""
-echo "  [1] WAHA (Recomendado)"
-echo "      - Mais estável e moderno"
-echo "      - Dashboard de administração incluído"
-echo "      - Melhor suporte a mídia"
-echo "      - Atualizações frequentes"
-echo ""
-echo "  [2] WPPConnect"
-echo "      - Opção legada"
-echo "      - Suporte multi-instância"
-echo "      - Compatibilidade com sistemas existentes"
-echo ""
-
-read -p "Digite sua escolha [1/2] (padrão: 1): " WHATSAPP_ENGINE_CHOICE
-WHATSAPP_ENGINE_CHOICE=${WHATSAPP_ENGINE_CHOICE:-1}
-
-if [ "$WHATSAPP_ENGINE_CHOICE" = "2" ]; then
-    WHATSAPP_ENGINE="wppconnect"
-    log_info "Selecionado: WPPConnect"
-else
-    WHATSAPP_ENGINE="waha"
-    log_info "Selecionado: WAHA (Recomendado)"
-fi
-
 # Gerar JWT Secret (64 caracteres hexadecimais)
 JWT_SECRET=$(openssl rand -hex 32)
 log_success "JWT Secret gerado"
@@ -277,16 +245,10 @@ ANON_KEY=$(generate_jwt_key "anon")
 SERVICE_ROLE_KEY=$(generate_jwt_key "service_role")
 log_success "Chaves JWT geradas"
 
-# Gerar chave da engine escolhida
-if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-    WAHA_API_KEY=$(openssl rand -hex 32)
-    log_success "Chave WAHA_API_KEY gerada"
-    WEBHOOK_URL="https://$DOMAIN/functions/v1/waha-webhook"
-else
-    WPPCONNECT_SECRET_KEY=$(openssl rand -hex 24)
-    log_success "Chave WPPCONNECT_SECRET_KEY gerada"
-    WEBHOOK_URL="https://$DOMAIN/functions/v1/wppconnect-webhook"
-fi
+# Gerar chave do Baileys
+BAILEYS_API_KEY=$(openssl rand -hex 32)
+log_success "Chave BAILEYS_API_KEY gerada"
+WEBHOOK_URL="http://kong:8000/functions/v1/baileys-webhook"
 
 # Atualizar .env
 sed -i "s|^DOMAIN=.*|DOMAIN=$DOMAIN|" .env
@@ -297,24 +259,16 @@ sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$POSTGRES_PASSWORD|" .env
 sed -i "s|^JWT_SECRET=.*|JWT_SECRET=$JWT_SECRET|" .env
 sed -i "s|^ANON_KEY=.*|ANON_KEY=$ANON_KEY|" .env
 sed -i "s|^SERVICE_ROLE_KEY=.*|SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY|" .env
-sed -i "s|^WHATSAPP_ENGINE=.*|WHATSAPP_ENGINE=$WHATSAPP_ENGINE|" .env
+sed -i "s|^BAILEYS_API_KEY=.*|BAILEYS_API_KEY=$BAILEYS_API_KEY|" .env
+sed -i "s|^BAILEYS_EXTERNAL_URL=.*|BAILEYS_EXTERNAL_URL=https://$DOMAIN/baileys|" .env
 sed -i "s|^WEBHOOK_URL=.*|WEBHOOK_URL=$WEBHOOK_URL|" .env
 sed -i "s|^VITE_SUPABASE_URL=.*|VITE_SUPABASE_URL=https://$DOMAIN|" .env
 sed -i "s|^VITE_SUPABASE_PUBLISHABLE_KEY=.*|VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY|" .env
 
-# Configurar chaves específicas da engine
-if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-    sed -i "s|^WAHA_API_KEY=.*|WAHA_API_KEY=$WAHA_API_KEY|" .env
-    sed -i "s|^WAHA_API_URL=.*|WAHA_API_URL=http://waha:3000|" .env
-else
-    sed -i "s|^WPPCONNECT_SECRET_KEY=.*|WPPCONNECT_SECRET_KEY=$WPPCONNECT_SECRET_KEY|" .env
-    sed -i "s|^WPPCONNECT_SERVER_URL=.*|WPPCONNECT_SERVER_URL=https://$DOMAIN:21465|" .env
-fi
-
 log_success "Arquivo .env configurado"
 
 # ==========================================
-# 5. Criar Estrutura de Diretórios
+# 4. Criar Estrutura de Diretórios
 # ==========================================
 log_info "Criando estrutura de diretórios..."
 
@@ -322,26 +276,14 @@ mkdir -p volumes/db/data
 mkdir -p volumes/db/init
 mkdir -p volumes/storage
 mkdir -p volumes/kong
+mkdir -p volumes/baileys/sessions
 mkdir -p nginx/ssl
 mkdir -p backups
-
-# Criar diretórios específicos da engine
-if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-    mkdir -p volumes/waha/sessions
-    mkdir -p volumes/waha/media
-    log_info "Diretórios WAHA criados"
-else
-    mkdir -p volumes/wppconnect/tokens
-    mkdir -p volumes/wppconnect/userDataDir
-    mkdir -p volumes/wppconnect-1/tokens
-    mkdir -p volumes/wppconnect-1/userDataDir
-    log_info "Diretórios WPPConnect criados"
-fi
 
 log_success "Diretórios criados"
 
 # ==========================================
-# 6. Copiar Configurações do Kong
+# 5. Copiar Configurações do Kong
 # ==========================================
 log_info "Configurando Kong API Gateway..."
 
@@ -514,7 +456,7 @@ KONG_EOF
 log_success "Kong configurado"
 
 # ==========================================
-# 7. Copiar Migrations do Banco
+# 6. Copiar Migrations do Banco
 # ==========================================
 log_info "Preparando migrations do banco de dados..."
 
@@ -526,7 +468,7 @@ else
 fi
 
 # ==========================================
-# 8. Gerar Certificado SSL
+# 7. Gerar Certificado SSL
 # ==========================================
 log_info "Configurando SSL..."
 
@@ -565,7 +507,7 @@ fi
 log_success "Certificados SSL configurados"
 
 # ==========================================
-# 9. Atualizar Frontend com Configurações
+# 8. Atualizar Frontend com Configurações
 # ==========================================
 log_info "Configurando frontend..."
 
@@ -588,26 +530,21 @@ EOF
 fi
 
 # ==========================================
-# 10. Iniciar Containers
+# 9. Iniciar Containers
 # ==========================================
 log_info "Iniciando containers Docker..."
 
 # Parar containers existentes
 $DOCKER_COMPOSE down 2>/dev/null || true
 
-# Iniciar serviços com o profile correto
-if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-    log_info "Iniciando com WAHA..."
-    $DOCKER_COMPOSE --profile waha up -d
-else
-    log_info "Iniciando com WPPConnect..."
-    $DOCKER_COMPOSE --profile wppconnect up -d
-fi
+# Iniciar serviços com profile Baileys
+log_info "Iniciando com Baileys..."
+$DOCKER_COMPOSE --profile baileys up -d
 
 log_success "Containers iniciados"
 
 # ==========================================
-# 11. Aguardar Serviços Iniciarem
+# 10. Aguardar Serviços Iniciarem
 # ==========================================
 log_info "Aguardando serviços iniciarem..."
 
@@ -631,7 +568,7 @@ check_container_running() {
 # Aguardar containers críticos estarem Up
 log_info "Aguardando containers críticos..."
 for service in db auth rest kong; do
-    local attempts=0
+    attempts=0
     while [ $attempts -lt 30 ]; do
         if check_container_running $service; then
             log_success "Container $service está rodando"
@@ -664,7 +601,7 @@ done
 log_success "Banco de dados pronto"
 
 # ==========================================
-# 11.1 Verificar Disponibilidade da API (Kong)
+# 11. Verificar Disponibilidade da API (Kong)
 # ==========================================
 wait_for_api() {
     local max_attempts=60
@@ -706,81 +643,45 @@ wait_for_api() {
 wait_for_api
 
 # ==========================================
-# 12. Verificar Saúde da Engine WhatsApp
+# 12. Verificar Saúde do Baileys
 # ==========================================
-check_whatsapp_health() {
+check_baileys_health() {
     local max_retries=30
     local retry_count=0
     local wait_time=5
     
-    if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-        log_info "Verificando WAHA Server (pode levar até 2 minutos)..."
+    log_info "Verificando Baileys Server (pode levar até 2 minutos)..."
+    
+    while [ $retry_count -lt $max_retries ]; do
+        # Verificar se container está rodando
+        if ! $DOCKER_COMPOSE ps baileys 2>/dev/null | grep -q "Up\|running"; then
+            log_warning "Container Baileys não está rodando. Tentando reiniciar..."
+            $DOCKER_COMPOSE --profile baileys up -d baileys
+            sleep 10
+        fi
         
-        while [ $retry_count -lt $max_retries ]; do
-            # Verificar se container está rodando
-            if ! $DOCKER_COMPOSE ps waha 2>/dev/null | grep -q "Up\|running"; then
-                log_warning "Container WAHA não está rodando. Tentando reiniciar..."
-                $DOCKER_COMPOSE --profile waha up -d waha
-                sleep 10
-            fi
-            
-            # Tentar health check via curl
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/api/health 2>/dev/null || echo "000")
-            
-            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ]; then
-                log_success "WAHA Server está funcionando (HTTP $HTTP_CODE)"
-                return 0
-            fi
-            
-            retry_count=$((retry_count + 1))
-            remaining=$((max_retries - retry_count))
-            echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
-            sleep $wait_time
-        done
-    else
-        log_info "Verificando WPPConnect Server (pode levar até 2 minutos)..."
+        # Tentar health check via curl
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/health 2>/dev/null || echo "000")
         
-        while [ $retry_count -lt $max_retries ]; do
-            # Verificar se container está rodando
-            if ! $DOCKER_COMPOSE ps wppconnect-1 2>/dev/null | grep -q "Up\|running"; then
-                log_warning "Container WPPConnect não está rodando. Tentando reiniciar..."
-                $DOCKER_COMPOSE --profile wppconnect up -d wppconnect-1
-                sleep 10
-            fi
-            
-            # Tentar health check via curl
-            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
-            
-            if [ "$HTTP_CODE" = "000" ] || [ "$HTTP_CODE" = "502" ] || [ "$HTTP_CODE" = "503" ]; then
-                HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
-            fi
-            
-            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "401" ] || [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || [ "$HTTP_CODE" = "500" ]; then
-                log_success "WPPConnect Server está funcionando (HTTP $HTTP_CODE)"
-                return 0
-            fi
-            
-            retry_count=$((retry_count + 1))
-            remaining=$((max_retries - retry_count))
-            echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
-            sleep $wait_time
-        done
-    fi
+        if [ "$HTTP_CODE" = "200" ]; then
+            log_success "Baileys Server está funcionando (HTTP $HTTP_CODE)"
+            return 0
+        fi
+        
+        retry_count=$((retry_count + 1))
+        remaining=$((max_retries - retry_count))
+        echo -e "  Tentativa $retry_count/$max_retries - HTTP: $HTTP_CODE - Aguardando... ($remaining restantes)"
+        sleep $wait_time
+    done
     
     return 1
 }
 
-if check_whatsapp_health; then
-    log_success "Engine WhatsApp verificada com sucesso"
+if check_baileys_health; then
+    log_success "Baileys verificado com sucesso"
 else
-    log_warning "Engine WhatsApp pode ainda estar inicializando"
-    if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-        log_info "Verifique manualmente com: $DOCKER_COMPOSE logs waha"
-        log_info "Dashboard: http://localhost:3000"
-    else
-        log_info "Verifique manualmente com: $DOCKER_COMPOSE logs wppconnect-1"
-        log_info "Teste: curl http://localhost:21465/api/"
-    fi
+    log_warning "Baileys pode ainda estar inicializando"
+    log_info "Verifique manualmente com: $DOCKER_COMPOSE logs baileys"
 fi
 
 # ==========================================
@@ -846,77 +747,65 @@ else
     # FALLBACK: Criar admin diretamente no banco via SQL
     log_info "Tentando criar admin diretamente no banco de dados..."
     
-    # Gerar UUID para o usuário
-    NEW_USER_ID=$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || echo "$(date +%s)-$(echo $RANDOM)")
+    SQL_RESULT=$($DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "
+        DO \$\$
+        DECLARE
+            new_uid uuid := gen_random_uuid();
+        BEGIN
+            -- Inserir usuário em auth.users
+            INSERT INTO auth.users (
+                id,
+                instance_id,
+                email,
+                encrypted_password,
+                email_confirmed_at,
+                raw_user_meta_data,
+                created_at,
+                updated_at,
+                role,
+                aud
+            ) VALUES (
+                new_uid,
+                '00000000-0000-0000-0000-000000000000',
+                '$ADMIN_EMAIL',
+                crypt('$ADMIN_PASSWORD', gen_salt('bf')),
+                now(),
+                jsonb_build_object('name', '$ADMIN_NAME'),
+                now(),
+                now(),
+                'authenticated',
+                'authenticated'
+            );
+            
+            -- Aguardar trigger criar profile/role
+            PERFORM pg_sleep(1);
+            
+            -- Garantir que role seja admin
+            UPDATE public.user_roles SET role = 'admin' WHERE user_id = new_uid;
+            
+            -- Se não existir role, inserir
+            INSERT INTO public.user_roles (user_id, role)
+            SELECT new_uid, 'admin'
+            WHERE NOT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = new_uid);
+            
+            RAISE NOTICE 'Admin criado com ID: %', new_uid;
+        END \$\$;
+    " 2>&1)
     
-    # Hash da senha usando bcrypt (via Docker)
-    HASHED_PASSWORD=$($DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -t -c "SELECT crypt('$ADMIN_PASSWORD', gen_salt('bf'));" 2>/dev/null | tr -d ' \n')
-    
-    if [ -n "$HASHED_PASSWORD" ]; then
-        # Criar usuário diretamente na tabela auth.users
-        SQL_RESULT=$($DOCKER_COMPOSE exec -T db psql -U postgres -d postgres -c "
-            DO \$\$
-            DECLARE
-                new_uid uuid := gen_random_uuid();
-            BEGIN
-                -- Inserir usuário em auth.users
-                INSERT INTO auth.users (
-                    id,
-                    instance_id,
-                    email,
-                    encrypted_password,
-                    email_confirmed_at,
-                    raw_user_meta_data,
-                    created_at,
-                    updated_at,
-                    role,
-                    aud
-                ) VALUES (
-                    new_uid,
-                    '00000000-0000-0000-0000-000000000000',
-                    '$ADMIN_EMAIL',
-                    crypt('$ADMIN_PASSWORD', gen_salt('bf')),
-                    now(),
-                    jsonb_build_object('name', '$ADMIN_NAME'),
-                    now(),
-                    now(),
-                    'authenticated',
-                    'authenticated'
-                );
-                
-                -- Aguardar trigger criar profile/role
-                PERFORM pg_sleep(1);
-                
-                -- Garantir que role seja admin
-                UPDATE public.user_roles SET role = 'admin' WHERE user_id = new_uid;
-                
-                -- Se não existir role, inserir
-                INSERT INTO public.user_roles (user_id, role)
-                SELECT new_uid, 'admin'
-                WHERE NOT EXISTS (SELECT 1 FROM public.user_roles WHERE user_id = new_uid);
-                
-                RAISE NOTICE 'Admin criado com ID: %', new_uid;
-            END \$\$;
-        " 2>&1)
-        
-        if echo "$SQL_RESULT" | grep -q "NOTICE\|INSERT\|DO"; then
-            log_success "Admin criado via SQL com sucesso!"
-            ADMIN_CREATED=true
-        else
-            log_error "Falha ao criar admin via SQL"
-            log_info "Erro: $SQL_RESULT"
-            log_info ""
-            log_info "Você pode criar manualmente após a instalação acessando:"
-            log_info "  https://$DOMAIN"
-        fi
+    if echo "$SQL_RESULT" | grep -q "NOTICE\|INSERT\|DO"; then
+        log_success "Admin criado via SQL com sucesso!"
+        ADMIN_CREATED=true
     else
-        log_error "Não foi possível gerar hash da senha"
-        log_info "Crie o admin manualmente após a instalação"
+        log_error "Falha ao criar admin via SQL"
+        log_info "Erro: $SQL_RESULT"
+        log_info ""
+        log_info "Você pode criar manualmente após a instalação acessando:"
+        log_info "  https://$DOMAIN"
     fi
 fi
 
 # ==========================================
-# 15. Resumo Final (sempre exibir)
+# 15. Resumo Final
 # ==========================================
 show_summary() {
     echo ""
@@ -934,50 +823,22 @@ show_summary() {
     else
         echo -e "  ${YELLOW}Admin não foi criado automaticamente.${NC}"
         echo "  Crie manualmente acessando https://$DOMAIN"
-        echo "  ou usando: curl -X POST http://localhost:8000/auth/v1/signup ..."
     fi
     echo ""
-    echo "  Engine WhatsApp: $WHATSAPP_ENGINE"
+    echo "  Engine WhatsApp: Baileys"
     echo ""
-
-    if [ "$WHATSAPP_ENGINE" = "waha" ]; then
-        echo "  Serviços WAHA:"
-        echo "    Frontend:     https://$DOMAIN"
-        echo "    API:          https://$DOMAIN/rest/v1/"
-        echo "    WAHA:         http://localhost:3000"
-        echo "    Dashboard:    http://localhost:3000"
-        echo ""
-        echo "  Credenciais WAHA:"
-        echo "    Usuário: admin"
-        echo "    Senha:   (igual WAHA_API_KEY no .env)"
-        echo ""
-        echo -e "${YELLOW}  IMPORTANTE:${NC}"
-        echo "    - O dashboard WAHA está em http://localhost:3000"
-        echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
-        echo "    - A sessão será criada automaticamente"
-    else
-        echo "  Serviços WPPConnect:"
-        echo "    Frontend:    https://$DOMAIN"
-        echo "    API:         https://$DOMAIN/rest/v1/"
-        echo "    WPPConnect:  http://localhost:21465"
-        echo ""
-        echo -e "${YELLOW}  IMPORTANTE:${NC}"
-        echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
-        echo "    - O WPPConnect resolve automaticamente números LID"
-    fi
-
+    echo "  Serviços:"
+    echo "    Frontend:     https://$DOMAIN"
+    echo "    API:          https://$DOMAIN/rest/v1/"
+    echo "    Baileys:      https://$DOMAIN/baileys"
+    echo ""
+    echo -e "${YELLOW}  IMPORTANTE:${NC}"
+    echo "    - Para WhatsApp, vá em Conexões e escaneie o QR Code"
+    echo "    - A sessão será criada automaticamente"
     echo ""
     echo -e "${YELLOW}  LEMBRETE:${NC}"
     echo "    - Guarde a senha do banco de dados em local seguro"
     echo ""
-    echo "  Comandos úteis:"
-    echo "    Ver logs:     $DOCKER_COMPOSE logs -f"
-    echo "    Reiniciar:    $DOCKER_COMPOSE restart"
-    echo "    Parar:        $DOCKER_COMPOSE down"
-    echo "    Backup:       ./scripts/backup.sh"
-    echo ""
-    echo -e "${GREEN}============================================${NC}"
 }
 
-# Sempre exibir resumo, independente do resultado da criação do admin
 show_summary

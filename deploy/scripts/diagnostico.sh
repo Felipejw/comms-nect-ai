@@ -100,21 +100,16 @@ check_service "Auth (GoTrue)" "http://localhost:9999/health" "200"
 # Verificar Storage
 check_service "Storage API" "http://localhost:5000/status" "200"
 
-# Verificar WPPConnect
+# Verificar Baileys
 echo ""
-log_info "Verificando WPPConnect Server..."
+log_info "Verificando Baileys Server..."
 
-WPPCONNECT_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/ 2>/dev/null || echo "000")
-if [ "$WPPCONNECT_CODE" = "200" ] || [ "$WPPCONNECT_CODE" = "401" ] || [ "$WPPCONNECT_CODE" = "403" ] || [ "$WPPCONNECT_CODE" = "404" ]; then
-    log_success "WPPConnect Server: HTTP $WPPCONNECT_CODE (funcionando)"
+BAILEYS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:3000/health 2>/dev/null || echo "000")
+if [ "$BAILEYS_CODE" = "200" ]; then
+    log_success "Baileys Server: HTTP $BAILEYS_CODE (funcionando)"
 else
-    log_warning "WPPConnect Server: HTTP $WPPCONNECT_CODE"
-    
-    # Tentar endpoint alternativo
-    WPPCONNECT_ALT=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://localhost:21465/api/showAllSessions 2>/dev/null || echo "000")
-    if [ "$WPPCONNECT_ALT" != "000" ]; then
-        log_info "  Endpoint alternativo /api/showAllSessions: HTTP $WPPCONNECT_ALT"
-    fi
+    log_warning "Baileys Server: HTTP $BAILEYS_CODE"
+    log_info "  Verifique se o container baileys está rodando: docker compose ps baileys"
 fi
 
 # ==========================================
@@ -140,8 +135,7 @@ check_port 80 "HTTP/Nginx"
 check_port 443 "HTTPS/Nginx"
 check_port 8000 "Kong API Gateway"
 check_port 5432 "PostgreSQL"
-check_port 21465 "WPPConnect"
-check_port 3000 "PostgREST"
+check_port 3000 "Baileys/PostgREST"
 check_port 9999 "GoTrue Auth"
 
 # ==========================================
@@ -153,7 +147,7 @@ echo ""
 log_info "Verificando logs de erro (últimas 10 linhas)..."
 echo ""
 
-for container in supabase-db supabase-auth supabase-rest wppconnect-1; do
+for container in supabase-db supabase-auth supabase-rest baileys-server; do
     errors=$($DOCKER_COMPOSE logs --tail=50 $container 2>/dev/null | grep -i "error\|fatal\|panic" | tail -5)
     if [ -n "$errors" ]; then
         echo -e "${RED}[$container]${NC}"
@@ -188,7 +182,7 @@ if [ -f ".env" ]; then
     log_success "Arquivo .env encontrado"
     
     # Verificar variáveis críticas (sem mostrar valores)
-    for var in DOMAIN POSTGRES_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY WPPCONNECT_SECRET_KEY; do
+    for var in DOMAIN POSTGRES_PASSWORD JWT_SECRET ANON_KEY SERVICE_ROLE_KEY BAILEYS_API_KEY; do
         if grep -q "^$var=" .env 2>/dev/null; then
             log_success "  $var: Configurado"
         else
@@ -230,8 +224,8 @@ echo "  Reiniciar um container:"
 echo "    $DOCKER_COMPOSE restart <container>"
 echo ""
 echo "  Reiniciar todos os containers:"
-echo "    $DOCKER_COMPOSE down && $DOCKER_COMPOSE up -d"
+echo "    $DOCKER_COMPOSE --profile baileys down && $DOCKER_COMPOSE --profile baileys up -d"
 echo ""
-echo "  Testar WPPConnect manualmente:"
-echo "    curl -v http://localhost:21465/api/"
+echo "  Testar Baileys manualmente:"
+echo "    curl -v http://localhost:3000/health"
 echo ""

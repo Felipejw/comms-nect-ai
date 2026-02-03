@@ -25,7 +25,7 @@ DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_DIR="$(dirname "$DEPLOY_DIR")"
 
 # Ler versão
-VERSION=$(cat "$DEPLOY_DIR/VERSION" 2>/dev/null || echo "1.0.0")
+VERSION=$(cat "$DEPLOY_DIR/VERSION" 2>/dev/null || echo "3.0.0")
 
 echo -e "${BLUE}"
 echo "============================================"
@@ -107,6 +107,7 @@ cp -r scripts "$PACKAGE_DIR/"
 cp -r supabase "$PACKAGE_DIR/"
 cp -r docs "$PACKAGE_DIR/"
 cp -r frontend "$PACKAGE_DIR/"
+cp -r baileys "$PACKAGE_DIR/"
 cp VERSION "$PACKAGE_DIR/"
 cp CHANGELOG.md "$PACKAGE_DIR/" 2>/dev/null || true
 
@@ -115,7 +116,7 @@ mkdir -p "$PACKAGE_DIR/volumes/db/data"
 mkdir -p "$PACKAGE_DIR/volumes/db/init"
 mkdir -p "$PACKAGE_DIR/volumes/storage"
 mkdir -p "$PACKAGE_DIR/volumes/kong"
-mkdir -p "$PACKAGE_DIR/volumes/evolution"
+mkdir -p "$PACKAGE_DIR/volumes/baileys/sessions"
 mkdir -p "$PACKAGE_DIR/backups"
 
 # Criar .gitkeep para manter estrutura
@@ -123,7 +124,7 @@ touch "$PACKAGE_DIR/volumes/db/data/.gitkeep"
 touch "$PACKAGE_DIR/volumes/db/init/.gitkeep"
 touch "$PACKAGE_DIR/volumes/storage/.gitkeep"
 touch "$PACKAGE_DIR/volumes/kong/.gitkeep"
-touch "$PACKAGE_DIR/volumes/evolution/.gitkeep"
+touch "$PACKAGE_DIR/volumes/baileys/sessions/.gitkeep"
 touch "$PACKAGE_DIR/backups/.gitkeep"
 
 # Criar ZIP
@@ -178,8 +179,8 @@ INSTRUÇÕES DE ATUALIZAÇÃO
    ./scripts/update.sh
 
 4. Verifique se tudo está funcionando:
-   docker-compose ps
-   docker-compose logs -f
+   docker compose --profile baileys ps
+   docker compose logs -f
 
 Em caso de problemas, restaure o backup:
    ./scripts/restore.sh backups/backup-XXXXXX.tar.gz
