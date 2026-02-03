@@ -212,26 +212,26 @@ async function processIncomingMessage(sessionName: string, msg: proto.IWebMessag
     case 'imageMessage':
       mediaType = 'image';
       body = messageContent.imageMessage?.caption || '';
-      mimetype = messageContent.imageMessage?.mimetype;
+      mimetype = messageContent.imageMessage?.mimetype ?? undefined;
       break;
     case 'videoMessage':
       mediaType = 'video';
       body = messageContent.videoMessage?.caption || '';
-      mimetype = messageContent.videoMessage?.mimetype;
+      mimetype = messageContent.videoMessage?.mimetype ?? undefined;
       break;
     case 'audioMessage':
       mediaType = msg.message?.audioMessage?.ptt ? 'ptt' : 'audio';
-      mimetype = messageContent.audioMessage?.mimetype;
+      mimetype = messageContent.audioMessage?.mimetype ?? undefined;
       break;
     case 'documentMessage':
       mediaType = 'document';
       body = messageContent.documentMessage?.caption || '';
-      mimetype = messageContent.documentMessage?.mimetype;
+      mimetype = messageContent.documentMessage?.mimetype ?? undefined;
       filename = messageContent.documentMessage?.fileName || undefined;
       break;
     case 'stickerMessage':
       mediaType = 'sticker';
-      mimetype = messageContent.stickerMessage?.mimetype;
+      mimetype = messageContent.stickerMessage?.mimetype ?? undefined;
       break;
   }
 
