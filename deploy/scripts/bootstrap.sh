@@ -75,10 +75,16 @@ if [ -d "$INSTALL_DIR" ]; then
         docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
     fi
     
+    # IMPORTANTE: Mudar para diretório seguro ANTES de deletar
+    cd /tmp
+    
     # Remover diretório antigo
     rm -rf "$INSTALL_DIR"
     echo -e "${GREEN}[OK]${NC} Instalação anterior removida"
 fi
+
+# Garantir que estamos em diretório válido para o git clone
+cd /tmp
 
 # Clonar repositório
 echo -e "${BLUE}[INFO]${NC} Clonando repositório..."
