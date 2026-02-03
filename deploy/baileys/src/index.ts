@@ -80,7 +80,8 @@ app.get('/sessions', (req: Request, res: Response) => {
 // Status de uma sessao
 app.get('/sessions/:name', (req: Request, res: Response) => {
   try {
-    const session = getSession(req.params.name);
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const session = getSession(sessionName);
     if (!session) {
       return res.status(404).json({ success: false, error: 'Session not found' });
     }
@@ -95,7 +96,8 @@ app.get('/sessions/:name', (req: Request, res: Response) => {
 app.get('/sessions/:name/qr', async (req: Request, res: Response) => {
   try {
     const { format } = req.query;
-    const qrData = await getQrCode(req.params.name, format as string);
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const qrData = await getQrCode(sessionName, format as string);
     
     if (!qrData) {
       return res.status(404).json({ success: false, error: 'QR Code not available' });
@@ -111,7 +113,8 @@ app.get('/sessions/:name/qr', async (req: Request, res: Response) => {
 // Desconectar/excluir sessao
 app.delete('/sessions/:name', async (req: Request, res: Response) => {
   try {
-    await deleteSession(req.params.name);
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    await deleteSession(sessionName);
     res.json({ success: true, message: 'Session deleted' });
   } catch (error) {
     logger.error({ error }, 'Error deleting session');
@@ -132,7 +135,8 @@ app.post('/sessions/:name/send/text', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'to and text are required' });
     }
     
-    const result = await sendTextMessage(req.params.name, to, text);
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const result = await sendTextMessage(sessionName, to, text);
     res.json({ success: true, data: result });
   } catch (error) {
     logger.error({ error }, 'Error sending text message');
@@ -149,7 +153,8 @@ app.post('/sessions/:name/send/media', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'to and mediaUrl are required' });
     }
     
-    const result = await sendMediaMessage(req.params.name, to, mediaUrl, caption, mediaType);
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const result = await sendMediaMessage(sessionName, to, mediaUrl, caption, mediaType);
     res.json({ success: true, data: result });
   } catch (error) {
     logger.error({ error }, 'Error sending media message');
