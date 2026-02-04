@@ -16,6 +16,23 @@ import {
   Save
 } from "lucide-react";
 
+// Normaliza a URL removendo sufixos indesejados
+const normalizeUrl = (url: string): string => {
+  let normalized = url.trim();
+  
+  // Remover trailing slashes
+  while (normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1);
+  }
+  
+  // Remover /health do final se existir
+  if (normalized.endsWith('/health')) {
+    normalized = normalized.slice(0, -7);
+  }
+  
+  return normalized;
+};
+
 export function BaileysConfigSection() {
   const { getSetting, createOrUpdateSetting, isLoading } = useSystemSettings();
   
@@ -44,11 +61,19 @@ export function BaileysConfigSection() {
       return;
     }
 
+    const normalizedUrl = normalizeUrl(serverUrl);
+    
+    // Atualiza o campo de input se a URL foi normalizada
+    if (normalizedUrl !== serverUrl) {
+      setServerUrl(normalizedUrl);
+      toast.info("URL normalizada automaticamente");
+    }
+
     setIsSaving(true);
     try {
       await createOrUpdateSetting.mutateAsync({
         key: "baileys_server_url",
-        value: serverUrl,
+        value: normalizedUrl,
         description: "URL do servidor Baileys WhatsApp",
         category: "whatsapp",
       });
