@@ -163,14 +163,9 @@ export default function Conexoes() {
       if (result.data) {
         setSelectedConnection(result.data);
         setIsQrModalOpen(true);
-        
-        // If QR was returned directly in response, no need to poll
-        if (result.data.qr_code) {
-          console.log("[Create] QR code received directly");
-        } else {
-          // Start polling if no QR in response
-          setPollingConnection(result.data.id);
-        }
+        // Sempre iniciar polling - QR será buscado via getQrCode
+        setPollingConnection(result.data.id);
+        console.log("[Create] Connection created, polling started for QR");
       }
     } catch (error) {
       console.error("Error creating connection:", error);
@@ -184,18 +179,11 @@ export default function Conexoes() {
       setPollCount(0);
       setSelectedConnection(connection);
       setIsQrModalOpen(true);
-      const result = await recreateConnection.mutateAsync(connection.id);
-      
-      // If QR was returned directly, update the connection immediately
-      if (result.qrCode) {
-        console.log("[RefreshQR] QR returned directly from recreate");
-        await refetch();
-      } else {
-        // Start polling if no QR in response
-        setPollingConnection(connection.id);
-      }
-      
-      refetch();
+      await recreateConnection.mutateAsync(connection.id);
+      // Sempre iniciar polling - QR será buscado via getQrCode
+      setPollingConnection(connection.id);
+      console.log("[RefreshQR] Recreate complete, polling started for QR");
+      await refetch();
     } catch (error) {
       console.error("Error refreshing QR code:", error);
       setQrError("Erro ao recriar instância. Verifique se o servidor Baileys está acessível.");
