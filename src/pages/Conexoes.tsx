@@ -78,6 +78,22 @@ export default function Conexoes() {
   useEffect(() => {
     fetchServerInfo();
   }, []);
+
+  // Sincronizar selectedConnection com a lista de conexões
+  useEffect(() => {
+    if (selectedConnection) {
+      const exists = connections.find(c => c.id === selectedConnection.id);
+      if (!exists) {
+        // Conexão foi deletada - fechar modal
+        setSelectedConnection(null);
+        setIsQrModalOpen(false);
+        setPollingConnection(null);
+      } else if (exists.qr_code !== selectedConnection.qr_code || exists.status !== selectedConnection.status) {
+        // Atualizar com dados mais recentes
+        setSelectedConnection(exists);
+      }
+    }
+  }, [connections, selectedConnection]);
   
   // Meta API states
   const [isMetaDialogOpen, setIsMetaDialogOpen] = useState(false);
@@ -173,15 +189,28 @@ export default function Conexoes() {
   };
 
   const handleRefreshQrCode = async (connection: WhatsAppConnection) => {
+    // Verificar se conexão ainda existe na lista
+    const currentConnection = connections.find(c => c.id === connection.id);
+    if (!currentConnection) {
+      toast({
+        title: "Conexão não encontrada",
+        description: "Esta conexão não existe mais. Atualize a página.",
+        variant: "destructive",
+      });
+      setIsQrModalOpen(false);
+      setSelectedConnection(null);
+      return;
+    }
+    
     try {
       setQrError(null);
       setRecreateAttempts({});
       setPollCount(0);
-      setSelectedConnection(connection);
+      setSelectedConnection(currentConnection);
       setIsQrModalOpen(true);
-      await recreateConnection.mutateAsync(connection.id);
+      await recreateConnection.mutateAsync(currentConnection.id);
       // Sempre iniciar polling - QR será buscado via getQrCode
-      setPollingConnection(connection.id);
+      setPollingConnection(currentConnection.id);
       console.log("[RefreshQR] Recreate complete, polling started for QR");
       await refetch();
     } catch (error) {
