@@ -382,22 +382,7 @@ Deno.serve(async (req) => {
         const newSessionName = `${connection.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
         const webhookUrl = `${supabaseUrl}/functions/v1/baileys-webhook`;
 
-        const response = await fetch(`${baileysUrl}/sessions`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ name: newSessionName, webhookUrl }),
-        });
-
-        const result = await response.json();
-
-        if (!result.success) {
-          return new Response(
-            JSON.stringify({ success: false, error: result.error }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        // Atualizar conexao com novo sessionName IMEDIATAMENTE
+        // Atualizar conexao com novo sessionName PRIMEIRO (resposta rápida)
         console.log(`[Baileys Instance] Recreate: updating sessionName to ${newSessionName}`);
         await supabaseClient
           .from("connections")
@@ -408,6 +393,47 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq("id", connectionId);
+
+        // Criar sessão no servidor Baileys em background (fire-and-forget)
+        const createBaileysSession = async () => {
+          try {
+            const response = await fetch(`${baileysUrl}/sessions`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ name: newSessionName, webhookUrl }),
+            });
+            const result = await response.json();
+            console.log(`[Baileys Instance] Recreate session result:`, result.success ? "success" : result.error);
+            
+            if (!result.success) {
+              await supabaseClient
+                .from("connections")
+                .update({ 
+                  status: "error",
+                  updated_at: new Date().toISOString() 
+                })
+                .eq("id", connectionId);
+            }
+          } catch (err) {
+            console.error(`[Baileys Instance] Recreate background session failed:`, err);
+            await supabaseClient
+              .from("connections")
+              .update({ 
+                status: "error",
+                updated_at: new Date().toISOString() 
+              })
+              .eq("id", connectionId);
+          }
+        };
+
+        // Executar em background sem bloquear a resposta
+        // @ts-ignore - EdgeRuntime.waitUntil pode não existir em todos os ambientes
+        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+          // @ts-ignore
+          EdgeRuntime.waitUntil(createBaileysSession());
+        } else {
+          createBaileysSession();
+        }
 
         // Retornar imediatamente - QR será buscado via polling no frontend
         console.log(`[Baileys Instance] Recreate complete, returning immediately. QR will be fetched via polling.`);
