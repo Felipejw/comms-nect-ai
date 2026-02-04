@@ -1,144 +1,117 @@
 
-# Plano: Corrigir Carregamento do QR Code - Análise Completa
+# Plano: Corrigir Criação de Conexão WhatsApp (Travando no Loading)
 
-## Diagnóstico Detalhado
+## Diagnóstico Definitivo
 
-### Fluxo Atual (com problema)
+### O Que Está Acontecendo
 
-```text
-1. Frontend chama recreateConnection/createConnection
-2. Edge function baileys-instance cria sessão no servidor Baileys (VPS)
-3. Servidor Baileys gera QR Code e armazena em memória
-4. Servidor Baileys TENTA enviar webhook para baileys-webhook ← FALHA AQUI
-5. Frontend faz polling, chama getQrCode
-6. Edge function busca QR do servidor: GET /sessions/teste/qr ← PROBLEMA AQUI
-7. Servidor responde que não tem QR disponível
-```
-
-### Problemas Identificados
-
-**Problema 1: sessionName desatualizado**
-- O banco tem `sessionName: "teste"`
-- Mas quando você clicou em "Reconectar", a edge function `recreate` criou uma NOVA sessão com nome `teste_{timestamp}` (linha 350 de baileys-instance)
-- A sessão antiga "teste" foi deletada
-- O banco NÃO foi atualizado corretamente com o novo sessionName
-
-**Problema 2: Webhook não está sendo recebido**
-- Não há logs de `baileys-webhook` sendo chamado
-- Isso significa que o servidor Baileys não consegue alcançar a URL do Supabase
-- Possíveis causas:
-  - Certificado SSL/TLS
-  - Firewall bloqueando saída
-  - URL incorreta do webhook
-
-**Problema 3: Polling não atualiza o banco após buscar QR**
-- A edge function `getQrCode` busca o QR do servidor Baileys
-- O servidor retorna "QR Code not available" porque a sessão que existe no servidor tem outro nome
+1. **Chamada `create`** é feita à edge function
+2. A edge function cria a sessão no servidor Baileys com sucesso
+3. A edge function **aguarda 3 segundos** (`setTimeout(3000)`)
+4. A edge function tenta buscar o QR Code do servidor
+5. **A edge function atinge TIMEOUT ou a chamada é cancelada**
+6. O frontend nunca recebe resposta → botão fica em loading infinito
 
 ### Evidências
+- Logs mostram "Action: create" mas nunca mostram "Waiting to fetch QR"
+- Teste direto da API retornou: `context canceled`
+- O problema foi introduzido quando adicionamos o `setTimeout(3000)` para buscar QR proativamente
 
-| Dado | Valor |
-|------|-------|
-| sessionName no banco | `teste` |
-| Sessões ativas no servidor | 1 (provavelmente com nome diferente como `teste_1738636668662`) |
-| Logs do baileys-webhook | Nenhum log encontrado |
-| Resposta do getQrCode | `"error": "QR Code not available"` |
+### Causa Raiz
+Edge functions do Supabase têm timeout de ~10 segundos. O delay de 3 segundos + chamadas HTTP ao servidor Baileys pode estar excedendo esse limite ou causando problemas de conexão.
 
-## Solução Proposta
+## Solução
 
-### 1. Corrigir sincronização do sessionName na action "recreate"
+**Abordagem: Retorno Imediato + Polling no Frontend**
 
-**Arquivo:** `supabase/functions/baileys-instance/index.ts`
+Em vez de esperar na edge function, vamos:
+1. Criar a sessão e retornar imediatamente
+2. Deixar o frontend fazer polling para buscar o QR Code
+3. Manter a lógica de buscar QR Code na action `getQrCode` que já existe
 
-O código atual cria uma nova sessão mas pode falhar em atualizar o banco se a criação no servidor Baileys falhar. Precisamos garantir que:
-1. A sessão é criada com sucesso no servidor
-2. O sessionName é atualizado no banco ANTES de tentar buscar o QR
-
-### 2. Buscar QR diretamente da resposta da criação
+### Alteração 1: Remover setTimeout e busca de QR na action "create"
 
 **Arquivo:** `supabase/functions/baileys-instance/index.ts`
 
-Após criar a sessão, aguardar um momento e buscar o QR imediatamente, salvando-o no banco.
+Remover linhas 129-154 (o bloco que aguarda 3 segundos e busca QR). A função deve retornar imediatamente após criar a conexão no banco.
 
-### 3. Implementar fallback no polling
+```typescript
+// ANTES (com problema):
+// Aguardar e buscar QR Code imediatamente
+await new Promise(resolve => setTimeout(resolve, 3000));
+const qrResponse = await fetch(...);
+// ...
+
+// DEPOIS (corrigido):
+// Retornar imediatamente, QR será buscado via polling
+return new Response(
+  JSON.stringify({ success: true, data: connection }),
+  { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+);
+```
+
+### Alteração 2: Remover setTimeout e busca de QR na action "recreate"
+
+**Arquivo:** `supabase/functions/baileys-instance/index.ts`
+
+Remover linhas 406-433 (mesmo problema na action `recreate`).
+
+### Alteração 3: Garantir que polling seja iniciado no frontend
 
 **Arquivo:** `src/pages/Conexoes.tsx`
 
-Se o QR não estiver disponível após várias tentativas, tentar recriar a sessão automaticamente.
+Garantir que após criar/reconectar, o polling seja sempre iniciado:
 
-### 4. Verificar e logar erros do webhook
+```typescript
+// handleCreateConnection
+if (result.data) {
+  setSelectedConnection(result.data);
+  setIsQrModalOpen(true);
+  setPollingConnection(result.data.id); // Sempre iniciar polling
+}
 
-**Arquivo:** `supabase/functions/baileys-webhook/index.ts`
+// handleRefreshQrCode  
+await recreateConnection.mutateAsync(connection.id);
+setPollingConnection(connection.id); // Sempre iniciar polling
+```
 
-Adicionar mais logs para entender se o webhook está sendo chamado mas falhando silenciosamente.
+### Alteração 4: Melhorar a action getQrCode para atualizar banco
+
+**Arquivo:** `supabase/functions/baileys-instance/index.ts`
+
+Verificar se a action `getQrCode` está salvando corretamente o QR no banco quando busca com sucesso.
 
 ## Arquivos a Modificar
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `supabase/functions/baileys-instance/index.ts` | Buscar QR imediatamente após criar sessão; melhorar tratamento de erros |
-| `src/pages/Conexoes.tsx` | Após getQrCode suceder, atualizar o state local com o QR |
+| `supabase/functions/baileys-instance/index.ts` | Remover setTimeout e busca de QR das actions `create` e `recreate` |
+| `src/pages/Conexoes.tsx` | Simplificar lógica para sempre iniciar polling após criar/reconectar |
 
-## Detalhes Técnicos
+## Por Que Esta Solução Funciona
 
-### Modificação 1: baileys-instance - Action "getQrCode"
+1. **Edge function retorna rápido** (< 2 segundos)
+2. **Frontend inicia polling** imediatamente
+3. **Polling chama getQrCode** a cada 3 segundos
+4. **getQrCode busca QR do servidor Baileys** e salva no banco
+5. **Próximo refetch** pega QR do banco e exibe
 
-Atualmente, quando o QR é buscado com sucesso, ele é salvo no banco, mas o frontend não recebe essa atualização imediatamente porque só chama `refetch()` que busca de novo do banco.
+## Fluxo Corrigido
 
-O problema é que a busca retorna "QR Code not available" porque:
-- A sessão no servidor tem nome diferente do armazenado no banco
-- OU a sessão ainda não gerou o QR
-
-### Modificação 2: baileys-instance - Action "create" e "recreate"
-
-Após criar a sessão, aguardar 2-3 segundos e fazer uma chamada para buscar o QR, salvando-o diretamente no banco.
-
-```typescript
-// Após criar sessão com sucesso, aguardar e buscar QR
-await new Promise(resolve => setTimeout(resolve, 3000));
-
-// Buscar QR do servidor
-const qrResponse = await fetch(`${baileysUrl}/sessions/${newSessionName}/qr`, {
-  method: "GET",
-  headers,
-});
-
-const qrResult = await qrResponse.json();
-
-if (qrResult.success && qrResult.data?.qrCode) {
-  await supabaseClient
-    .from("connections")
-    .update({ 
-      qr_code: qrResult.data.qrCode,
-      updated_at: new Date().toISOString() 
-    })
-    .eq("id", connectionId);
-}
+```text
+1. Usuário clica "Criar Instância"
+2. Edge function cria sessão no Baileys (sem esperar QR)
+3. Edge function cria registro no banco com status "connecting"
+4. Edge function retorna imediatamente
+5. Frontend abre modal de QR e inicia polling
+6. Polling chama getQrCode a cada 3s
+7. getQrCode busca QR do servidor e salva no banco
+8. Frontend exibe QR Code
 ```
 
-### Modificação 3: Conexoes.tsx - Polling melhorado
+## Resultado Esperado
 
-Quando `getQrCode.mutateAsync()` é chamado, se tiver sucesso, forçar um refetch imediato.
-
-## Causa Raiz Principal
-
-O servidor Baileys no VPS não está conseguindo enviar webhooks para a edge function `baileys-webhook` do Supabase. Isso pode ser verificado:
-
-1. No VPS, execute:
-```bash
-curl -X POST https://qducanwbpleoceynmend.supabase.co/functions/v1/baileys-webhook \
-  -H "Content-Type: application/json" \
-  -d '{"event":"test","session":"teste","payload":{}}'
-```
-
-2. Se falhar, pode ser problema de DNS ou certificado SSL no Docker
-
-**Solução Alternativa:** Em vez de depender do webhook, fazer o frontend buscar ativamente o QR do servidor Baileys através da edge function.
-
-## Próximos Passos
-
-1. Aprovar este plano
-2. Modificar a edge function baileys-instance para buscar o QR imediatamente após criar/recriar sessão
-3. Testar clicando em "Reconectar"
-4. Verificar se o QR Code aparece
-
+- Botão "Criar Instância" responde em ~1-2 segundos
+- Modal de QR abre imediatamente
+- QR Code aparece em 3-6 segundos via polling
+- Nenhum timeout ou travamento
