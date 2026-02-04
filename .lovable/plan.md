@@ -1,123 +1,85 @@
 
-# Plano: Melhorar Diagnóstico e Conectividade da Edge Function Baileys
+# Plano: Corrigir Roteamento do Nginx para Baileys
 
 ## Problema Identificado
 
-A edge function `baileys-instance` está retornando "Server unreachable" quando tenta conectar ao servidor Baileys na VPS. No entanto, testes externos confirmam que o servidor está acessível em `https://chatbotvital.store/baileys/health`.
+O Nginx está alterando o path incorretamente. Quando a requisição vai para `/baileys/health`, o backend recebe `/` ao invés de `/health`, causando o erro "Unauthorized" (pois só `/health` é permitido sem API Key).
 
-### Causa Raiz
-O bloco `catch` na edge function (linhas 401-405) captura **qualquer erro** e retorna uma mensagem genérica "Server unreachable", sem mostrar detalhes do erro real. Isso pode ser:
-- Timeout de conexão
-- Erro de SSL/TLS
-- Resposta não-JSON causando erro no `.json()`
-- Outros erros de rede
+## Solução
 
-## Solucao Proposta
+### 1. Corrigir Configuração do Nginx
 
-### 1. Melhorar Logging e Tratamento de Erros na Edge Function
+**Arquivo:** `deploy/nginx/nginx.conf`
 
-Modificar o case `serverHealth` em `supabase/functions/baileys-instance/index.ts`:
+Modificar o bloco `/baileys/` (linhas ~212-225) para garantir que o path seja preservado corretamente:
 
-```typescript
-case "serverHealth": {
-  const healthUrl = `${baileysUrl}/health`;
-  console.log(`[Baileys Health] Checking: ${healthUrl}`);
-  
-  try {
-    const response = await fetch(healthUrl, {
-      method: "GET",
-      headers,
-    });
-
-    console.log(`[Baileys Health] Response status: ${response.status}`);
+```nginx
+# Baileys API Proxy - resolução dinâmica
+location /baileys/ {
+    set $upstream_baileys baileys:3000;
     
-    // Verificar se a resposta foi bem sucedida
-    if (!response.ok) {
-      const text = await response.text();
-      console.log(`[Baileys Health] Error response: ${text}`);
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: `Server returned ${response.status}: ${text}` 
-        }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const text = await response.text();
-    console.log(`[Baileys Health] Response body: ${text}`);
+    # Reescrever o path removendo /baileys
+    rewrite ^/baileys/(.*)$ /$1 break;
     
-    // Tentar parsear como JSON
-    let result;
-    try {
-      result = JSON.parse(text);
-    } catch {
-      // Se não for JSON, criar objeto com a resposta
-      result = { status: "ok", raw: text };
-    }
-
-    return new Response(
-      JSON.stringify({ success: true, data: result }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[Baileys Health] Network error: ${errorMessage}`);
-    return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: `Connection failed: ${errorMessage}` 
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
-  }
+    proxy_pass http://$upstream_baileys;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Connection "";
+    
+    # WebSocket support for Baileys
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 86400;
 }
 ```
 
-### 2. Adicionar Timeout Explícito
+**Alterações principais:**
+- Remover a barra final do `proxy_pass` 
+- Adicionar `rewrite` explícito para garantir remoção correta do prefixo `/baileys`
 
-Edge functions podem ter timeout padrão muito curto. Adicionar AbortController:
+### 2. Comandos para Aplicar no VPS
 
-```typescript
-case "serverHealth": {
-  const healthUrl = `${baileysUrl}/health`;
-  console.log(`[Baileys Health] Checking: ${healthUrl}`);
-  
-  // Timeout de 10 segundos
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
-  
-  try {
-    const response = await fetch(healthUrl, {
-      method: "GET",
-      headers,
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    // ... resto do código
-  } catch (error) {
-    clearTimeout(timeoutId);
-    // ... tratamento de erro
-  }
+Após eu fazer a alteração no código, você precisará executar:
+
+```bash
+# Navegar para o diretório
+cd /opt/sistema/deploy
+
+# Atualizar o código (se estiver usando git)
+git pull
+
+# OU copiar o arquivo nginx.conf atualizado manualmente
+
+# Reiniciar o Nginx para aplicar as mudanças
+sudo docker compose restart nginx
+
+# Testar novamente
+curl -k https://chatbotvital.store/baileys/health
+```
+
+### 3. Resultado Esperado
+
+Após a correção, o curl deve retornar:
+```json
+{
+  "status": "ok",
+  "timestamp": "2026-02-04T...",
+  "sessions": 0
 }
 ```
 
 ## Arquivos a Modificar
 
-| Arquivo | Alteracao |
+| Arquivo | Alteração |
 |---------|-----------|
-| `supabase/functions/baileys-instance/index.ts` | Melhorar tratamento de erros e logging no case serverHealth |
+| `deploy/nginx/nginx.conf` | Corrigir bloco location /baileys/ com rewrite explícito |
 
-## Benefícios
+## Próximos Passos
 
-1. **Diagnóstico preciso** - Ver o erro real nos logs da edge function
-2. **Timeout controlado** - Evitar que a requisição fique pendurada
-3. **Tratamento de resposta não-JSON** - O endpoint `/health` do Nginx retorna texto plano
-4. **Mensagens de erro claras** - Usuário sabe exatamente o que falhou
-
-## Próximos Passos Após Implementação
-
-1. Deploy da edge function atualizada
-2. Testar novamente a conexão
-3. Verificar os logs da edge function para ver o erro real
-4. Corrigir com base no diagnóstico obtido
+1. Aprovar este plano para eu fazer a alteração
+2. Atualizar o arquivo no VPS
+3. Reiniciar o Nginx
+4. Testar a conexão novamente pelo sistema
