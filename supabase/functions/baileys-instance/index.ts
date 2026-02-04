@@ -167,12 +167,41 @@ Deno.serve(async (req) => {
           );
         }
 
-        const response = await fetch(`${baileysUrl}/sessions/${sessionName}/qr`, {
-          method: "GET",
-          headers,
-        });
+        let response;
+        try {
+          response = await fetch(`${baileysUrl}/sessions/${sessionName}/qr`, {
+            method: "GET",
+            headers,
+          });
+        } catch (fetchError) {
+          console.error(`[Baileys Instance] Network error fetching QR:`, fetchError);
+          return new Response(
+            JSON.stringify({ success: false, error: "Servidor Baileys inacessível. Verifique se o servidor está online." }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
-        const result = await response.json();
+        // Verificar se resposta é válida antes de parsear
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[Baileys Instance] QR fetch error ${response.status}:`, errorText.substring(0, 200));
+          return new Response(
+            JSON.stringify({ success: false, error: `Servidor retornou erro ${response.status}. Verifique a configuração do nginx/proxy.` }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const text = await response.text();
+        let result;
+        try {
+          result = JSON.parse(text);
+        } catch {
+          console.error(`[Baileys Instance] Invalid JSON from QR endpoint:`, text.substring(0, 200));
+          return new Response(
+            JSON.stringify({ success: false, error: "Resposta inválida do servidor Baileys" }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         if (!result.success || !result.data?.qrCode) {
           return new Response(
@@ -220,12 +249,54 @@ Deno.serve(async (req) => {
           );
         }
 
-        const response = await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-          method: "GET",
-          headers,
-        });
+        let response;
+        try {
+          response = await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+            method: "GET",
+            headers,
+          });
+        } catch (fetchError) {
+          console.error(`[Baileys Instance] Network error fetching status:`, fetchError);
+          // Marcar como erro no banco e retornar
+          await supabaseClient
+            .from("connections")
+            .update({ status: "error", updated_at: new Date().toISOString() })
+            .eq("id", connectionId);
+          return new Response(
+            JSON.stringify({ success: false, error: "Servidor Baileys inacessível. Verifique se o servidor está online." }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
-        const result = await response.json();
+        // Verificar se resposta é válida antes de parsear
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[Baileys Instance] Status fetch error ${response.status}:`, errorText.substring(0, 200));
+          await supabaseClient
+            .from("connections")
+            .update({ status: "error", updated_at: new Date().toISOString() })
+            .eq("id", connectionId);
+          return new Response(
+            JSON.stringify({ success: false, error: `Servidor retornou erro ${response.status}. Verifique a configuração do nginx/proxy.` }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const text = await response.text();
+        let result;
+        try {
+          result = JSON.parse(text);
+        } catch {
+          console.error(`[Baileys Instance] Invalid JSON from status endpoint:`, text.substring(0, 200));
+          await supabaseClient
+            .from("connections")
+            .update({ status: "error", updated_at: new Date().toISOString() })
+            .eq("id", connectionId);
+          return new Response(
+            JSON.stringify({ success: false, error: "Resposta inválida do servidor Baileys. Verifique nginx/proxy." }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         if (!result.success) {
           return new Response(
