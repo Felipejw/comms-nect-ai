@@ -1,153 +1,129 @@
 
-# Plano: Corrigir Criação/Reconexão de WhatsApp
 
-## Diagnóstico Completo
+# Plano: Corrigir Criação de Sessão no Servidor Baileys
 
-### O que está acontecendo
+## Diagnóstico Definitivo
 
-1. **Conexão "TesteRapido" foi DELETADA** do banco - não existe mais
-2. O modal mostrado na imagem é de uma conexão que não existe
-3. A nova conexão "Gatteflow" (ID: c1812ae5...) existe e está em status "connecting"
-4. Quando o usuário clica em "Tentar Novamente" no modal antigo, a action "recreate" retorna "Connection not found" porque a conexão não existe
+### O Que Está Acontecendo
 
-### Verificação dos dados
+O problema está claro agora:
 
-| Conexão | ID | Existe no banco? |
-|---------|-----|-----------------|
-| TesteRapido | 40c578d7-5f8c-4a04-ad57-7397c14f2ad0 | NÃO |
-| Gatteflow | c1812ae5-4de3-4cbe-98bc-5454d322eada | SIM |
+| Dado | Valor |
+|------|-------|
+| Servidor Baileys | Online (status: ok) |
+| Sessões no servidor | **0** (nenhuma sessão criada) |
+| Log "Baileys session creation result" | **Não existe** |
+| Conexão no banco | Existe com status "connecting" |
 
-### Logs relevantes
+### Causa Raiz
 
-```text
-Line 11-16: recreate action retornando "Connection not found"
-Line 35: Create session failed: The signal has been aborted (timeout anterior)
-```
-
-## Problemas Identificados
-
-1. **Modal mostrando conexão inexistente**: O frontend mantém `selectedConnection` de uma conexão que foi deletada. Quando faz refetch, a conexão não está mais na lista, mas o modal continua aberto com dados antigos.
-
-2. **Action "recreate" ainda é SÍNCRONA**: Diferente da action "create" que foi corrigida para ser assíncrona, a action "recreate" ainda espera pela resposta do servidor Baileys de forma síncrona, podendo causar timeout.
-
-## Solução
-
-### 1. Corrigir action "recreate" para ser assíncrona
-
-**Arquivo:** `supabase/functions/baileys-instance/index.ts`
-
-Aplicar o mesmo padrão da action "create":
-1. Atualizar banco PRIMEIRO com novo sessionName
-2. Retornar resposta imediatamente
-3. Criar sessão no Baileys em background
+O código "fire-and-forget" que cria a sessão no servidor Baileys em background **não está executando**:
 
 ```typescript
-// Atualizar banco PRIMEIRO
-await supabaseClient
-  .from("connections")
-  .update({
-    status: "connecting",
-    qr_code: null,
-    session_data: { sessionName: newSessionName, engine: "baileys" },
-    updated_at: new Date().toISOString(),
-  })
-  .eq("id", connectionId);
-
-// Criar sessão em background
-const createBaileysSession = async () => {
-  try {
-    const response = await fetch(...);
-    const result = await response.json();
-    if (!result.success) {
-      await supabaseClient.from("connections")
-        .update({ status: "error" })
-        .eq("id", connectionId);
-    }
-  } catch (err) {
-    await supabaseClient.from("connections")
-      .update({ status: "error" })
-      .eq("id", connectionId);
-  }
-};
-
-// Fire-and-forget
+// Este código NÃO está executando ou está falhando silenciosamente
 if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
   EdgeRuntime.waitUntil(createBaileysSession());
 } else {
-  createBaileysSession();
+  createBaileysSession(); // Esta chamada sem await é descartada
+}
+```
+
+**Problema:** Em Deno/Supabase Edge Functions, quando você faz uma chamada assíncrona sem `await` após um `return`, essa chamada pode ser cancelada quando a função termina.
+
+## Solução
+
+**Abordagem: Criar sessão ANTES de retornar, com timeout curto**
+
+Em vez de tentar executar em background (que não funciona de forma confiável), vamos:
+
+1. Fazer a chamada ao servidor Baileys com um timeout de 8 segundos
+2. Se tiver sucesso ou timeout, retornar ao frontend
+3. O frontend continua com polling normalmente
+
+### Alteração Principal
+
+**Arquivo:** `supabase/functions/baileys-instance/index.ts`
+
+Para as actions `create` e `recreate`:
+
+```typescript
+// Criar sessão no servidor Baileys COM timeout
+const controller = new AbortController();
+const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+try {
+  console.log(`[Baileys Instance] Creating session on server...`);
+  const response = await fetch(`${baileysUrl}/sessions`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ name, webhookUrl }),
+    signal: controller.signal,
+  });
+  clearTimeout(timeoutId);
+  
+  const result = await response.json();
+  console.log(`[Baileys Instance] Session creation result:`, result.success ? "success" : result.error);
+  
+  if (!result.success) {
+    await supabaseClient
+      .from("connections")
+      .update({ status: "error" })
+      .eq("id", connection.id);
+  }
+} catch (err) {
+  clearTimeout(timeoutId);
+  console.error(`[Baileys Instance] Session creation failed:`, err);
+  // Não atualizar para erro imediatamente - deixar o polling tentar novamente
 }
 
-// Retornar imediatamente
-return new Response(JSON.stringify({ success: true }), ...);
-```
-
-### 2. Frontend: Validar conexão antes de abrir modal
-
-**Arquivo:** `src/pages/Conexoes.tsx`
-
-Verificar se a conexão ainda existe antes de abrir o modal:
-
-```typescript
-// handleRefreshQrCode - verificar se conexão existe na lista
-const handleRefreshQrCode = async (connection: WhatsAppConnection) => {
-  // Verificar se conexão ainda existe
-  const currentConnection = connections.find(c => c.id === connection.id);
-  if (!currentConnection) {
-    toast({
-      title: "Conexão não encontrada",
-      description: "Esta conexão não existe mais. Atualize a página.",
-      variant: "destructive",
-    });
-    setIsQrModalOpen(false);
-    setSelectedConnection(null);
-    return;
-  }
-  // ...resto do código
-};
-```
-
-### 3. Frontend: Sincronizar selectedConnection com lista
-
-**Arquivo:** `src/pages/Conexoes.tsx`
-
-Quando as conexões são atualizadas, verificar se a selectedConnection ainda existe:
-
-```typescript
-useEffect(() => {
-  if (selectedConnection) {
-    const exists = connections.find(c => c.id === selectedConnection.id);
-    if (!exists) {
-      setSelectedConnection(null);
-      setIsQrModalOpen(false);
-    } else if (exists.qr_code !== selectedConnection.qr_code) {
-      setSelectedConnection(exists);
-    }
-  }
-}, [connections]);
+// Retornar
+return new Response(
+  JSON.stringify({ success: true, data: connection }),
+  { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+);
 ```
 
 ## Arquivos a Modificar
 
 | Arquivo | Alteração |
 |---------|-----------|
-| `supabase/functions/baileys-instance/index.ts` | Tornar action "recreate" assíncrona |
-| `src/pages/Conexoes.tsx` | Validar conexão antes de operar, sincronizar selectedConnection |
+| `supabase/functions/baileys-instance/index.ts` | Remover fire-and-forget, usar await com timeout |
+
+## Por Que Esta Solução Funciona
+
+1. **Chamada síncrona com timeout**: Garante que a sessão seja criada antes de retornar
+2. **Timeout de 8 segundos**: Dentro do limite de 10s das edge functions
+3. **Tratamento de erro gracioso**: Se timeout, não bloqueia - polling continua tentando
+4. **Log completo**: Sempre saberemos se a sessão foi criada ou não
 
 ## Fluxo Corrigido
 
 ```text
-1. Usuário clica em "Reconectar" ou "Tentar Novamente"
-2. Frontend verifica se conexão existe na lista
-3. Edge function atualiza banco imediatamente
-4. Edge function retorna sucesso (< 1 segundo)
-5. Sessão é criada no Baileys em background
-6. Frontend inicia polling para QR Code
-7. QR Code aparece em 3-5 segundos
+1. Usuário clica "Criar Instância"
+2. Edge function cria registro no banco (< 1s)
+3. Edge function chama POST /sessions no Baileys (aguarda até 8s)
+4. Se sucesso: sessão criada, QR gerado pelo servidor
+5. Edge function retorna ao frontend
+6. Frontend abre modal e inicia polling
+7. Polling busca QR que agora existe no servidor
+8. QR Code aparece em 3-5 segundos
 ```
 
 ## Resultado Esperado
 
-- Botão responde rapidamente (< 1 segundo)
-- Modal não mostra conexões inexistentes
+- Botão "Criar Instância" pode demorar até 8 segundos (ainda aceitável)
+- Sessão é efetivamente criada no servidor Baileys
 - QR Code aparece via polling
-- Sem erros de timeout
+- Logs completos para debug
+
+## Alternativa: Verificar se EdgeRuntime.waitUntil funciona
+
+Se preferirmos manter a abordagem assíncrona, podemos adicionar logs para verificar:
+
+```typescript
+console.log(`[Baileys Instance] EdgeRuntime exists: ${typeof EdgeRuntime !== 'undefined'}`);
+console.log(`[Baileys Instance] waitUntil exists: ${typeof EdgeRuntime !== 'undefined' && typeof EdgeRuntime.waitUntil === 'function'}`);
+```
+
+Mas a solução mais confiável é a síncrona com timeout.
+
