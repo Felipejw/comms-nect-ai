@@ -112,30 +112,24 @@ Deno.serve(async (req) => {
 
         console.log(`[Baileys Instance] Connection record created: ${connection.id}, now creating session on Baileys server...`);
 
-        // Criar sessao no servidor Baileys (fire-and-forget com EdgeRuntime.waitUntil se disponível)
-        // Usamos Promise sem await para não bloquear a resposta
-        const createBaileysSession = async () => {
-          try {
-            const response = await fetch(`${baileysUrl}/sessions`, {
-              method: "POST",
-              headers,
-              body: JSON.stringify({ name, webhookUrl }),
-            });
-            const result = await response.json();
-            console.log(`[Baileys Instance] Baileys session creation result:`, result.success ? "success" : result.error);
-            
-            if (!result.success) {
-              // Atualizar conexão com status de erro
-              await supabaseClient
-                .from("connections")
-                .update({ 
-                  status: "error",
-                  updated_at: new Date().toISOString() 
-                })
-                .eq("id", connection.id);
-            }
-          } catch (err) {
-            console.error(`[Baileys Instance] Background session creation failed:`, err);
+        // Criar sessão no servidor Baileys COM AWAIT e timeout de 8 segundos
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        try {
+          console.log(`[Baileys Instance] Creating session on server: ${baileysUrl}/sessions`);
+          const response = await fetch(`${baileysUrl}/sessions`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ name, webhookUrl }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+          
+          const result = await response.json();
+          console.log(`[Baileys Instance] Session creation result:`, result.success ? "success" : result.error);
+          
+          if (!result.success) {
             await supabaseClient
               .from("connections")
               .update({ 
@@ -144,20 +138,14 @@ Deno.serve(async (req) => {
               })
               .eq("id", connection.id);
           }
-        };
-
-        // Executar em background sem bloquear a resposta
-        // @ts-ignore - EdgeRuntime.waitUntil pode não existir em todos os ambientes
-        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
-          // @ts-ignore
-          EdgeRuntime.waitUntil(createBaileysSession());
-        } else {
-          // Fallback: executar sem await (fire-and-forget)
-          createBaileysSession();
+        } catch (err) {
+          clearTimeout(timeoutId);
+          const isTimeout = err instanceof Error && err.name === "AbortError";
+          console.error(`[Baileys Instance] Session creation ${isTimeout ? 'timeout' : 'failed'}:`, err);
+          // Não atualizar para erro imediatamente em caso de timeout - deixar polling tentar
         }
 
-        // Retornar imediatamente - sessão será criada em background
-        console.log(`[Baileys Instance] Returning immediately, session creation in background`);
+        console.log(`[Baileys Instance] Returning to frontend`);
         return new Response(
           JSON.stringify({ success: true, data: connection }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -394,28 +382,24 @@ Deno.serve(async (req) => {
           })
           .eq("id", connectionId);
 
-        // Criar sessão no servidor Baileys em background (fire-and-forget)
-        const createBaileysSession = async () => {
-          try {
-            const response = await fetch(`${baileysUrl}/sessions`, {
-              method: "POST",
-              headers,
-              body: JSON.stringify({ name: newSessionName, webhookUrl }),
-            });
-            const result = await response.json();
-            console.log(`[Baileys Instance] Recreate session result:`, result.success ? "success" : result.error);
-            
-            if (!result.success) {
-              await supabaseClient
-                .from("connections")
-                .update({ 
-                  status: "error",
-                  updated_at: new Date().toISOString() 
-                })
-                .eq("id", connectionId);
-            }
-          } catch (err) {
-            console.error(`[Baileys Instance] Recreate background session failed:`, err);
+        // Criar sessão no servidor Baileys COM AWAIT e timeout de 8 segundos
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+        try {
+          console.log(`[Baileys Instance] Recreating session on server: ${baileysUrl}/sessions`);
+          const response = await fetch(`${baileysUrl}/sessions`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ name: newSessionName, webhookUrl }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+          
+          const result = await response.json();
+          console.log(`[Baileys Instance] Recreate session result:`, result.success ? "success" : result.error);
+          
+          if (!result.success) {
             await supabaseClient
               .from("connections")
               .update({ 
@@ -424,19 +408,14 @@ Deno.serve(async (req) => {
               })
               .eq("id", connectionId);
           }
-        };
-
-        // Executar em background sem bloquear a resposta
-        // @ts-ignore - EdgeRuntime.waitUntil pode não existir em todos os ambientes
-        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
-          // @ts-ignore
-          EdgeRuntime.waitUntil(createBaileysSession());
-        } else {
-          createBaileysSession();
+        } catch (err) {
+          clearTimeout(timeoutId);
+          const isTimeout = err instanceof Error && err.name === "AbortError";
+          console.error(`[Baileys Instance] Recreate session ${isTimeout ? 'timeout' : 'failed'}:`, err);
+          // Não atualizar para erro imediatamente em caso de timeout - deixar polling tentar
         }
 
-        // Retornar imediatamente - QR será buscado via polling no frontend
-        console.log(`[Baileys Instance] Recreate complete, returning immediately. QR will be fetched via polling.`);
+        console.log(`[Baileys Instance] Recreate complete, returning to frontend`);
         return new Response(
           JSON.stringify({ success: true }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
