@@ -1,72 +1,123 @@
 
-# Plano de Correção: Validação da URL do Baileys
+# Plano: Melhorar Diagnóstico e Conectividade da Edge Function Baileys
 
 ## Problema Identificado
-A URL do servidor Baileys no banco de dados está configurada como `https://chatbotvital.store/baileys/health`, mas deveria ser apenas `https://chatbotvital.store/baileys`. 
 
-A edge function `baileys-instance` adiciona automaticamente `/health` ao fazer o teste de conexão (linha 390), resultando em uma URL duplicada: `https://chatbotvital.store/baileys/health/health` que retorna 404 ou erro.
+A edge function `baileys-instance` está retornando "Server unreachable" quando tenta conectar ao servidor Baileys na VPS. No entanto, testes externos confirmam que o servidor está acessível em `https://chatbotvital.store/baileys/health`.
 
-## Solução em Duas Etapas
+### Causa Raiz
+O bloco `catch` na edge function (linhas 401-405) captura **qualquer erro** e retorna uma mensagem genérica "Server unreachable", sem mostrar detalhes do erro real. Isso pode ser:
+- Timeout de conexão
+- Erro de SSL/TLS
+- Resposta não-JSON causando erro no `.json()`
+- Outros erros de rede
 
-### Etapa 1: Correção Imediata (Ação do Usuário)
-Alterar a URL na interface de configuracoes:
-- **De**: `https://chatbotvital.store/baileys/health`
-- **Para**: `https://chatbotvital.store/baileys`
+## Solucao Proposta
 
-### Etapa 2: Adicionar Validação Automatica (Implementacao)
-Modificar o componente `BaileysConfigSection.tsx` para:
+### 1. Melhorar Logging e Tratamento de Erros na Edge Function
 
-1. **Remover sufixos indesejados automaticamente** ao salvar:
-   - Remover `/health` do final
-   - Remover `/` do final (trailing slash)
-   
-2. **Garantir que `/baileys` esteja presente** quando a URL base for configurada sem ele
-
-3. **Mostrar aviso visual** se a URL parecer incorreta
-
-## Arquivo a Modificar
-`src/components/configuracoes/BaileysConfigSection.tsx`
-
-## Mudancas Tecnicas
+Modificar o case `serverHealth` em `supabase/functions/baileys-instance/index.ts`:
 
 ```typescript
-// Funcao para normalizar a URL antes de salvar
-const normalizeUrl = (url: string): string => {
-  let normalized = url.trim();
+case "serverHealth": {
+  const healthUrl = `${baileysUrl}/health`;
+  console.log(`[Baileys Health] Checking: ${healthUrl}`);
   
-  // Remover trailing slashes
-  while (normalized.endsWith('/')) {
-    normalized = normalized.slice(0, -1);
-  }
-  
-  // Remover /health do final se existir
-  if (normalized.endsWith('/health')) {
-    normalized = normalized.slice(0, -7);
-  }
-  
-  return normalized;
-};
+  try {
+    const response = await fetch(healthUrl, {
+      method: "GET",
+      headers,
+    });
 
-// No handleSave, normalizar a URL antes de salvar
-const handleSave = async () => {
-  const normalizedUrl = normalizeUrl(serverUrl);
-  setServerUrl(normalizedUrl); // Atualizar o state tambem
-  
-  await createOrUpdateSetting.mutateAsync({
-    key: "baileys_server_url",
-    value: normalizedUrl, // Usar URL normalizada
-    // ...
-  });
-};
+    console.log(`[Baileys Health] Response status: ${response.status}`);
+    
+    // Verificar se a resposta foi bem sucedida
+    if (!response.ok) {
+      const text = await response.text();
+      console.log(`[Baileys Health] Error response: ${text}`);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: `Server returned ${response.status}: ${text}` 
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const text = await response.text();
+    console.log(`[Baileys Health] Response body: ${text}`);
+    
+    // Tentar parsear como JSON
+    let result;
+    try {
+      result = JSON.parse(text);
+    } catch {
+      // Se não for JSON, criar objeto com a resposta
+      result = { status: "ok", raw: text };
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, data: result }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`[Baileys Health] Network error: ${errorMessage}`);
+    return new Response(
+      JSON.stringify({ 
+        success: false, 
+        error: `Connection failed: ${errorMessage}` 
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
+  }
+}
 ```
 
-## Beneficios
-- Previne erros de configuracao futuros
-- Experiencia de usuario mais robusta
-- Evita URLs duplicadas como `/health/health`
+### 2. Adicionar Timeout Explícito
 
-## Validacao
-Apos implementar, testar:
-1. Digitar URL com `/health` no final - deve ser removido automaticamente
-2. Digitar URL com `/` no final - deve ser removido automaticamente
-3. Testar conexao deve funcionar corretamente
+Edge functions podem ter timeout padrão muito curto. Adicionar AbortController:
+
+```typescript
+case "serverHealth": {
+  const healthUrl = `${baileysUrl}/health`;
+  console.log(`[Baileys Health] Checking: ${healthUrl}`);
+  
+  // Timeout de 10 segundos
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  
+  try {
+    const response = await fetch(healthUrl, {
+      method: "GET",
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    // ... resto do código
+  } catch (error) {
+    clearTimeout(timeoutId);
+    // ... tratamento de erro
+  }
+}
+```
+
+## Arquivos a Modificar
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `supabase/functions/baileys-instance/index.ts` | Melhorar tratamento de erros e logging no case serverHealth |
+
+## Benefícios
+
+1. **Diagnóstico preciso** - Ver o erro real nos logs da edge function
+2. **Timeout controlado** - Evitar que a requisição fique pendurada
+3. **Tratamento de resposta não-JSON** - O endpoint `/health` do Nginx retorna texto plano
+4. **Mensagens de erro claras** - Usuário sabe exatamente o que falhou
+
+## Próximos Passos Após Implementação
+
+1. Deploy da edge function atualizada
+2. Testar novamente a conexão
+3. Verificar os logs da edge function para ver o erro real
+4. Corrigir com base no diagnóstico obtido
