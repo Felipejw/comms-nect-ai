@@ -126,6 +126,33 @@ Deno.serve(async (req) => {
           );
         }
 
+        // Aguardar e buscar QR Code imediatamente
+        console.log(`[Baileys Instance] Waiting to fetch QR for session: ${name}`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const qrResponse = await fetch(`${baileysUrl}/sessions/${name}/qr`, {
+          method: "GET",
+          headers,
+        });
+
+        const qrResult = await qrResponse.json();
+        console.log(`[Baileys Instance] QR fetch result:`, qrResult.success ? "success" : "failed");
+
+        if (qrResult.success && qrResult.data?.qrCode) {
+          await supabaseClient
+            .from("connections")
+            .update({ 
+              qr_code: qrResult.data.qrCode,
+              updated_at: new Date().toISOString() 
+            })
+            .eq("id", connection.id);
+          
+          return new Response(
+            JSON.stringify({ success: true, data: { ...connection, qr_code: qrResult.data.qrCode } }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
         return new Response(
           JSON.stringify({ success: true, data: connection }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -365,7 +392,8 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Atualizar conexao
+        // Atualizar conexao com novo sessionName IMEDIATAMENTE
+        console.log(`[Baileys Instance] Recreate: updating sessionName to ${newSessionName}`);
         await supabaseClient
           .from("connections")
           .update({
@@ -375,6 +403,33 @@ Deno.serve(async (req) => {
             updated_at: new Date().toISOString(),
           })
           .eq("id", connectionId);
+
+        // Aguardar e buscar QR Code imediatamente
+        console.log(`[Baileys Instance] Waiting to fetch QR for session: ${newSessionName}`);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+
+        const qrResponse = await fetch(`${baileysUrl}/sessions/${newSessionName}/qr`, {
+          method: "GET",
+          headers,
+        });
+
+        const qrResult = await qrResponse.json();
+        console.log(`[Baileys Instance] QR fetch result:`, qrResult.success ? "success" : "failed");
+
+        if (qrResult.success && qrResult.data?.qrCode) {
+          await supabaseClient
+            .from("connections")
+            .update({ 
+              qr_code: qrResult.data.qrCode,
+              updated_at: new Date().toISOString() 
+            })
+            .eq("id", connectionId);
+          
+          return new Response(
+            JSON.stringify({ success: true, qrCode: qrResult.data.qrCode }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
 
         return new Response(
           JSON.stringify({ success: true }),
