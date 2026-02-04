@@ -1,6 +1,7 @@
 # ============================================
 # Baileys WhatsApp Server
-# Docker Compose para instalacao standalone
+# Docker Compose simplificado (apenas porta 3000)
+# O proxy deve ser feito pelo Nginx do host
 # ============================================
 
 services:
@@ -27,43 +28,8 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
-    networks:
-      - baileys-network
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
-
-  # ==========================================
-  # Nginx - Proxy Reverso com SSL
-  # ==========================================
-  nginx:
-    image: nginx:alpine
-    container_name: baileys-proxy
-    restart: unless-stopped
-    ports:
-      - "${HTTP_PORT:-80}:80"
-      - "${HTTPS_PORT:-443}:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-    depends_on:
-      baileys:
-        condition: service_healthy
-    networks:
-      - baileys-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "5m"
-        max-file: "2"
-
-# ==========================================
-# Redes
-# ==========================================
-networks:
-  baileys-network:
-    driver: bridge
-    name: baileys-network

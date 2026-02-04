@@ -3,7 +3,7 @@ set -e
 
 # ============================================
 # Baileys WhatsApp Server - Bootstrap
-# Instalacao automatica via curl one-line
+# Instalação automática via curl one-line
 # ============================================
 
 # Cores
@@ -23,37 +23,9 @@ log_error() { echo -e "${RED}[ERRO]${NC} $1"; }
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════════╗"
 echo "║       BAILEYS WHATSAPP SERVER - INSTALADOR                 ║"
-echo "║       Instalacao automatica via curl                       ║"
+echo "║       Instalação automática e simplificada                 ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
-
-# ==========================================
-# Instrucoes Iniciais
-# ==========================================
-echo ""
-echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${YELLOW}║   INFORMACOES IMPORTANTES                                  ║${NC}"
-echo -e "${YELLOW}╠════════════════════════════════════════════════════════════╣${NC}"
-echo -e "${YELLOW}║                                                            ║${NC}"
-echo -e "${YELLOW}║   Este instalador oferece dois modos:                      ║${NC}"
-echo -e "${YELLOW}║                                                            ║${NC}"
-echo -e "${YELLOW}║   1. PRODUCAO (recomendado):                              ║${NC}"
-echo -e "${YELLOW}║      - Requer dominio configurado (DNS apontando aqui)    ║${NC}"
-echo -e "${YELLOW}║      - Portas 80 e 443 liberadas                          ║${NC}"
-echo -e "${YELLOW}║      - Email valido para certificado SSL                  ║${NC}"
-echo -e "${YELLOW}║      - Acesso via HTTPS                                   ║${NC}"
-echo -e "${YELLOW}║                                                            ║${NC}"
-echo -e "${YELLOW}║   2. DESENVOLVIMENTO/TESTE:                               ║${NC}"
-echo -e "${YELLOW}║      - Nao requer dominio                                 ║${NC}"
-echo -e "${YELLOW}║      - Apenas porta 3000 liberada                         ║${NC}"
-echo -e "${YELLOW}║      - Acesso via HTTP (sem SSL)                          ║${NC}"
-echo -e "${YELLOW}║      - Ideal para testes iniciais                         ║${NC}"
-echo -e "${YELLOW}║                                                            ║${NC}"
-echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
-echo ""
-
-read -p "Pressione ENTER para continuar ou Ctrl+C para cancelar..."
-echo ""
 
 # Verificar root
 if [ "$EUID" -ne 0 ]; then
@@ -72,145 +44,115 @@ if [ -f /etc/os-release ]; then
     OS=$ID
     OS_VERSION=$VERSION_ID
 else
-    log_error "Sistema operacional nao suportado"
-    log_info "Sistemas suportados: Ubuntu 20.04+, Debian 11+"
+    log_error "Sistema operacional não suportado"
     exit 1
 fi
 
-# Verificar se é Ubuntu ou Debian
 case $OS in
-    ubuntu)
-        if [ "${OS_VERSION%%.*}" -lt 20 ]; then
-            log_error "Ubuntu $OS_VERSION nao suportado. Minimo: Ubuntu 20.04"
-            exit 1
-        fi
-        log_success "Sistema detectado: Ubuntu $OS_VERSION"
-        ;;
-    debian)
-        if [ "${OS_VERSION%%.*}" -lt 11 ]; then
-            log_error "Debian $OS_VERSION nao suportado. Minimo: Debian 11"
-            exit 1
-        fi
-        log_success "Sistema detectado: Debian $OS_VERSION"
+    ubuntu|debian)
+        log_success "Sistema detectado: $OS $OS_VERSION"
         ;;
     *)
-        log_warning "Sistema $OS pode nao ser totalmente compativel"
-        log_info "Continuando mesmo assim..."
+        log_warning "Sistema $OS pode não ser totalmente compatível"
         ;;
 esac
 
-# Verificar recursos minimos
+# Verificar recursos mínimos
 log_info "Verificando recursos do sistema..."
 
-# RAM (minimo 1GB)
+# RAM (mínimo 1GB)
 TOTAL_RAM=$(free -m | awk '/^Mem:/{print $2}')
 if [ "$TOTAL_RAM" -lt 900 ]; then
-    log_error "Memoria insuficiente: ${TOTAL_RAM}MB (minimo: 1GB)"
+    log_error "Memória insuficiente: ${TOTAL_RAM}MB (mínimo: 1GB)"
     exit 1
 fi
-log_success "Memoria: ${TOTAL_RAM}MB"
+log_success "Memória: ${TOTAL_RAM}MB"
 
-# Disco (minimo 5GB livres)
+# Disco (mínimo 5GB livres)
 FREE_DISK=$(df -m / | awk 'NR==2 {print $4}')
-if [ "$FREE_DISK" -lt 5000 ]; then
-    log_warning "Espaco em disco baixo: ${FREE_DISK}MB (recomendado: 5GB+)"
-fi
 log_success "Disco livre: ${FREE_DISK}MB"
 
-# Obter e mostrar IP publico
-log_info "Obtendo IP publico do servidor..."
-SERVER_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || curl -s ipinfo.io/ip)
-if [ -n "$SERVER_IP" ]; then
-    log_success "IP publico: $SERVER_IP"
-    echo ""
-    echo -e "${CYAN}DICA: Se for usar modo producao, configure seu dominio${NC}"
-    echo -e "${CYAN}      para apontar para este IP: $SERVER_IP${NC}"
-    echo ""
+# Obter IP público
+SERVER_IP=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || echo "N/A")
+if [ "$SERVER_IP" != "N/A" ]; then
+    log_success "IP público: $SERVER_IP"
 fi
 
-# Instalar dependencias basicas
-log_info "Instalando dependencias basicas..."
+# Instalar dependências básicas
+log_info "Instalando dependências básicas..."
 apt-get update -qq
-apt-get install -y -qq git curl wget ca-certificates gnupg lsb-release dnsutils
+apt-get install -y -qq git curl wget ca-certificates gnupg lsb-release
 
-# Definir variaveis
+# Definir variáveis
 INSTALL_DIR="/opt/baileys"
 REPO_URL="https://github.com/Felipejw/comms-nect-ai.git"
 BRANCH="main"
 
-# Verificar instalacao anterior
+# Verificar instalação anterior
 if [ -d "$INSTALL_DIR" ]; then
-    echo ""
-    log_warning "Instalacao anterior encontrada em $INSTALL_DIR"
-    read -p "Deseja remover e reinstalar? [s/N] " -n 1 -r
-    echo ""
-    if [[ $REPLY =~ ^[Ss]$ ]]; then
-        log_info "Removendo instalacao anterior..."
-        
-        # Parar containers se existirem
-        if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
-            cd "$INSTALL_DIR"
-            docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
-        fi
-        
-        # Backup do .env se existir
-        if [ -f "$INSTALL_DIR/.env" ]; then
-            cp "$INSTALL_DIR/.env" /tmp/baileys-env-backup
-            log_info "Backup do .env salvo em /tmp/baileys-env-backup"
-        fi
-        
-        rm -rf "$INSTALL_DIR"
-    else
-        log_info "Instalacao cancelada"
-        exit 0
+    log_warning "Instalação anterior encontrada em $INSTALL_DIR"
+    
+    # Backup das sessões automaticamente
+    if [ -d "$INSTALL_DIR/sessions" ]; then
+        log_info "Fazendo backup das sessões..."
+        mkdir -p /tmp/baileys-sessions-backup
+        cp -r "$INSTALL_DIR/sessions/"* /tmp/baileys-sessions-backup/ 2>/dev/null || true
     fi
+    
+    # Parar containers
+    if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
+        cd "$INSTALL_DIR"
+        docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
+    fi
+    
+    rm -rf "$INSTALL_DIR"
+    log_success "Instalação anterior removida"
 fi
 
-# Clonar repositorio
-log_info "Baixando arquivos do repositorio..."
+# Clonar repositório
+log_info "Baixando arquivos do repositório..."
 git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /tmp/comms-nect-ai 2>/dev/null
 
 if [ ! -d "/tmp/comms-nect-ai/deploy/baileys" ]; then
-    log_error "Falha ao baixar arquivos. Verifique sua conexao."
+    log_error "Falha ao baixar arquivos. Verifique sua conexão."
     rm -rf /tmp/comms-nect-ai
     exit 1
 fi
 
-# Criar diretorio de instalacao
+# Criar diretório de instalação
 mkdir -p "$INSTALL_DIR"
 cp -r /tmp/comms-nect-ai/deploy/baileys/* "$INSTALL_DIR/"
 rm -rf /tmp/comms-nect-ai
 
-# Restaurar backup do .env se existir
-if [ -f /tmp/baileys-env-backup ]; then
-    cp /tmp/baileys-env-backup "$INSTALL_DIR/.env"
-    log_success "Configuracoes anteriores restauradas"
-    rm /tmp/baileys-env-backup
+# Restaurar sessões do backup
+if [ -d "/tmp/baileys-sessions-backup" ] && [ "$(ls -A /tmp/baileys-sessions-backup 2>/dev/null)" ]; then
+    log_info "Restaurando sessões do backup..."
+    mkdir -p "$INSTALL_DIR/sessions"
+    cp -r /tmp/baileys-sessions-backup/* "$INSTALL_DIR/sessions/"
+    rm -rf /tmp/baileys-sessions-backup
+    log_success "Sessões restauradas"
 fi
 
-# Dar permissoes aos scripts
+# Dar permissões aos scripts
 chmod +x "$INSTALL_DIR/scripts/"*.sh
 
-log_success "Arquivos baixados para $INSTALL_DIR"
+log_success "Arquivos instalados em $INSTALL_DIR"
 
-# Executar instalador principal
+# Executar instalador simplificado
 echo ""
-log_info "Iniciando instalador principal..."
+log_info "Iniciando instalação..."
 echo ""
 
 cd "$INSTALL_DIR"
-./scripts/install.sh
+./scripts/install-simple.sh
 
 # Mensagem final
 echo ""
-echo -e "${GREEN}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║       INSTALACAO CONCLUIDA COM SUCESSO!                    ║${NC}"
-echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
+log_success "Bootstrap concluído!"
 echo ""
-echo "Comandos uteis:"
+echo "Comandos úteis:"
 echo ""
 echo "  Ver status:      cd $INSTALL_DIR && ./scripts/diagnostico.sh"
 echo "  Ver logs:        cd $INSTALL_DIR && docker compose logs -f"
 echo "  Reiniciar:       cd $INSTALL_DIR && docker compose restart"
-echo "  Atualizar:       cd $INSTALL_DIR && ./scripts/update.sh"
 echo ""
