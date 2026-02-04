@@ -117,19 +117,28 @@ export default function Conexoes() {
         return;
       }
 
-      // If connecting but no QR code, track attempts
+      // If connecting but no QR code, try to fetch it actively
       if (connection.status === "connecting" && !connection.qr_code) {
         const attempts = recreateAttempts[pollingConnection] || 0;
         
-        if (attempts >= 5) {
-          console.log("[Polling] No QR after 5 attempts, stopping and showing error");
-          setQrError("O servidor não conseguiu gerar o QR Code. Clique em 'Tentar Novamente' para recriar a instância.");
-          setPollingConnection(null);
-          setPollCount(0);
-          return;
-        } else {
-          setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: attempts + 1 }));
-          console.log(`[Polling] No QR code, attempt ${attempts + 1}/5`);
+        // Try to fetch QR code from server
+        console.log(`[Polling] No QR code, attempting to fetch... (attempt ${attempts + 1}/5)`);
+        try {
+          await getQrCode.mutateAsync(pollingConnection);
+          await refetch();
+          // Reset attempts on success
+          setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: 0 }));
+        } catch (qrError) {
+          console.log(`[Polling] Failed to fetch QR:`, qrError);
+          if (attempts >= 4) {
+            console.log("[Polling] No QR after 5 attempts, stopping and showing error");
+            setQrError("O servidor não conseguiu gerar o QR Code. Clique em 'Tentar Novamente' para recriar a instância.");
+            setPollingConnection(null);
+            setPollCount(0);
+            return;
+          } else {
+            setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: attempts + 1 }));
+          }
         }
       }
 

@@ -55,6 +55,14 @@ export function BaileysConfigSection() {
     }
   }, [isLoading, initialLoadDone, getSetting]);
 
+  // Auto-verify server status when settings are loaded
+  useEffect(() => {
+    if (initialLoadDone && serverUrl && apiKey && connectionStatus === "unknown") {
+      handleTestConnection();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLoadDone, serverUrl, apiKey]);
+
   const handleSave = async () => {
     if (!serverUrl || !apiKey) {
       toast.error("Preencha a URL e a API Key");
