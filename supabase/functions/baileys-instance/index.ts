@@ -71,23 +71,7 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Criar sessao no servidor Baileys
-        const response = await fetch(`${baileysUrl}/sessions`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ name, webhookUrl }),
-        });
-
-        const result = await response.json();
-
-        if (!result.success) {
-          return new Response(
-            JSON.stringify({ success: false, error: result.error }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        // Obter tenant do usuario
+        // Obter tenant do usuario PRIMEIRO (antes de qualquer chamada lenta)
         const authHeader = req.headers.get("Authorization");
         let tenantId = null;
 
@@ -106,7 +90,7 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Criar conexao no banco
+        // Criar conexao no banco PRIMEIRO (resposta rápida)
         const { data: connection, error: connError } = await supabaseClient
           .from("connections")
           .insert({
@@ -126,8 +110,54 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Retornar imediatamente - QR será buscado via polling no frontend
-        console.log(`[Baileys Instance] Connection created, returning immediately. QR will be fetched via polling.`);
+        console.log(`[Baileys Instance] Connection record created: ${connection.id}, now creating session on Baileys server...`);
+
+        // Criar sessao no servidor Baileys (fire-and-forget com EdgeRuntime.waitUntil se disponível)
+        // Usamos Promise sem await para não bloquear a resposta
+        const createBaileysSession = async () => {
+          try {
+            const response = await fetch(`${baileysUrl}/sessions`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({ name, webhookUrl }),
+            });
+            const result = await response.json();
+            console.log(`[Baileys Instance] Baileys session creation result:`, result.success ? "success" : result.error);
+            
+            if (!result.success) {
+              // Atualizar conexão com status de erro
+              await supabaseClient
+                .from("connections")
+                .update({ 
+                  status: "error",
+                  updated_at: new Date().toISOString() 
+                })
+                .eq("id", connection.id);
+            }
+          } catch (err) {
+            console.error(`[Baileys Instance] Background session creation failed:`, err);
+            await supabaseClient
+              .from("connections")
+              .update({ 
+                status: "error",
+                updated_at: new Date().toISOString() 
+              })
+              .eq("id", connection.id);
+          }
+        };
+
+        // Executar em background sem bloquear a resposta
+        // @ts-ignore - EdgeRuntime.waitUntil pode não existir em todos os ambientes
+        if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime.waitUntil) {
+          // @ts-ignore
+          EdgeRuntime.waitUntil(createBaileysSession());
+        } else {
+          // Fallback: executar sem await (fire-and-forget)
+          createBaileysSession();
+        }
+
+        // Retornar imediatamente - sessão será criada em background
+        console.log(`[Baileys Instance] Returning immediately, session creation in background`);
         return new Response(
           JSON.stringify({ success: true, data: connection }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
