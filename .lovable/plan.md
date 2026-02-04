@@ -1,48 +1,112 @@
 
-# Plano: Simplificacao Completa da Instalacao Baileys
+# Plano: Conectar Baileys ao Nginx Unificado
 
-## ✅ IMPLEMENTAÇÃO CONCLUÍDA
+## Diagnóstico
 
-### Arquivos Modificados/Criados
+O setup atual:
+- **app-nginx**: Container Nginx nas portas 80/443, na rede `supabase-network`
+- **baileys-server**: Container Baileys na porta 3000, em rede separada (bridge padrão)
 
-| Arquivo | Status | Descrição |
-|---------|--------|-----------|
-| `deploy/baileys/docker-compose.yml` | ✅ Simplificado | Removido serviço nginx, apenas porta 3000 |
-| `deploy/baileys/scripts/install-simple.sh` | ✅ Criado | Script zero-config automático |
-| `deploy/baileys/scripts/bootstrap.sh` | ✅ Atualizado | Usa install-simple.sh |
-| `deploy/baileys/scripts/diagnostico.sh` | ✅ Atualizado | Nova arquitetura |
-| `deploy/baileys/nginx-snippet.conf` | ✅ Criado | Snippet para Nginx do host |
-
-### O que mudou
-
-1. **Docker Compose**: Agora só tem o container `baileys` expondo a porta 3000 (sem container nginx)
-
-2. **Instalação Zero-Config**: O script `install-simple.sh` gera tudo automaticamente:
-   - API Key via `openssl rand -hex 32`
-   - WEBHOOK_URL hardcoded para `https://qducanwbpleoceynmend.supabase.co/functions/v1/baileys-webhook`
-   - Cria arquivo `.env`, `CREDENCIAIS.txt` e `nginx-snippet.conf`
-
-3. **Proxy Manual**: O usuário precisa adicionar o snippet no Nginx do host (mostrado ao final da instalação)
-
-### Como Reinstalar no VPS
-
-```bash
-# Comando único para reinstalar
-curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/baileys/scripts/bootstrap.sh | sudo bash
-```
-
-Após a instalação, adicione o bloco ao Nginx do host:
-
+O arquivo `deploy/nginx/nginx.conf` já tem a configuração para `/baileys/`:
 ```nginx
 location /baileys/ {
-    proxy_pass http://127.0.0.1:3000/;
-    proxy_http_version 1.1;
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 300s;
+    set $upstream_baileys baileys:3000;  # <- Espera container "baileys" na mesma rede
+    ...
 }
 ```
 
-Depois: `sudo nginx -t && sudo systemctl reload nginx`
+Mas o container se chama `baileys-server` e está em outra rede Docker.
+
+## Solução
+
+### Passo 1: Conectar o container à rede correta
+
+Execute no VPS:
+```bash
+sudo docker network connect deploy_supabase-network baileys-server
+```
+
+### Passo 2: Atualizar a configuração do Nginx
+
+O arquivo `deploy/nginx/nginx.conf` precisa ser atualizado para usar o nome correto do container (`baileys-server` em vez de `baileys`).
+
+**Modificação em** `deploy/nginx/nginx.conf`:
+
+Na linha que define o upstream do Baileys, alterar:
+```nginx
+# De:
+set $upstream_baileys baileys:3000;
+
+# Para:
+set $upstream_baileys baileys-server:3000;
+```
+
+### Passo 3: Aplicar a configuração
+
+Após a modificação do arquivo e publicação, no VPS executar:
+```bash
+# Ir para o diretório do deploy unificado
+cd /caminho/do/deploy  # (onde está o docker-compose.yml principal)
+
+# Recarregar a configuração do Nginx
+sudo docker exec app-nginx nginx -s reload
+```
+
+## Alternativa Rápida (Sem editar arquivos)
+
+Se preferir uma correção imediata sem aguardar publicação, você pode:
+
+1. Conectar à rede:
+```bash
+sudo docker network connect deploy_supabase-network baileys-server
+```
+
+2. Criar um alias de rede para o container:
+```bash
+sudo docker network disconnect deploy_supabase-network baileys-server
+sudo docker network connect --alias baileys deploy_supabase-network baileys-server
+```
+
+Isso faz o container `baileys-server` responder pelo nome `baileys` dentro da rede, sem precisar modificar o nginx.conf.
+
+3. Testar:
+```bash
+curl https://chatbotvital.store/baileys/health
+```
+
+## Resultado Esperado
+
+Após a correção, o fluxo será:
+```
+Frontend -> Edge Function -> https://chatbotvital.store/baileys/...
+                                      |
+                              app-nginx (443)
+                                      |
+                              baileys-server:3000 (via rede Docker)
+                                      |
+                              Retorna JSON com QR Code
+```
+
+## Seção Técnica
+
+### Por que o erro ocorria
+
+1. O Nginx dentro do container tentava resolver `baileys:3000`
+2. Como `baileys-server` estava em outra rede Docker, o DNS não encontrava
+3. O Nginx retornava 502 Bad Gateway
+4. A Edge Function recebia HTML de erro em vez de JSON
+
+### Verificação da rede atual
+
+Para confirmar o nome da rede, execute:
+```bash
+sudo docker network ls | grep -E "supabase|deploy"
+```
+
+A rede provavelmente se chama `deploy_supabase-network` (prefixo do diretório + nome definido no compose).
+
+### Arquivos a modificar
+
+| Arquivo | Alteração |
+|---------|-----------|
+| `deploy/nginx/nginx.conf` | Linha 159: mudar `baileys:3000` para `baileys-server:3000` |
