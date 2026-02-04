@@ -386,21 +386,62 @@ Deno.serve(async (req) => {
       // Health check do servidor
       // ==========================================
       case "serverHealth": {
+        const healthUrl = `${baileysUrl}/health`;
+        console.log(`[Baileys Health] Checking: ${healthUrl}`);
+        
+        // Timeout de 10 segundos
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        
         try {
-          const response = await fetch(`${baileysUrl}/health`, {
+          const response = await fetch(healthUrl, {
             method: "GET",
             headers,
+            signal: controller.signal,
           });
+          clearTimeout(timeoutId);
 
-          const result = await response.json();
+          console.log(`[Baileys Health] Response status: ${response.status}`);
+          
+          // Verificar se a resposta foi bem sucedida
+          if (!response.ok) {
+            const text = await response.text();
+            console.log(`[Baileys Health] Error response: ${text}`);
+            return new Response(
+              JSON.stringify({ 
+                success: false, 
+                error: `Server returned ${response.status}: ${text.substring(0, 200)}` 
+              }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          const text = await response.text();
+          console.log(`[Baileys Health] Response body: ${text}`);
+          
+          // Tentar parsear como JSON
+          let result;
+          try {
+            result = JSON.parse(text);
+          } catch {
+            // Se não for JSON, criar objeto com a resposta
+            result = { status: "ok", raw: text };
+          }
 
           return new Response(
             JSON.stringify({ success: true, data: result }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         } catch (error) {
+          clearTimeout(timeoutId);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const isTimeout = error instanceof Error && error.name === "AbortError";
+          console.error(`[Baileys Health] ${isTimeout ? 'Timeout' : 'Network error'}: ${errorMessage}`);
           return new Response(
-            JSON.stringify({ success: false, error: "Server unreachable" }),
+            JSON.stringify({ 
+              success: false, 
+              error: isTimeout ? "Connection timeout (10s)" : `Connection failed: ${errorMessage}` 
+            }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
