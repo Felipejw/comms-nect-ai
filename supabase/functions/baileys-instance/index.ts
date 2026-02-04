@@ -110,42 +110,30 @@ Deno.serve(async (req) => {
           );
         }
 
-        console.log(`[Baileys Instance] Connection record created: ${connection.id}, now creating session on Baileys server...`);
+        console.log(`[Baileys Instance] Connection record created: ${connection.id}`);
 
-        // Criar sessão no servidor Baileys COM AWAIT e timeout de 8 segundos
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        try {
-          console.log(`[Baileys Instance] Creating session on server: ${baileysUrl}/sessions`);
-          const response = await fetch(`${baileysUrl}/sessions`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ name, webhookUrl }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-          
-          const result = await response.json();
-          console.log(`[Baileys Instance] Session creation result:`, result.success ? "success" : result.error);
-          
-          if (!result.success) {
-            await supabaseClient
-              .from("connections")
-              .update({ 
-                status: "error",
-                updated_at: new Date().toISOString() 
-              })
-              .eq("id", connection.id);
-          }
-        } catch (err) {
-          clearTimeout(timeoutId);
-          const isTimeout = err instanceof Error && err.name === "AbortError";
-          console.error(`[Baileys Instance] Session creation ${isTimeout ? 'timeout' : 'failed'}:`, err);
-          // Não atualizar para erro imediatamente em caso de timeout - deixar polling tentar
-        }
-
-        console.log(`[Baileys Instance] Returning to frontend`);
+        // Delegar criação de sessão para função de longa duração (55s timeout)
+        console.log(`[Baileys Instance] Delegating session creation to baileys-create-session`);
+        
+        fetch(`${supabaseUrl}/functions/v1/baileys-create-session`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            connectionId: connection.id,
+            sessionName: name,
+            webhookUrl,
+            baileysUrl,
+            baileysApiKey,
+          }),
+        }).then(res => res.json())
+          .then(result => console.log(`[Baileys Instance] Delegated session result:`, result.success ? "success" : result.error))
+          .catch(err => console.error(`[Baileys Instance] Delegated session error:`, err));
+        
+        // Não esperar - retornar imediatamente ao frontend
+        console.log(`[Baileys Instance] Returning to frontend (session creation in background)`);
         return new Response(
           JSON.stringify({ success: true, data: connection }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -382,40 +370,28 @@ Deno.serve(async (req) => {
           })
           .eq("id", connectionId);
 
-        // Criar sessão no servidor Baileys COM AWAIT e timeout de 8 segundos
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
-
-        try {
-          console.log(`[Baileys Instance] Recreating session on server: ${baileysUrl}/sessions`);
-          const response = await fetch(`${baileysUrl}/sessions`, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ name: newSessionName, webhookUrl }),
-            signal: controller.signal,
-          });
-          clearTimeout(timeoutId);
-          
-          const result = await response.json();
-          console.log(`[Baileys Instance] Recreate session result:`, result.success ? "success" : result.error);
-          
-          if (!result.success) {
-            await supabaseClient
-              .from("connections")
-              .update({ 
-                status: "error",
-                updated_at: new Date().toISOString() 
-              })
-              .eq("id", connectionId);
-          }
-        } catch (err) {
-          clearTimeout(timeoutId);
-          const isTimeout = err instanceof Error && err.name === "AbortError";
-          console.error(`[Baileys Instance] Recreate session ${isTimeout ? 'timeout' : 'failed'}:`, err);
-          // Não atualizar para erro imediatamente em caso de timeout - deixar polling tentar
-        }
-
-        console.log(`[Baileys Instance] Recreate complete, returning to frontend`);
+        // Delegar criação de sessão para função de longa duração (55s timeout)
+        console.log(`[Baileys Instance] Delegating session recreation to baileys-create-session`);
+        
+        fetch(`${supabaseUrl}/functions/v1/baileys-create-session`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          },
+          body: JSON.stringify({
+            connectionId,
+            sessionName: newSessionName,
+            webhookUrl,
+            baileysUrl,
+            baileysApiKey,
+          }),
+        }).then(res => res.json())
+          .then(result => console.log(`[Baileys Instance] Delegated recreate result:`, result.success ? "success" : result.error))
+          .catch(err => console.error(`[Baileys Instance] Delegated recreate error:`, err));
+        
+        // Não esperar - retornar imediatamente ao frontend
+        console.log(`[Baileys Instance] Recreate returning to frontend (session creation in background)`);
         return new Response(
           JSON.stringify({ success: true }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -59,3 +59,6 @@ verify_jwt = false
 
 [functions.baileys-webhook]
 verify_jwt = false
+
+[functions.baileys-create-session]
+verify_jwt = false
