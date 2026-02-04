@@ -162,14 +162,14 @@ export default function Conexoes() {
       await refetch();
       if (result.data) {
         setSelectedConnection(result.data);
-        setPollingConnection(result.data.id);
         setIsQrModalOpen(true);
         
-        if (!result.data.qr_code) {
-          await getQrCode.mutateAsync(result.data.id).catch((e) => {
-            console.error("[Create] Failed to fetch QR:", e);
-          });
-          await refetch();
+        // If QR was returned directly in response, no need to poll
+        if (result.data.qr_code) {
+          console.log("[Create] QR code received directly");
+        } else {
+          // Start polling if no QR in response
+          setPollingConnection(result.data.id);
         }
       }
     } catch (error) {
@@ -184,8 +184,17 @@ export default function Conexoes() {
       setPollCount(0);
       setSelectedConnection(connection);
       setIsQrModalOpen(true);
-      await recreateConnection.mutateAsync(connection.id);
-      setPollingConnection(connection.id);
+      const result = await recreateConnection.mutateAsync(connection.id);
+      
+      // If QR was returned directly, update the connection immediately
+      if (result.qrCode) {
+        console.log("[RefreshQR] QR returned directly from recreate");
+        await refetch();
+      } else {
+        // Start polling if no QR in response
+        setPollingConnection(connection.id);
+      }
+      
       refetch();
     } catch (error) {
       console.error("Error refreshing QR code:", error);
