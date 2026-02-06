@@ -1,87 +1,24 @@
 
+## Comprehensive Fix: Login Error, Domain Support, and Admin Credentials
 
-## Comprehensive Fix: Self-Hosted Installation - 3 Remaining Errors
+### Issue Analysis
 
-### Analysis of Each Error
+**Issue 1: JSON Parse Error on Login**
+The error "Unexpected non-whitespace character after JSON at position 4 (line 1 column 5)" happens because the GoTrue (Auth) service is still unhealthy. When the frontend calls `/auth/v1/token`, Nginx proxies to Kong, Kong proxies to GoTrue, but GoTrue is down. Kong returns an HTML error page (e.g., `<html>...`), which the Supabase JS client tries to parse as JSON, causing the error.
 
----
+Root cause: The AUTH service keeps crashing with "failed SASL auth" for `supabase_auth_admin`. After extensive analysis across 5 install attempts, the issue is a **timing problem** -- the install script ALTERs role passwords WHILE the Supabase postgres image's internal init scripts are STILL running. A later init script then overwrites our password change. Evidence: ALTER ROLE succeeds, Docker network test passes (at that moment), but Auth fails minutes later (because the password was overwritten by a later init script).
 
-### Error 1: SASL Password Authentication Failed
+Fix: Instead of trying to ALTER ROLE proactively (which causes a race condition), wait for ALL init scripts to complete (by waiting for a second healthcheck cycle after init), then test the password. Only ALTER ROLE if the test fails.
 
-**What you see:**
-```
-ALTER ROLE
-ALTER ROLE
-ALTER ROLE
-ERROR:  must be superuser to alter superuser roles or change superuser attribute
-[WARN] Falha ao sincronizar senhas (continuando...)
-[OK] Senhas das roles sincronizadas    <-- FALSE: passwords were NOT saved
-```
+**Issue 2: No Domain Configuration**
+There is no mechanism to point a custom domain to the system after installation. Currently, only the server IP is used.
 
-Then Auth crashes with:
-```
-failed SASL auth (FATAL: password authentication failed for user "supabase_auth_admin")
-```
+Fix: Create a `change-domain.sh` script that updates DNS/SSL configuration, Nginx, and frontend config for a custom domain.
 
-**Root Cause:** The install script runs all 4 ALTER ROLE statements in a SINGLE `psql -c` command:
-```bash
-docker exec supabase-db psql -U postgres -c "
-    ALTER ROLE supabase_auth_admin WITH PASSWORD '...';
-    ALTER ROLE supabase_storage_admin WITH PASSWORD '...';
-    ALTER ROLE authenticator WITH PASSWORD '...';
-    ALTER ROLE supabase_admin WITH PASSWORD '...';
-"
-```
+**Issue 3: Admin Email is `admin@IP`**
+The install script auto-generates `admin@{server_ip}` which produces invalid emails like `admin@155.117.41.226.com`.
 
-When PostgreSQL receives multiple statements in a single `-c` argument, it processes them in a single implicit transaction. The 4th statement (`supabase_admin`) fails because it's a superuser role that cannot be altered by the `postgres` user in this Docker image. **This error ABORTS the entire transaction, rolling back ALL 4 password changes** -- including the ones that appeared to succeed.
-
-Additionally, the TCP password test uses `psql -h 127.0.0.1` from INSIDE the container. The Supabase pg_hba.conf uses `trust` authentication for localhost connections, meaning **the password is never actually verified**. The test always passes regardless.
-
-**Fix:** Run each ALTER ROLE as a separate command so failures don't cascade. Skip `supabase_admin` since it's a superuser. Test the password from the Docker network (not localhost) to simulate what Auth actually does.
-
----
-
-### Error 2: Kong YAML Parse Error
-
-**What you see:**
-```
-failed parsing declarative configuration: 81:9: did not find expected alphabetic or numeric character
-```
-
-**Root Cause:** Kong's entrypoint in docker-compose.yml uses:
-```bash
-eval "echo \"$(cat ~/temp.yml)\"" > ~/kong.yml
-```
-
-This reads the YAML template and processes it through bash's `eval`. The YAML contains double-quoted values like `"2.1"` and `"*"`. During eval, these internal double quotes interfere with the outer echo quotes. Specifically, `- "*"` (line 81 in the generated YAML) causes bash to:
-1. Strip the surrounding `"` quotes
-2. Glob-expand the unquoted `*` into a list of files in the working directory
-3. Produce invalid YAML like `- docker-entrypoint.sh kong.conf ...` instead of `- "*"`
-
-**Fix:** Pre-substitute the JWT variables directly in the install script when generating kong.yml, instead of using variable placeholders that require eval at runtime. Change the Kong entrypoint to a simple file copy.
-
----
-
-### Error 3: Kong/Nginx Cascade Failure
-
-**What you see:**
-```
-Container supabase-auth Error dependency auth failed to start
-supabase-kong: created      (NOT running)
-app-nginx: created          (NOT running)
-```
-
-**Root Cause:** Kong depends on `auth: condition: service_started`. When Auth is in a crash loop (due to Error 1), Docker Compose considers it "failed to start" rather than "started," which blocks Kong. Since Nginx depends on Kong, Nginx is also blocked.
-
-Kong does NOT actually need Auth to be running to start. Kong is just a traffic router -- if Auth is down, it returns 502 for auth endpoints, which resolves when Auth recovers.
-
-**Fix:** Remove auth from Kong's depends_on. Keep only rest and storage as dependencies.
-
----
-
-### Error 4: Frontend Build (FIXED)
-
-The Docker-based frontend build worked correctly in this run. No changes needed.
+Fix: Change the default admin email to `admin@admin.com`.
 
 ---
 
@@ -89,77 +26,102 @@ The Docker-based frontend build worked correctly in this run. No changes needed.
 
 #### File 1: `deploy/scripts/install-unified.sh`
 
-**Change A - Password sync (lines 700-706):** Replace single psql command with separate calls:
+**Change A -- Admin email (line ~201):**
+Replace `ADMIN_EMAIL="admin@${DOMAIN}"` with `ADMIN_EMAIL="admin@admin.com"`.
+
+**Change B -- Remove proactive ALTER ROLE, add init completion wait (lines ~694-817):**
+Replace the current "Etapa 1c" (sync passwords) with:
+1. Wait 15 seconds after roles are detected for ALL init scripts to finish
+2. Test the password from Docker network (as Auth would connect)
+3. Only if the test FAILS, run ALTER ROLE as fallback, then reload pg config and re-test
+4. This eliminates the race condition where our ALTER ROLE gets overwritten by a later init script
+
+**Change C -- Frontend build with runtime config (lines ~565-600):**
+1. Build with placeholder env vars: `VITE_SUPABASE_URL=https://placeholder.supabase.co` so the Supabase client's runtime config detection activates
+2. After build, use `sed` to inject `<script src="/config.js"></script>` into the built `index.html`
+3. Generate a `config.js` file with the actual DOMAIN and ANON_KEY values
+4. This means domain changes only require updating `config.js` -- no frontend rebuild needed
+
+**Change D -- Add generate_frontend_config helper function:**
+A new function that creates the `config.js` file:
+```javascript
+window.__SUPABASE_CONFIG__ = {
+  url: "https://DOMAIN",
+  anonKey: "ANON_KEY_VALUE"
+};
+```
+
+#### File 2: `deploy/scripts/change-domain.sh` (NEW)
+
+A script to reconfigure the system for a custom domain:
+1. Accepts the domain as a parameter
+2. Updates the `.env` file (DOMAIN, API_EXTERNAL_URL, SITE_URL)
+3. Obtains SSL certificate via Let's Encrypt (or keeps self-signed for IPs)
+4. Regenerates `config.js` with the new domain
+5. Restarts Nginx and Kong
+
+Usage:
 ```bash
-# Before (BROKEN - single transaction, failure rolls back all):
-docker exec supabase-db psql -U postgres -c "
-    ALTER ROLE supabase_auth_admin WITH PASSWORD '...';
-    ALTER ROLE supabase_storage_admin WITH PASSWORD '...';
-    ALTER ROLE authenticator WITH PASSWORD '...';
-    ALTER ROLE supabase_admin WITH PASSWORD '...';
-"
-
-# After (FIXED - each is an independent transaction):
-docker exec supabase-db psql -U postgres -c \
-  "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';"
-docker exec supabase-db psql -U postgres -c \
-  "ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';"
-docker exec supabase-db psql -U postgres -c \
-  "ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';"
-# supabase_admin is a superuser - skip it (not needed for auth/storage)
+sudo bash scripts/change-domain.sh meudominio.com
 ```
 
-**Change B - Kong template (lines 416-521):** Change the heredoc from single-quoted `<< 'EOF'` to unquoted `<< EOF` so bash expands variables. Replace `${SUPABASE_ANON_KEY}` with `$ANON_KEY` and `${SUPABASE_SERVICE_KEY}` with `$SERVICE_ROLE_KEY`.
+#### File 3: `deploy/nginx/nginx.conf`
 
-**Change C - TCP test (lines 738-780):** Replace the localhost test (which uses trust auth) with a test from the Docker network using a temporary container:
-```bash
-docker run --rm --network deploy_supabase-network \
-  -e PGPASSWORD="${POSTGRES_PASSWORD}" \
-  postgres:15-alpine \
-  psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;"
+Add no-cache headers for `config.js` to ensure browsers always load the latest configuration after domain changes:
 ```
-
-#### File 2: `deploy/docker-compose.yml`
-
-**Change A - Kong entrypoint (line 15):** Replace eval-based variable substitution with simple file copy:
-```yaml
-# Before (BROKEN - eval corrupts YAML):
-entrypoint: bash -c 'eval "echo \"$$(cat ~/temp.yml)\"" > ~/kong.yml && ...'
-
-# After (FIXED - file already has correct values):
-entrypoint: bash -c 'cp ~/temp.yml ~/kong.yml && /docker-entrypoint.sh kong docker-start'
+location = /config.js {
+    add_header Cache-Control "no-cache, no-store, must-revalidate";
+    add_header Pragma "no-cache";
+}
 ```
-
-**Change B - Kong depends_on (lines 30-32):** Remove auth dependency:
-```yaml
-# Before:
-depends_on:
-  auth:
-    condition: service_started
-  rest:
-    condition: service_started
-  storage:
-    condition: service_started
-
-# After:
-depends_on:
-  rest:
-    condition: service_started
-  storage:
-    condition: service_started
-```
-
-**Change C - Remove unused Kong env vars:** Remove `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_KEY` from Kong's environment since variables are now pre-substituted.
 
 ---
 
-### Expected Result After Fix
+### How Runtime Config Works
 
-1. Password sync: Each ALTER ROLE runs independently -- failure on supabase_admin does NOT affect the other 3
-2. TCP test: Verifies password from Docker network (same path Auth uses)
-3. Kong: YAML file is generated correctly without eval corruption
-4. Kong: Starts immediately without waiting for Auth
-5. Nginx: Starts because Kong is available
-6. Auth: Connects to DB with correct password
-7. Admin user: Created successfully via Kong API
+The Supabase client (`client.ts`) already has built-in support for runtime configuration:
+1. It checks if `VITE_SUPABASE_URL` contains "placeholder"
+2. If so, it reads `window.__SUPABASE_CONFIG__` (set by `config.js`)
+3. This means the frontend can work with ANY domain without rebuilding
 
+By building with placeholder values, the system uses `config.js` for all domain/key configuration. Domain changes only need to update one file.
+
+---
+
+### New Startup Flow
+
+```text
+1. Start DB
+2. Wait for healthcheck (healthy)
+3. Wait for supabase_auth_admin role to exist
+4. Wait 15 extra seconds for ALL init scripts to complete
+5. Run init.sql (our tables/functions)
+6. Test password from Docker network (simulates GoTrue connection)
+   - If OK: proceed (no ALTER ROLE needed)
+   - If FAIL: ALTER ROLE as fallback, reload pg config, re-test
+7. Start Auth
+8. Wait for Auth healthy
+9. Start remaining services
+```
+
+---
+
+### Expected Results
+
+After this fix:
+- Auth service starts successfully (password race condition eliminated)
+- Login with `admin@admin.com` works
+- Frontend loads correctly with runtime config
+- Domain can be changed via `change-domain.sh` without rebuilding
+- Admin password is displayed at the end of installation
+
+### Execution After Approval
+
+```bash
+cd /opt/sistema && git pull origin main
+cd deploy
+docker compose --profile baileys down -v 2>/dev/null || true
+sudo rm -rf volumes/db/data
+sudo rm -rf frontend/dist
+sudo bash scripts/install-unified.sh
+```
