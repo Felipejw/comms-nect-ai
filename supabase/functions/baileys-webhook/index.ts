@@ -388,6 +388,7 @@ Deno.serve(async (req) => {
                 whatsapp_lid: from,
                 phone: null,
                 name: msg.pushName || `Contato ${from.slice(-6)}`,
+                name_source: msg.pushName ? 'pushname' : 'auto',
                 tenant_id: connection.tenant_id,
               })
               .select()
@@ -441,6 +442,7 @@ Deno.serve(async (req) => {
               .insert({
                 phone: from,
                 name: msg.pushName || from,
+                name_source: msg.pushName ? 'pushname' : 'auto',
                 tenant_id: connection.tenant_id,
               })
               .select()

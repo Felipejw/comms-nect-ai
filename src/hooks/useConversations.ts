@@ -63,6 +63,7 @@ export interface Conversation {
     phone: string | null;
     avatar_url: string | null;
     whatsapp_lid: string | null;
+    name_source: string | null;
   };
   assignee?: {
     id: string;
@@ -108,7 +109,7 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         .from('conversations')
         .select(`
           *,
-          contact:contacts (id, name, email, phone, avatar_url, whatsapp_lid),
+          contact:contacts (id, name, email, phone, avatar_url, whatsapp_lid, name_source),
           connection:connections (id, name, color),
           kanban_column:kanban_columns (id, name, color),
           queue:queues (id, name, color)
@@ -178,7 +179,7 @@ export function useConversation(id: string) {
         .from('conversations')
         .select(`
           *,
-          contact:contacts (id, name, email, phone, avatar_url, whatsapp_lid)
+          contact:contacts (id, name, email, phone, avatar_url, whatsapp_lid, name_source)
         `)
         .eq('id', id)
         .maybeSingle();

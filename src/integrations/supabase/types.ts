@@ -572,6 +572,7 @@ export type Database = {
           kanban_stage: Database["public"]["Enums"]["kanban_stage"] | null
           last_contact_at: string | null
           name: string
+          name_source: string | null
           notes: string | null
           phone: string | null
           status: Database["public"]["Enums"]["contact_status"]
@@ -588,6 +589,7 @@ export type Database = {
           kanban_stage?: Database["public"]["Enums"]["kanban_stage"] | null
           last_contact_at?: string | null
           name: string
+          name_source?: string | null
           notes?: string | null
           phone?: string | null
           status?: Database["public"]["Enums"]["contact_status"]
@@ -604,6 +606,7 @@ export type Database = {
           kanban_stage?: Database["public"]["Enums"]["kanban_stage"] | null
           last_contact_at?: string | null
           name?: string
+          name_source?: string | null
           notes?: string | null
           phone?: string | null
           status?: Database["public"]["Enums"]["contact_status"]
