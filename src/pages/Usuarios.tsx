@@ -483,7 +483,7 @@ export default function Usuarios() {
                       {isAdmin ? (
                         <Select
                           value={normalizedRole}
-                          onValueChange={(v) => handleRoleChange(user.id, v as "admin" | "atendente")}
+                          onValueChange={(v) => handleRoleChange(user.user_id, v as "admin" | "atendente")}
                         >
                           <SelectTrigger className="w-[140px]">
                             <Badge className={roleConfig[normalizedRole]?.className}>
@@ -523,20 +523,20 @@ export default function Usuarios() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           {isAdmin && normalizedRole === "atendente" && (
-                            <DropdownMenuItem onClick={() => handleOpenPermissions(user.id, user.name)}>
+                            <DropdownMenuItem onClick={() => handleOpenPermissions(user.user_id, user.name)}>
                               <Lock className="w-4 h-4 mr-2" />
                               Gerenciar Permissões
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem onClick={() => handleOpenEdit({ id: user.id, name: user.name, email: user.email })}>
+                          <DropdownMenuItem onClick={() => handleOpenEdit({ id: user.user_id, name: user.name, email: user.email })}>
                             <Edit className="w-4 h-4 mr-2" />
                             Editar
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleOpenResetPassword(user.id, user.name)}>
+                          <DropdownMenuItem onClick={() => handleOpenResetPassword(user.user_id, user.name)}>
                             <Key className="w-4 h-4 mr-2" />
                             Redefinir senha
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive" onClick={() => handleOpenDelete({ id: user.id, name: user.name })}>
+                          <DropdownMenuItem className="text-destructive" onClick={() => handleOpenDelete({ id: user.user_id, name: user.name })}>
                             <Trash2 className="w-4 h-4 mr-2" />
                             Excluir
                           </DropdownMenuItem>
