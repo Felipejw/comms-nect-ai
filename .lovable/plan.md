@@ -1,54 +1,53 @@
 
 
-# Corrigir Mismatch da API Key entre Banco de Dados e Container Baileys
+# Corrigir API Key do Baileys - Banco de Dados e Container
 
-## Problema identificado
-A API Key armazenada no banco de dados (tabela `system_settings`, chave `baileys_api_key`) nao corresponde a API Key que o container Docker esta realmente usando. Isso causa erro 401 (Unauthorized) em todas as chamadas da Edge Function para o servidor Baileys.
+## Problema
+A API Key no banco de dados foi alterada incorretamente para `0d78af0a...` na tentativa anterior. A chave correta (da instalacao) e `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`.
 
-- **Banco de dados:** `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`
-- **Container Docker:** `0d78af0a61951a38561d29bc759d7f4d12a09d88837d4881cdca786b80652686`
-
-O container ignora o arquivo `.env` editado, provavelmente por existir uma variavel de ambiente ja definida no sistema do VPS, ou algum outro mecanismo de cache.
+Alem disso, o container Docker ignora o arquivo `.env` porque provavelmente existe uma variavel de ambiente `API_KEY` definida no shell do sistema, que tem prioridade sobre o `.env`.
 
 ## Solucao
 
-Atualizar o valor da API Key no banco de dados (`system_settings`) para usar a chave que o container realmente possui.
+### Passo 1 - Corrigir a chave no banco de dados
+Atualizar `system_settings` para usar a chave correta: `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`
 
-### Passo 1 - Atualizar a API Key no banco de dados
-Executar uma atualizacao na tabela `system_settings` para que a chave `baileys_api_key` contenha o valor `0d78af0a61951a38561d29bc759d7f4d12a09d88837d4881cdca786b80652686`.
+### Passo 2 - Instrucoes para corrigir o container Docker
+O container precisa ser recriado forcando a variavel de ambiente correta. Sera necessario executar no VPS:
 
-Isso pode ser feito de duas formas:
-- **Opcao A (recomendada):** Atualizar via a pagina de Configuracoes do sistema, onde o campo "API Key do Baileys" pode ser editado diretamente
-- **Opcao B:** Adicionar um botao/funcao na tela de Configuracoes que permita sincronizar a chave automaticamente
+```text
+cd /opt/baileys
+sudo docker compose down
+sudo API_KEY=9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435 docker compose up -d
+```
 
-### Passo 2 - Verificar e melhorar tratamento de erros
-Na Edge Function `baileys-instance`, melhorar a mensagem de erro quando ocorre um 401 para que fique mais claro que a causa e um mismatch de API Key (em vez da mensagem generica "Verifique a configuracao do nginx/proxy").
+Ou alternativamente, verificar se ha uma variavel de ambiente no sistema:
 
-### Passo 3 - Adicionar diagnostico na tela de Conexoes
-Quando houver erro de autenticacao (401) na comunicacao com o Baileys, mostrar uma mensagem mais descritiva na UI indicando que a API Key configurada no sistema nao corresponde a do servidor.
+```text
+echo $API_KEY
+env | grep API_KEY
+```
+
+Se existir, remover com `unset API_KEY` antes de recriar o container.
+
+### Passo 3 - Melhorar a tela de Conexoes para mostrar erros
+Atualmente quando o QR Code falha, a tela fica apenas "carregando" indefinidamente. Vamos melhorar para:
+- Mostrar mensagem de erro clara quando a API Key e invalida
+- Parar o polling apos detectar erro 401
+- Exibir botao de "Tentar Novamente" em vez de ficar carregando infinitamente
 
 ## Detalhes tecnicos
 
+### Arquivo: src/pages/Conexoes.tsx
+- No modal de QR Code, ao detectar erro na busca do QR (especialmente 401), exibir mensagem de erro em vez de manter o spinner de carregamento infinito
+- Melhorar a logica de polling para parar imediatamente ao receber erro de autenticacao
+
+### Arquivo: src/hooks/useWhatsAppConnections.ts
+- Adicionar tratamento especifico para erros de API Key invalida no `getQrCode` e `checkStatus`
+- Propagar o tipo de erro (auth vs network vs server) para que a UI possa reagir adequadamente
+
 ### Atualizacao no banco de dados
-A Edge Function `baileys-instance` le a API Key da tabela `system_settings` com a query:
-```text
-SELECT value FROM system_settings WHERE key = 'baileys_api_key'
-```
-E a usa no header `X-API-Key` ao fazer chamadas para o servidor Baileys.
-
-### Arquivos a serem alterados
-
-1. **supabase/functions/baileys-instance/index.ts**
-   - Melhorar a mensagem de erro quando o servidor Baileys retorna 401, diferenciando de outros erros HTTP
-   - Adicionar log especifico para facilitar diagnostico
-
-2. **src/components/configuracoes/BaileysConfigSection.tsx** (se necessario)
-   - Verificar se ja existe campo para editar a API Key
-   - Se nao existir, adicionar campo editavel
-
-### Atualizacao imediata
-Atualizar a chave `baileys_api_key` no banco de dados para `0d78af0a61951a38561d29bc759d7f4d12a09d88837d4881cdca786b80652686` via SQL direto, para resolver o bloqueio imediatamente.
+Executar UPDATE na tabela `system_settings` para corrigir o valor da chave `baileys_api_key` para `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`.
 
 ## Resultado esperado
-Apos a atualizacao, a Edge Function `baileys-instance` enviara a chave correta no header `X-API-Key`, o servidor Baileys aceitara as requisicoes, e a tela de Conexoes funcionara normalmente (exibindo QR Code, status, etc.).
-
+Apos a correcao no banco e no container, a Edge Function enviara a chave correta, o servidor Baileys aceitara as requisicoes, e o QR Code sera exibido normalmente na tela de Conexoes. Caso haja erro, uma mensagem descritiva sera mostrada em vez do spinner infinito.
