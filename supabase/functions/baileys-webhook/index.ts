@@ -20,8 +20,11 @@ function mapBaileysStatus(status: string): string {
 }
 
 // Detect if a "from" address is a WhatsApp LID
-function parseFromAddress(rawFrom: string): { identifier: string; isLid: boolean } {
-  const isLid = rawFrom.endsWith("@lid");
+// Now also checks rawJid from the payload for more reliable detection
+function parseFromAddress(rawFrom: string, rawJid?: string): { identifier: string; isLid: boolean } {
+  // If rawJid is provided, use it for more reliable LID detection
+  const jidToCheck = rawJid || rawFrom;
+  const isLid = jidToCheck.endsWith("@lid");
   const identifier = rawFrom
     .replace("@s.whatsapp.net", "")
     .replace("@g.us", "")
@@ -80,6 +83,134 @@ async function storeMediaFromBase64(
     return publicUrlData.publicUrl;
   } catch (error) {
     console.error("[Baileys Webhook] Error processing media:", error);
+    return null;
+  }
+}
+
+// Resolve LID to real phone number in background via Baileys API
+async function resolveLidInBackground(
+  // deno-lint-ignore no-explicit-any
+  supabaseClient: any,
+  contactId: string,
+  lidIdentifier: string,
+  // deno-lint-ignore no-explicit-any
+  connection: any
+): Promise<void> {
+  try {
+    console.log(`[LID Resolution] Starting background resolution for contact ${contactId}, LID: ${lidIdentifier}`);
+
+    // Get Baileys server URL from settings
+    const { data: settings } = await supabaseClient
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: apiKeySettings } = await supabaseClient
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = settings?.value;
+    const baileysApiKey = apiKeySettings?.value;
+
+    if (!baileysUrl) {
+      console.log("[LID Resolution] Baileys server URL not configured, skipping");
+      return;
+    }
+
+    const sessionData = connection.session_data;
+    const sessionName = sessionData?.sessionName || connection.name.toLowerCase().replace(/\s+/g, "_");
+
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (baileysApiKey) {
+      headers["X-API-Key"] = baileysApiKey;
+    }
+
+    // Try to resolve LID via Baileys contacts endpoint
+    const contactsResponse = await fetch(
+      `${baileysUrl}/sessions/${sessionName}/contacts/${lidIdentifier}@lid`,
+      { method: "GET", headers }
+    );
+
+    if (contactsResponse.ok) {
+      const contactData = await contactsResponse.json();
+      console.log(`[LID Resolution] Baileys response:`, JSON.stringify(contactData).substring(0, 300));
+
+      // Extract the real phone number if available
+      const realPhone = contactData?.phone || contactData?.jid?.replace("@s.whatsapp.net", "") || null;
+
+      if (realPhone && !realPhone.includes("@lid")) {
+        const cleanPhone = realPhone.replace(/\D/g, "");
+        if (cleanPhone.length >= 10 && cleanPhone.length <= 15) {
+          console.log(`[LID Resolution] ✅ Resolved LID ${lidIdentifier} to phone: ${cleanPhone}`);
+          await supabaseClient
+            .from("contacts")
+            .update({ phone: cleanPhone, updated_at: new Date().toISOString() })
+            .eq("id", contactId);
+          return;
+        }
+      }
+    } else {
+      const errorText = await contactsResponse.text().catch(() => "");
+      console.log(`[LID Resolution] Baileys contacts endpoint returned ${contactsResponse.status}: ${errorText.substring(0, 200)}`);
+    }
+
+    console.log(`[LID Resolution] Could not resolve LID ${lidIdentifier} to real phone number`);
+  } catch (error) {
+    console.error("[LID Resolution] Error:", error);
+  }
+}
+
+// Merge LID contact when real phone number arrives with matching pushName
+async function mergeLidContactByPushName(
+  // deno-lint-ignore no-explicit-any
+  supabaseClient: any,
+  realPhone: string,
+  pushName: string,
+  tenantId: string | null
+// deno-lint-ignore no-explicit-any
+): Promise<any | null> {
+  try {
+    console.log(`[LID Merge] Checking for LID contacts with pushName "${pushName}" to merge with phone ${realPhone}`);
+
+    // Build query - search for LID-only contacts with the same pushName
+    let query = supabaseClient
+      .from("contacts")
+      .select("id, whatsapp_lid, phone, name")
+      .eq("name", pushName)
+      .is("phone", null)
+      .not("whatsapp_lid", "is", null);
+
+    if (tenantId) {
+      query = query.eq("tenant_id", tenantId);
+    }
+
+    const { data: lidContacts } = await query;
+
+    if (!lidContacts || lidContacts.length === 0) {
+      console.log("[LID Merge] No LID contacts found with matching pushName");
+      return null;
+    }
+
+    if (lidContacts.length > 1) {
+      console.log(`[LID Merge] Found ${lidContacts.length} LID contacts with same pushName - ambiguous, skipping merge`);
+      return null;
+    }
+
+    // Exactly one match - merge
+    const lidContact = lidContacts[0];
+    console.log(`[LID Merge] ✅ Merging LID contact ${lidContact.id} (LID: ${lidContact.whatsapp_lid}) with phone: ${realPhone}`);
+
+    await supabaseClient
+      .from("contacts")
+      .update({ phone: realPhone, updated_at: new Date().toISOString() })
+      .eq("id", lidContact.id);
+
+    return { ...lidContact, phone: realPhone };
+  } catch (error) {
+    console.error("[LID Merge] Error:", error);
     return null;
   }
 }
@@ -195,8 +326,9 @@ Deno.serve(async (req) => {
       }
 
       // Parse the "from" address - detect LID vs real phone
-      const rawFrom = msg.from || "";
-      const { identifier: from, isLid } = parseFromAddress(rawFrom);
+      // Use rawJid from payload if available (sent by updated Baileys server)
+      const rawFrom = msg.rawJid || msg.from || "";
+      const { identifier: from, isLid } = parseFromAddress(rawFrom, msg.rawJid);
       
       const body = msg.body || "";
       const messageId = msg.id || `baileys_${Date.now()}`;
@@ -273,7 +405,7 @@ Deno.serve(async (req) => {
           }
         }
       } else {
-        // Regular phone contact
+        // Regular phone contact - also try to merge with existing LID contacts
         const { data: existingContact } = await supabaseClient
           .from("contacts")
           .select("*")
@@ -292,24 +424,37 @@ Deno.serve(async (req) => {
               .eq("id", contact.id);
           }
         } else {
-          const { data: newContact, error: contactError } = await supabaseClient
-            .from("contacts")
-            .insert({
-              phone: from,
-              name: msg.pushName || from,
-              tenant_id: connection.tenant_id,
-            })
-            .select()
-            .single();
-
-          if (contactError) {
-            console.error("[Baileys Webhook] Error creating contact:", contactError);
-            return new Response(
-              JSON.stringify({ success: false, error: contactError.message }),
-              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          // Before creating a new contact, try to merge with an existing LID contact by pushName
+          if (msg.pushName) {
+            const mergedContact = await mergeLidContactByPushName(
+              supabaseClient, from, msg.pushName, connection.tenant_id
             );
+            if (mergedContact) {
+              contact = mergedContact;
+            }
           }
-          contact = newContact;
+
+          // If no merge happened, create new contact
+          if (!contact) {
+            const { data: newContact, error: contactError } = await supabaseClient
+              .from("contacts")
+              .insert({
+                phone: from,
+                name: msg.pushName || from,
+                tenant_id: connection.tenant_id,
+              })
+              .select()
+              .single();
+
+            if (contactError) {
+              console.error("[Baileys Webhook] Error creating contact:", contactError);
+              return new Response(
+                JSON.stringify({ success: false, error: contactError.message }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+            contact = newContact;
+          }
         }
       }
 
@@ -379,6 +524,14 @@ Deno.serve(async (req) => {
         console.error("[Baileys Webhook] Error saving message:", msgError);
       } else {
         console.log(`[Baileys Webhook] ✅ Message saved for conversation: ${conversation.id}`);
+
+        // Trigger background LID resolution if this is a LID contact without a phone
+        if (isLid && contact.id && !contact.phone) {
+          EdgeRuntime.waitUntil(
+            resolveLidInBackground(supabaseClient, contact.id, from, connection)
+          );
+          console.log(`[Baileys Webhook] 🔄 Background LID resolution triggered for contact: ${contact.id}`);
+        }
       }
 
       return new Response(JSON.stringify({ success: true }), {

@@ -79,8 +79,8 @@ async function sendViaBaileys(
   // Format the destination - LID uses @lid suffix, phone uses @s.whatsapp.net
   let formattedNumber: string;
   if (isLidSend) {
-    // For LID contacts, send raw number (Baileys server handles the @lid suffix)
-    formattedNumber = phoneToSend.replace(/\D/g, "");
+    // For LID contacts, send with @lid suffix so Baileys uses the LID protocol
+    formattedNumber = `${phoneToSend.replace(/\D/g, "")}@lid`;
     console.log(`[Baileys] Sending to LID: ${formattedNumber}`);
   } else {
     formattedNumber = phoneToSend.replace(/\D/g, "");
