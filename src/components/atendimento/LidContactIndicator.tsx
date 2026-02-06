@@ -33,11 +33,13 @@ export function isLidOnlyContact(contact?: Contact | null): boolean {
   // Phone equals LID (stored LID as phone)
   if (contact.phone && contact.whatsapp_lid && contact.phone === contact.whatsapp_lid) return true;
   
-  // Phone is very long (looks like LID stored as phone)
+  // Phone looks like a LID stored as phone (no whatsapp_lid set)
   if (contact.phone && !contact.whatsapp_lid) {
     const cleanPhone = contact.phone.replace(/\D/g, "");
-    // LIDs are typically 20+ digits
-    if (cleanPhone.length > 15) return true;
+    // LIDs are typically 15+ digits and don't start with common country codes patterns
+    // Real phone numbers (with country code) are at most 15 digits (E.164 max)
+    // but Brazilian numbers are 12-13 digits. LIDs are typically 15+ digits.
+    if (cleanPhone.length >= 15) return true;
   }
   
   return false;

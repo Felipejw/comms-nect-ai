@@ -41,7 +41,8 @@ async function sendViaBaileys(
   messageType: string,
   mediaUrl: string | undefined,
   // deno-lint-ignore no-explicit-any
-  supabaseAdmin: any
+  supabaseAdmin: any,
+  isLidSend: boolean = false
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   // Get Baileys server URL from settings
   const { data: settings } = await supabaseAdmin
@@ -75,10 +76,18 @@ async function sendViaBaileys(
     headers["X-API-Key"] = baileysApiKey;
   }
 
-  // Format phone number
-  let formattedNumber = phoneToSend.replace(/\D/g, "");
-  if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
-    formattedNumber = "55" + formattedNumber;
+  // Format the destination - LID uses @lid suffix, phone uses @s.whatsapp.net
+  let formattedNumber: string;
+  if (isLidSend) {
+    // For LID contacts, send raw number (Baileys server handles the @lid suffix)
+    formattedNumber = phoneToSend.replace(/\D/g, "");
+    console.log(`[Baileys] Sending to LID: ${formattedNumber}`);
+  } else {
+    formattedNumber = phoneToSend.replace(/\D/g, "");
+    if (!formattedNumber.startsWith("55") && formattedNumber.length <= 11) {
+      formattedNumber = "55" + formattedNumber;
+    }
+    console.log(`[Baileys] Sending to phone: ${formattedNumber}`);
   }
 
   let response;
@@ -247,15 +256,26 @@ Deno.serve(async (req) => {
     
     console.log(`Contact data: phone="${phone}", whatsapp_lid="${whatsappLid}"`);
     
-    // Determine phone to send
+    // Determine phone to send - check if it's a real phone or a LID
     let phoneToSend: string | null = null;
+    let isLidSend = false;
     
-    if (phone && phone.length >= 10 && phone.length <= 15) {
+    // Check if phone is actually a real number (not a LID stored as phone)
+    const cleanPhone = phone?.replace(/\D/g, "") || "";
+    const isRealPhone = phone && cleanPhone.length >= 10 && cleanPhone.length <= 14;
+    
+    if (isRealPhone) {
       phoneToSend = phone;
-      console.log(`Using phone number: ${phoneToSend}`);
+      console.log(`Using real phone number: ${phoneToSend}`);
     } else if (whatsappLid) {
-      console.log(`Contact only has LID: ${whatsappLid}, will try to send directly`);
+      console.log(`Contact only has LID: ${whatsappLid}, will send via LID`);
       phoneToSend = whatsappLid;
+      isLidSend = true;
+    } else if (phone && cleanPhone.length >= 15) {
+      // Phone field contains a LID (legacy data)
+      console.log(`Phone field contains LID: ${phone}, will send via LID`);
+      phoneToSend = phone;
+      isLidSend = true;
     } else {
       return new Response(
         JSON.stringify({ success: false, error: "Contato sem número de telefone válido" }),
@@ -298,7 +318,7 @@ Deno.serve(async (req) => {
       result = await sendViaMetaAPI(connection, phoneToSend!, content, messageType, mediaUrl);
     } else {
       // Default to Baileys for all WhatsApp QR Code connections
-      result = await sendViaBaileys(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin);
+      result = await sendViaBaileys(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin, isLidSend);
     }
 
     if (!result.success) {
