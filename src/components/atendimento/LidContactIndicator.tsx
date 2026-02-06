@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { AlertTriangle, Search, Loader2, RefreshCw, CheckCircle, XCircle } from "lucide-react";
+import { Info, Search, Loader2, RefreshCw, CheckCircle, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { supabase } from "@/integrations/supabase/client";
@@ -122,9 +122,9 @@ export default function LidContactIndicator({ contact, conversationId, className
   const lidSuffix = contact.whatsapp_lid?.slice(-6) || contact.phone?.slice(-6) || "??????";
   
   return (
-    <Alert variant="destructive" className={cn("mb-3 border-warning/50 bg-warning/10", className)}>
-      <AlertTriangle className="h-4 w-4 text-warning" />
-      <AlertTitle className="text-warning font-medium">Contato sem número identificado</AlertTitle>
+    <Alert className={cn("mb-3 border-warning/50 bg-warning/10", className)}>
+      <Info className="h-4 w-4 text-warning" />
+      <AlertTitle className="text-warning font-medium">Contato com identificador temporário</AlertTitle>
       <AlertDescription className="text-sm">
         <p className="text-muted-foreground mb-2">
           O número real deste contato ainda não foi identificado (LID: ...{lidSuffix}), 

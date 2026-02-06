@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, AlertTriangle, Users } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, Info, Users } from "lucide-react";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -1523,8 +1523,8 @@ export default function Atendimento() {
                     )}
                     {/* LID Contact indicator */}
                     {!conversation.is_bot_active && !conversation.contact?.is_group && isLidOnlyContact(conversation.contact) && (
-                      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-warning rounded-full flex items-center justify-center" title="Contato sem número identificado">
-                        <AlertTriangle className="w-2.5 h-2.5 text-warning-foreground" />
+                      <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-muted rounded-full flex items-center justify-center" title="Contato com identificador temporário">
+                        <Info className="w-2.5 h-2.5 text-muted-foreground" />
                       </span>
                     )}
                   </div>
@@ -1731,11 +1731,11 @@ export default function Atendimento() {
                               className="h-5 px-1.5 text-yellow-500 hover:text-yellow-600 hover:bg-yellow-100/50"
                               onClick={() => handleResolveLidContact(selectedConversation.contact?.id)}
                             >
-                              <AlertTriangle className="w-3.5 h-3.5" />
+                              <Info className="w-3.5 h-3.5" />
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom">
-                            <p className="text-xs">Contato sem número identificado. Clique para tentar localizar.</p>
+                            <p className="text-xs">Contato com identificador temporário. Clique para tentar localizar o número real.</p>
                           </TooltipContent>
                         </Tooltip>
                       </TooltipProvider>
@@ -1825,7 +1825,7 @@ export default function Atendimento() {
                       <Search className="w-4 h-4 mr-2" />
                       Buscar mensagens
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setShowTagPopover(true)}>
+                    <DropdownMenuItem onClick={() => { setTimeout(() => setShowTagPopover(true), 150); }}>
                       <Tag className="w-4 h-4 mr-2" />
                       Gerenciar tags
                     </DropdownMenuItem>
