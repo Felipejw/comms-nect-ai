@@ -3,7 +3,7 @@
 # ============================================
 # Script de Reparo do Auth (GoTrue)
 # Corrige SASL authentication failures sem reinstalar
-# Gera roles.sql, sincroniza senhas e regenera config.js
+# Gera roles.sql, sincroniza senhas, testa cadeia completa
 # ============================================
 
 RED='\033[0;31m'
@@ -57,16 +57,20 @@ log_step "Gerando roles.sql"
 
 mkdir -p "$DEPLOY_DIR/volumes/db/init"
 
-cat > "$DEPLOY_DIR/volumes/db/roles.sql" << ROLESEOF
+# Gerar roles.sql usando \set pgpass (padrão oficial Supabase)
+# O PostgreSQL lê POSTGRES_PASSWORD do ambiente do container em runtime
+cat > "$DEPLOY_DIR/volumes/db/roles.sql" << 'ROLESEOF'
 -- roles.sql: Set passwords for internal Supabase roles
 -- This file follows the official Supabase self-hosted pattern
 -- Mounted at /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+-- NOTE: change to your own passwords for production environments
+\set pgpass `echo "$POSTGRES_PASSWORD"`
 
-ALTER USER authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
-ALTER USER supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-ALTER USER supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+ALTER USER authenticator WITH PASSWORD :'pgpass';
+ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
+ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
 ROLESEOF
-log_success "roles.sql gerado"
+log_success "roles.sql gerado (formato oficial com \\set pgpass)"
 
 # Gerar 99-sync-passwords.sh como fallback
 cat > "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh" << PASSEOF
@@ -136,27 +140,7 @@ sleep 2
 log_success "Senhas sincronizadas"
 
 # =============================================
-# ETAPA 4: Verificar autenticação
-# =============================================
-log_step "Verificando Autenticação"
-
-network_name=$(docker inspect supabase-db --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null | head -1)
-if [ -z "$network_name" ]; then
-    network_name="deploy_supabase-network"
-fi
-
-if docker run --rm --network "$network_name" \
-    -e PGPASSWORD="${POSTGRES_PASSWORD}" \
-    postgres:15-alpine \
-    psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
-    log_success "Autenticação via rede Docker: OK"
-else
-    log_error "Autenticação via rede Docker: FALHOU"
-    log_warn "Verifique os logs do banco: docker logs supabase-db --tail 20"
-fi
-
-# =============================================
-# ETAPA 5: Regenerar config.js do frontend
+# ETAPA 4: Regenerar config.js do frontend
 # =============================================
 log_step "Atualizando config.js"
 
@@ -173,9 +157,9 @@ else
 fi
 
 # =============================================
-# ETAPA 6: Reiniciar Auth
+# ETAPA 5: Reiniciar Auth + Nginx
 # =============================================
-log_step "Reiniciando Serviço de Autenticação"
+log_step "Reiniciando Serviços"
 
 docker compose restart auth 2>/dev/null || docker restart supabase-auth 2>/dev/null
 
@@ -218,12 +202,12 @@ if [ "$auth_ok" = "false" ]; then
     exit 1
 fi
 
-# Reiniciar Nginx para pegar novo config.js
+# Reiniciar Nginx para pegar novo config.js e correções CORS
 docker compose restart nginx 2>/dev/null || docker restart app-nginx 2>/dev/null
 log_success "Nginx reiniciado"
 
 # =============================================
-# ETAPA 7: Verificar/Criar admin com senha 123456
+# ETAPA 6: Verificar/Criar admin com senha 123456
 # =============================================
 log_step "Verificando Usuário Admin"
 
@@ -280,10 +264,6 @@ if [ "$ADMIN_EXISTS" = "0" ] || [ -z "$ADMIN_EXISTS" ]; then
         " 2>/dev/null
         
         log_success "Admin criado!"
-        echo ""
-        echo -e "  Email: ${YELLOW}${ADMIN_EMAIL}${NC}"
-        echo -e "  Senha: ${YELLOW}${ADMIN_PASSWORD}${NC}"
-        echo ""
     else
         log_warn "Não foi possível criar o admin automaticamente"
     fi
@@ -300,25 +280,136 @@ else
 fi
 
 # =============================================
-# RESULTADO
+# ETAPA 7: Diagnóstico completo da cadeia
+# =============================================
+log_step "Diagnóstico End-to-End"
+
+DIAG_PASS=0
+DIAG_FAIL=0
+
+# Teste 1: DB healthy
+echo -n "  Teste 1/7 - DB healthy: "
+db_h=$(docker inspect --format='{{.State.Health.Status}}' supabase-db 2>/dev/null)
+if [ "$db_h" = "healthy" ]; then
+    echo -e "${GREEN}OK${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU ($db_h)${NC}"
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# Teste 2: Senha do supabase_auth_admin funciona
+echo -n "  Teste 2/7 - Senha auth_admin: "
+network_name=$(docker inspect supabase-db --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null | head -1)
+if [ -z "$network_name" ]; then
+    network_name="deploy_supabase-network"
+fi
+
+if docker run --rm --network "$network_name" \
+    -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+    postgres:15-alpine \
+    psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
+    echo -e "${GREEN}OK${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU${NC}"
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# Teste 3: Auth healthy
+echo -n "  Teste 3/7 - Auth healthy: "
+auth_h=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null)
+if [ "$auth_h" = "healthy" ]; then
+    echo -e "${GREEN}OK${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU ($auth_h)${NC}"
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# Teste 4: Kong responde no /auth/v1/health
+echo -n "  Teste 4/7 - Kong -> Auth: "
+kong_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+if [ "$kong_code" = "200" ]; then
+    echo -e "${GREEN}OK (HTTP $kong_code)${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU (HTTP $kong_code)${NC}"
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# Teste 5: Nginx responde no /auth/v1/health
+echo -n "  Teste 5/7 - Nginx -> Kong -> Auth: "
+nginx_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost/auth/v1/health" 2>/dev/null || echo "000")
+if [ "$nginx_code" = "200" ]; then
+    echo -e "${GREEN}OK (HTTP $nginx_code)${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU (HTTP $nginx_code)${NC}"
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# Teste 6: OPTIONS retorna headers CORS
+echo -n "  Teste 6/7 - CORS (OPTIONS preflight): "
+cors_header=$(curl -s -X OPTIONS -I "http://localhost/auth/v1/token?grant_type=password" \
+    -H "Origin: https://example.com" \
+    -H "Access-Control-Request-Method: POST" \
+    -H "Access-Control-Request-Headers: Content-Type, apikey, Authorization" \
+    2>/dev/null | grep -i "access-control-allow-origin" | head -1)
+if echo "$cors_header" | grep -qi "access-control-allow-origin"; then
+    echo -e "${GREEN}OK${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU (sem header CORS na resposta OPTIONS)${NC}"
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# Teste 7: Login funciona via curl
+echo -n "  Teste 7/7 - Login POST: "
+login_response=$(curl -s -w "\n%{http_code}" -X POST "http://localhost/auth/v1/token?grant_type=password" \
+    -H "apikey: ${ANON_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null)
+login_code=$(echo "$login_response" | tail -1)
+login_body=$(echo "$login_response" | head -n -1)
+
+if [ "$login_code" = "200" ]; then
+    echo -e "${GREEN}OK (HTTP $login_code)${NC}"
+    DIAG_PASS=$((DIAG_PASS + 1))
+else
+    echo -e "${RED}FALHOU (HTTP $login_code)${NC}"
+    if [ -n "$login_body" ]; then
+        echo "    Resposta: $(echo "$login_body" | head -c 200)"
+    fi
+    DIAG_FAIL=$((DIAG_FAIL + 1))
+fi
+
+# =============================================
+# RESULTADO FINAL
 # =============================================
 echo ""
-echo -e "${GREEN}"
-echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║                    REPARO CONCLUÍDO!                          ║"
-echo "╚═══════════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-echo ""
-log_info "Status dos serviços:"
-for svc in supabase-db supabase-auth supabase-rest supabase-kong app-nginx; do
-    status=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
-    health=$(docker inspect --format='{{.State.Health.Status}}' "$svc" 2>/dev/null || echo "n/a")
-    if [ "$status" = "running" ]; then
-        log_success "$svc: $status (health: $health)"
-    else
-        log_warn "$svc: $status"
-    fi
-done
+echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
+echo -e "  Diagnóstico: ${GREEN}$DIAG_PASS OK${NC} / ${RED}$DIAG_FAIL FALHOU${NC} (de 7 testes)"
+echo -e "${CYAN}═══════════════════════════════════════════════════${NC}"
+
+if [ "$DIAG_FAIL" -eq 0 ]; then
+    echo ""
+    echo -e "${GREEN}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║           REPARO CONCLUÍDO COM SUCESSO!                      ║"
+    echo "║       Todos os 7 testes passaram. Login funcionando.         ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+else
+    echo ""
+    echo -e "${YELLOW}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║           REPARO CONCLUÍDO COM ALERTAS                       ║"
+    echo "║       $DIAG_FAIL teste(s) falharam. Veja acima.                     ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+fi
+
 echo ""
 echo -e "${CYAN}=== CREDENCIAIS ===${NC}"
 echo -e "  Email: ${YELLOW}${ADMIN_EMAIL}${NC}"

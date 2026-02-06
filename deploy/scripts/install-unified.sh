@@ -426,17 +426,19 @@ PASSEOF
     
     # Gerar roles.sql que será montado em /docker-entrypoint-initdb.d/init-scripts/
     # Este é o padrão oficial do Supabase para definir senhas das roles internas
-    # O PostgreSQL executa este arquivo durante a fase de init-scripts
-    cat > "$DEPLOY_DIR/volumes/db/roles.sql" << ROLESEOF
+    # Usa \set pgpass para ler POSTGRES_PASSWORD do ambiente do container em runtime
+    cat > "$DEPLOY_DIR/volumes/db/roles.sql" << 'ROLESEOF'
 -- roles.sql: Set passwords for internal Supabase roles
 -- This file follows the official Supabase self-hosted pattern
 -- Mounted at /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+-- NOTE: change to your own passwords for production environments
+\set pgpass `echo "$POSTGRES_PASSWORD"`
 
-ALTER USER authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
-ALTER USER supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-ALTER USER supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+ALTER USER authenticator WITH PASSWORD :'pgpass';
+ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
+ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
 ROLESEOF
-    log_success "roles.sql gerado (padrão oficial Supabase)"
+    log_success "roles.sql gerado (formato oficial com \\set pgpass)"
     
     log_success "Diretórios criados"
 }
@@ -617,8 +619,15 @@ CONFIGEOF
 build_frontend() {
     log_step "Verificando Frontend"
     
+    # Sempre limpar dist antigo para garantir que config.js seja injetado
+    if [ -d "$DEPLOY_DIR/frontend/dist" ]; then
+        log_info "Removendo build anterior para garantir rebuild limpo..."
+        rm -rf "$DEPLOY_DIR/frontend/dist"
+        mkdir -p "$DEPLOY_DIR/frontend/dist"
+    fi
+    
     if [ ! -f "$DEPLOY_DIR/frontend/dist/index.html" ]; then
-        log_info "Frontend não encontrado, compilando..."
+        log_info "Compilando frontend..."
         
         if [ -f "$PROJECT_DIR/package.json" ]; then
             cd "$PROJECT_DIR"
