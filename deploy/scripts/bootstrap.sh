@@ -31,7 +31,7 @@ echo "╔═══════════════════════�
 echo "║                                                               ║"
 echo "║       SISTEMA DE ATENDIMENTO - INSTALAÇÃO AUTOMÁTICA         ║"
 echo "║                                                               ║"
-echo "║              Bootstrap Script v1.0                            ║"
+echo "║              Bootstrap Script v1.1                            ║"
 echo "║                                                               ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
@@ -51,7 +51,34 @@ if ! command -v git &> /dev/null; then
     apt-get install -y git
 fi
 
-# Remover instalação anterior automaticamente (ZERO PROMPTS)
+# ==========================================
+# PASSO 1: Baixar arquivos PRIMEIRO (antes de tocar na instalação antiga)
+# ==========================================
+echo -e "${BLUE}[INFO]${NC} Clonando repositório..."
+
+# Limpar clone residual anterior
+rm -rf /tmp/comms-nect-ai-sistema
+
+# Garantir que estamos em diretório válido
+cd /tmp
+
+# Clonar repositório (|| true para não abortar com set -e)
+git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /tmp/comms-nect-ai-sistema 2>/dev/null || true
+
+# Verificar se o download funcionou
+if [ ! -d "/tmp/comms-nect-ai-sistema/deploy" ]; then
+    echo -e "${RED}[ERRO]${NC} Falha ao baixar arquivos do GitHub."
+    echo -e "${RED}[ERRO]${NC} Verifique se o repositório existe e está acessível: $REPO_URL"
+    echo -e "${RED}[ERRO]${NC} A instalação atual NÃO foi modificada."
+    rm -rf /tmp/comms-nect-ai-sistema
+    exit 1
+fi
+
+echo -e "${GREEN}[OK]${NC} Download concluído com sucesso!"
+
+# ==========================================
+# PASSO 2: SÓ AGORA fazer backup e remover instalação antiga
+# ==========================================
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}[WARN]${NC} Diretório $INSTALL_DIR já existe"
     echo -e "${BLUE}[INFO]${NC} Fazendo backup das sessões automaticamente..."
@@ -75,7 +102,7 @@ if [ -d "$INSTALL_DIR" ]; then
         docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
     fi
     
-    # IMPORTANTE: Mudar para diretório seguro ANTES de deletar
+    # Mudar para diretório seguro ANTES de deletar
     cd /tmp
     
     # Remover diretório antigo
@@ -83,12 +110,10 @@ if [ -d "$INSTALL_DIR" ]; then
     echo -e "${GREEN}[OK]${NC} Instalação anterior removida"
 fi
 
-# Garantir que estamos em diretório válido para o git clone
-cd /tmp
-
-# Clonar repositório
-echo -e "${BLUE}[INFO]${NC} Clonando repositório..."
-git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+# ==========================================
+# PASSO 3: Mover arquivos novos para diretório final
+# ==========================================
+mv /tmp/comms-nect-ai-sistema "$INSTALL_DIR"
 
 # Restaurar sessões do backup
 if [ -d "/tmp/baileys-backup" ] && [ "$(ls -A /tmp/baileys-backup 2>/dev/null)" ]; then
