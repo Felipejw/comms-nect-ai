@@ -3,7 +3,7 @@
 # ============================================
 # Script de Reparo do Auth (GoTrue)
 # Corrige SASL authentication failures sem reinstalar
-# Também regenera config.js para garantir conectividade
+# Gera roles.sql, sincroniza senhas e regenera config.js
 # ============================================
 
 RED='\033[0;31m'
@@ -51,7 +51,40 @@ echo "╚═══════════════════════�
 echo -e "${NC}"
 
 # =============================================
-# ETAPA 1: Verificar banco de dados
+# ETAPA 1: Gerar roles.sql (padrão oficial Supabase)
+# =============================================
+log_step "Gerando roles.sql"
+
+mkdir -p "$DEPLOY_DIR/volumes/db/init"
+
+cat > "$DEPLOY_DIR/volumes/db/roles.sql" << ROLESEOF
+-- roles.sql: Set passwords for internal Supabase roles
+-- This file follows the official Supabase self-hosted pattern
+-- Mounted at /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+
+ALTER USER authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
+ALTER USER supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+ALTER USER supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+ROLESEOF
+log_success "roles.sql gerado"
+
+# Gerar 99-sync-passwords.sh como fallback
+cat > "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh" << PASSEOF
+#!/bin/bash
+set -e
+echo "=== Sincronizando senhas dos roles internos ==="
+psql -v ON_ERROR_STOP=0 -U postgres <<-EOSQL
+    ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
+EOSQL
+echo "=== Senhas sincronizadas com sucesso ==="
+PASSEOF
+chmod +x "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh"
+log_success "99-sync-passwords.sh gerado"
+
+# =============================================
+# ETAPA 2: Verificar banco de dados
 # =============================================
 log_step "Verificando Banco de Dados"
 
@@ -79,11 +112,10 @@ fi
 log_success "Banco de dados: healthy"
 
 # =============================================
-# ETAPA 2: Sincronizar senhas das roles
+# ETAPA 3: Sincronizar senhas das roles via SQL direto
 # =============================================
 log_step "Sincronizando Senhas das Roles"
 
-# Cada ALTER ROLE em comando separado para evitar falha em cascata
 log_info "Alterando senha de supabase_auth_admin..."
 docker exec supabase-db psql -U postgres -c \
     "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
@@ -104,7 +136,7 @@ sleep 2
 log_success "Senhas sincronizadas"
 
 # =============================================
-# ETAPA 3: Verificar autenticação via rede Docker
+# ETAPA 4: Verificar autenticação
 # =============================================
 log_step "Verificando Autenticação"
 
@@ -124,12 +156,11 @@ else
 fi
 
 # =============================================
-# ETAPA 4: Regenerar config.js do frontend
+# ETAPA 5: Regenerar config.js do frontend
 # =============================================
 log_step "Atualizando config.js"
 
 if [ -d "$DEPLOY_DIR/frontend/dist" ]; then
-    # Usar window.location.origin para funcionar em HTTP e HTTPS
     cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
 window.__SUPABASE_CONFIG__ = {
   url: window.location.origin,
@@ -142,7 +173,7 @@ else
 fi
 
 # =============================================
-# ETAPA 5: Reiniciar Auth
+# ETAPA 6: Reiniciar Auth
 # =============================================
 log_step "Reiniciando Serviço de Autenticação"
 
@@ -192,25 +223,26 @@ docker compose restart nginx 2>/dev/null || docker restart app-nginx 2>/dev/null
 log_success "Nginx reiniciado"
 
 # =============================================
-# ETAPA 6: Verificar/Criar admin
+# ETAPA 7: Verificar/Criar admin com senha 123456
 # =============================================
 log_step "Verificando Usuário Admin"
 
+ADMIN_EMAIL="admin@admin.com"
+ADMIN_PASSWORD="123456"
+
 ADMIN_EXISTS=$(docker exec supabase-db psql -U postgres -t -c "
-    SELECT COUNT(*) FROM auth.users WHERE email = 'admin@admin.com';
+    SELECT COUNT(*) FROM auth.users WHERE email = '${ADMIN_EMAIL}';
 " 2>/dev/null | tr -d ' \n')
 
 if [ "$ADMIN_EXISTS" = "0" ] || [ -z "$ADMIN_EXISTS" ]; then
-    log_info "Admin não encontrado. Criando admin@admin.com..."
-    
-    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    log_info "Admin não encontrado. Criando ${ADMIN_EMAIL} com senha ${ADMIN_PASSWORD}..."
     
     # Tentar via API primeiro
     signup_response=$(curl -s -X POST "http://localhost:8000/auth/v1/signup" \
         -H "apikey: ${ANON_KEY}" \
         -H "Content-Type: application/json" \
         -d "{
-            \"email\": \"admin@admin.com\",
+            \"email\": \"${ADMIN_EMAIL}\",
             \"password\": \"${ADMIN_PASSWORD}\",
             \"data\": {\"name\": \"Administrador\"}
         }" 2>/dev/null)
@@ -228,7 +260,7 @@ if [ "$ADMIN_EXISTS" = "0" ] || [ -z "$ADMIN_EXISTS" ]; then
             ) VALUES (
                 '00000000-0000-0000-0000-000000000000',
                 gen_random_uuid(), 'authenticated', 'authenticated',
-                'admin@admin.com',
+                '${ADMIN_EMAIL}',
                 crypt('${ADMIN_PASSWORD}', gen_salt('bf')),
                 now(),
                 '{\"provider\": \"email\", \"providers\": [\"email\"]}'::jsonb,
@@ -249,14 +281,22 @@ if [ "$ADMIN_EXISTS" = "0" ] || [ -z "$ADMIN_EXISTS" ]; then
         
         log_success "Admin criado!"
         echo ""
-        echo -e "  Email: ${YELLOW}admin@admin.com${NC}"
+        echo -e "  Email: ${YELLOW}${ADMIN_EMAIL}${NC}"
         echo -e "  Senha: ${YELLOW}${ADMIN_PASSWORD}${NC}"
         echo ""
     else
         log_warn "Não foi possível criar o admin automaticamente"
     fi
 else
-    log_success "Admin admin@admin.com já existe"
+    log_success "Admin ${ADMIN_EMAIL} já existe"
+    log_info "Atualizando senha para ${ADMIN_PASSWORD}..."
+    docker exec supabase-db psql -U postgres -c "
+        UPDATE auth.users 
+        SET encrypted_password = crypt('${ADMIN_PASSWORD}', gen_salt('bf')),
+            updated_at = now()
+        WHERE email = '${ADMIN_EMAIL}';
+    " 2>/dev/null
+    log_success "Senha do admin atualizada para ${ADMIN_PASSWORD}"
 fi
 
 # =============================================
@@ -279,6 +319,10 @@ for svc in supabase-db supabase-auth supabase-rest supabase-kong app-nginx; do
         log_warn "$svc: $status"
     fi
 done
+echo ""
+echo -e "${CYAN}=== CREDENCIAIS ===${NC}"
+echo -e "  Email: ${YELLOW}${ADMIN_EMAIL}${NC}"
+echo -e "  Senha: ${YELLOW}${ADMIN_PASSWORD}${NC}"
 echo ""
 echo -e "  Acesse: ${GREEN}http://$DOMAIN${NC} ou ${GREEN}https://$DOMAIN${NC}"
 echo ""
