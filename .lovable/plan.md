@@ -1,99 +1,45 @@
 
 
-# Melhorias: Preview de Mensagem, Dropdown de Setor e Grupos WhatsApp
+# Correcoes: Indicador LID e Bug "Gerenciar Tags"
 
-## Problema 1 - "Nova conversa" em vez da ultima mensagem
+## Problema 1 - Icone de alerta no "Contato sem numero identificado"
 
-O campo `subject` da conversa so e atualizado quando voce envia uma mensagem pela interface do sistema (via `useSendMessage`). Quando mensagens chegam pelo webhook do WhatsApp, o `subject` nunca e atualizado -- fica `null`, e o frontend mostra "Nova conversa".
+O indicador de contato LID (sem numero real) usa o icone `AlertTriangle` e o estilo `variant="destructive"`, o que transmite a impressao de erro. Na verdade, e apenas um aviso informativo.
 
-**Solucao**: Atualizar o webhook (`baileys-webhook`) para salvar um preview da ultima mensagem no campo `subject` sempre que uma mensagem for recebida ou enviada (fromMe). Para audios, imagens e videos, usar icones descritivos como "Audio", "Imagem", etc.
+**Alteracoes**:
 
----
+### Arquivo: `src/components/atendimento/LidContactIndicator.tsx`
+- Trocar o icone `AlertTriangle` por `Info` (do lucide-react)
+- Mudar o `variant` do Alert de `"destructive"` para nenhum (padrao), mantendo o estilo visual `border-warning/50 bg-warning/10`
+- Atualizar o titulo para algo mais neutro, como "Contato com identificador temporario"
 
-## Problema 2 - Dropdown de Setor nao abre
-
-O badge "Setor" na lista de conversas usa um `DropdownMenu` do Radix, mas tem `onPointerDown` e `onClick` com `e.stopPropagation()` no trigger. Isso pode causar conflito com o clique na conversa. Alem disso, a renderizacao do dropdown pode estar sendo bloqueada pelo container `overflow-y-auto` da lista de conversas.
-
-**Solucao**: Ajustar o `DropdownMenuContent` para usar portal rendering e garantir que o z-index e posicionamento funcionem corretamente sobre a lista de conversas scrollavel.
-
----
-
-## Problema 3 - Grupos WhatsApp misturados com contatos
-
-O numero grande (`120363423042084921`) e o identificador de um grupo WhatsApp (`@g.us`). O servidor Baileys ja detecta `isGroup` e envia essa informacao no payload do webhook, mas o webhook ignora completamente esse dado. O grupo e salvo como um contato normal.
-
-**Solucao em 3 partes**:
-
-1. **Banco de dados**: Adicionar coluna `is_group` (boolean) na tabela `contacts` para marcar contatos que sao grupos
-2. **Webhook**: Usar o campo `isGroup` do payload para marcar o contato como grupo e usar o nome do grupo (pushName) como nome
-3. **Frontend**: Filtrar grupos separados na lista de conversas, com uma aba ou filtro dedicado
+### Arquivo: `src/pages/Atendimento.tsx`
+- Na lista de conversas (linha ~1526): trocar o icone `AlertTriangle` no badge do avatar por `Info`, com cor mais suave
+- No header da conversa (linha ~1734): trocar `AlertTriangle` por `Info` e ajustar o tooltip para tom informativo
 
 ---
 
-## Detalhes Tecnicos
+## Problema 2 - "Gerenciar tags" nao abre ao clicar
 
-### Correcao 1 - Webhook: Atualizar subject com preview da mensagem
+O botao "Gerenciar tags" no `DropdownMenu` (menu de opcoes da conversa) chama `setShowTagPopover(true)`. Porem, o `Popover` das tags esta vinculado a um `PopoverTrigger` que e um botao separado no header. Quando o `DropdownMenu` fecha (ao clicar no item), ele captura o foco e impede que o `Popover` abra corretamente -- um conflito conhecido entre Radix `DropdownMenu` e `Popover`.
 
-**Arquivo**: `supabase/functions/baileys-webhook/index.ts`
+**Solucao**: Usar um `setTimeout` para atrasar a abertura do Popover, garantindo que o `DropdownMenu` tenha tempo de fechar completamente antes do Popover abrir.
 
-Ao salvar a mensagem (apos a insercao na tabela `messages`), atualizar o campo `subject` da conversa com um preview do conteudo:
-
-```text
-let subjectPreview = body;
-if (messageType === 'audio') subjectPreview = 'Audio';
-else if (messageType === 'image') subjectPreview = 'Imagem';
-else if (messageType === 'video') subjectPreview = 'Video';
-else if (messageType === 'document') subjectPreview = 'Documento';
-else if (messageType === 'sticker') subjectPreview = 'Figurinha';
-else subjectPreview = body.substring(0, 100);
-```
-
-Adicionar `subject: subjectPreview` nos updates da conversa (tanto no update de conversa existente quanto na criacao de nova conversa).
-
-### Correcao 2 - Dropdown de Setor
-
-**Arquivo**: `src/pages/Atendimento.tsx`
-
-O `DropdownMenuContent` precisa de ajustes para funcionar dentro da lista scrollavel:
-- Garantir que o portal rendering esta ativo (comportamento padrao do Radix)
-- Aumentar o z-index para ficar acima de tudo
-- Verificar se `onPointerDown` no trigger nao esta impedindo o dropdown de abrir
-
-### Correcao 3 - Separacao de Grupos
-
-**Migracao SQL**: Adicionar coluna `is_group` na tabela `contacts`:
+### Arquivo: `src/pages/Atendimento.tsx`
+- No `DropdownMenuItem` de "Gerenciar tags" (linha ~1828): envolver o `setShowTagPopover(true)` em um `setTimeout` com delay de ~100ms para que o DropdownMenu feche antes do Popover tentar abrir
 
 ```text
-ALTER TABLE contacts ADD COLUMN is_group BOOLEAN DEFAULT false;
+onClick={() => {
+  setTimeout(() => setShowTagPopover(true), 100);
+}}
 ```
 
-Tambem atualizar o contato de grupo existente:
+---
 
-```text
-UPDATE contacts SET is_group = true WHERE phone = '120363423042084921';
-```
-
-**Webhook** (`baileys-webhook/index.ts`):
-- Ao criar/buscar contato, verificar se `msg.isGroup` e `true`
-- Se for grupo, marcar `is_group = true` no contato
-- Usar `msg.pushName` como nome do grupo (grupos enviam o nome do grupo como pushName)
-
-**Frontend** (`Atendimento.tsx`):
-- Adicionar uma aba "Grupos" nas tabs de conversas (ao lado de "Atendendo", "Finalizados", "Chatbot")
-- Filtrar conversas com `contact.is_group === true` para a aba Grupos
-- Excluir grupos das abas normais de atendimento
-- Usar icone diferenciado para grupos (por exemplo, `Users` do lucide ao inves do avatar)
-
-**Tipo TypeScript** (`useConversations.ts`):
-- Adicionar `is_group?: boolean` ao tipo do contact dentro de Conversation
-- Incluir `is_group` no select da query de conversas
-
-### Resumo das Alteracoes
+## Resumo das Alteracoes
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `supabase/functions/baileys-webhook/index.ts` | Atualizar `subject` com preview da mensagem; detectar e marcar grupos |
-| `src/pages/Atendimento.tsx` | Corrigir dropdown de Setor; adicionar aba Grupos; icone diferenciado para grupos |
-| `src/hooks/useConversations.ts` | Adicionar `is_group` no select e no tipo |
-| Migracao SQL | Adicionar coluna `is_group` na tabela `contacts` |
+| `src/components/atendimento/LidContactIndicator.tsx` | Trocar `AlertTriangle` por `Info`; remover `variant="destructive"` |
+| `src/pages/Atendimento.tsx` | Trocar icones `AlertTriangle` por `Info` nos indicadores LID; adicionar `setTimeout` no "Gerenciar tags" |
 
