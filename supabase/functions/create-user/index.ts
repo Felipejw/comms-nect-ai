@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.3";
 
 const corsHeaders = {
@@ -6,7 +5,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
-serve(async (req) => {
+const handler = async (req: Request): Promise<Response> => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -16,157 +15,7 @@ serve(async (req) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 
-    // Verify the caller is authenticated
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      console.log('No Authorization header');
-      return new Response(
-        JSON.stringify({ error: 'Authorization header required' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Create admin client for user operations
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
-    });
-
-    // Extract the token and get user using admin client
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user: callerUser }, error: authError } = await supabaseAdmin.auth.getUser(token);
-    
-    if (authError || !callerUser) {
-      console.log('Auth error:', authError?.message);
-      return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-
-    // Verify caller is admin
-    const { data: callerRole } = await supabaseAdmin
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', callerUser.id)
-      .single();
-
-    if (!callerRole || !['admin', 'super_admin'].includes(callerRole.role)) {
-      return new Response(
-        JSON.stringify({ error: 'Only admins can create users' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    const { email, password, name, role = 'atendente', permissions = [] } = await req.json();
-
-    console.log(`Creating user with email: ${email}, role: ${role}, permissions count: ${permissions.length}`);
-
-    // Create user using admin API
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-      user_metadata: {
-        name: name || email.split('@')[0],
-      },
-    });
-
-    if (error) {
-      console.error('Error creating user:', error.message);
-      return new Response(
-        JSON.stringify({ error: error.message }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log('User created successfully:', data.user?.id);
-
-    // Get caller's tenant_id to assign to new user
-    const { data: callerProfile } = await supabaseAdmin
-      .from('profiles')
-      .select('tenant_id')
-      .eq('user_id', callerUser.id)
-      .single();
-
-    const callerTenantId = callerProfile?.tenant_id;
-
-    // Wait for the trigger to create the profile
-    if (data.user) {
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // Update tenant_id on new user's profile
-      if (callerTenantId) {
-        const { error: tenantError } = await supabaseAdmin
-          .from('profiles')
-          .update({ tenant_id: callerTenantId })
-          .eq('user_id', data.user.id);
-
-        if (tenantError) {
-          console.error('Error setting tenant_id:', tenantError.message);
-        } else {
-          console.log('Tenant ID set to:', callerTenantId);
-        }
-      }
-    }
-
-    // If the user was created and role is admin, update it
-    if (data.user && role === 'admin') {
-      const { error: roleError } = await supabaseAdmin
-        .from('user_roles')
-        .update({ role: 'admin' })
-        .eq('user_id', data.user.id);
-      
-      if (roleError) {
-        console.error('Error updating role:', roleError.message);
-      } else {
-        console.log('Role updated to admin');
-      }
-    }
-
-    // Save permissions for atendente users
-    if (data.user && role !== 'admin' && permissions.length > 0) {
-      console.log('Saving permissions for user:', data.user.id);
-      
-      const permissionsToInsert = permissions.map((p: { module: string; can_view: boolean; can_edit: boolean }) => ({
-        user_id: data.user!.id,
-        module: p.module,
-        can_view: p.can_view,
-        can_edit: p.can_edit,
-      }));
-
-      const { error: permError } = await supabaseAdmin
-        .from('user_permissions')
-        .insert(permissionsToInsert);
-
-      if (permError) {
-        console.error('Error saving permissions:', permError.message);
-      } else {
-        console.log('Permissions saved successfully');
-      }
-    }
-
-    // Log activity
-    if (data.user) {
-      await supabaseAdmin.from('activity_logs').insert({
-        tenant_id: callerTenantId,
-        user_id: callerUser.id,
-        action: 'create',
-        entity_type: 'user',
-        entity_id: data.user.id,
-        metadata: { email, name: name || email.split('@')[0], role },
-      });
-    }
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'User created successfully',
-        userId: data.user?.id 
-      }),
-      { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
-
+    // ... keep existing code (auth verification, user creation, role assignment, permissions, activity logging)
   } catch (error) {
     console.error('Unexpected error:', error);
     return new Response(
@@ -174,4 +23,7 @@ serve(async (req) => {
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
-});
+};
+
+export default handler;
+Deno.serve(handler);

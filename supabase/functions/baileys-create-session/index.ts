@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-Deno.serve(async (req) => {
+const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -89,8 +89,6 @@ Deno.serve(async (req) => {
       
       console.error(`[Baileys Session] ${isTimeout ? 'Timeout' : 'Fetch error'}:`, errorMessage);
       
-      // Não marcar como erro imediatamente em caso de timeout
-      // O servidor pode ainda estar processando e enviar webhook depois
       if (!isTimeout) {
         await supabaseClient
           .from("connections")
@@ -113,4 +111,7 @@ Deno.serve(async (req) => {
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-});
+};
+
+export default handler;
+Deno.serve(handler);
