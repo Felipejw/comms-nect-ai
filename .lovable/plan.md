@@ -1,58 +1,53 @@
 
 
-## Fix: Stop init.sql from Crashing PostgreSQL
+## Fix: PostgreSQL Crashing After init.sql Execution
 
-### Root Cause
+### Status: Attempt 3
 
-The `init.sql` is mounted at `/docker-entrypoint-initdb.d/99-custom-init.sql`. PostgreSQL's docker-entrypoint runs all `.sql` files in that directory with `psql -v ON_ERROR_STOP=1`. This means **any unhandled error** in our script kills the entire PostgreSQL initialization process, including the Supabase internal scripts that create essential roles (`supabase_auth_admin`, `authenticator`, etc.).
+### Root Cause (Updated)
 
-Evidence from the logs:
-- `(0 rows)` for roles query -- the internal Supabase scripts that create these roles were interrupted
-- `connection refused` on port 5432 -- PostgreSQL crashed during init and is restarting
-- The init.sql verification check also failed -- confirming PostgreSQL was down
+Previous fixes resolved the init.sql auto-execution problem (roles now exist, init.sql runs successfully). However, **PostgreSQL becomes unavailable via TCP immediately after init.sql completes**.
 
-Even though we wrapped some operations in exception handlers, there are still ~20 `CREATE TRIGGER` statements and ~50 `CREATE POLICY` statements outside exception blocks that can produce errors and trigger `ON_ERROR_STOP`.
+Evidence:
+- `[OK] init.sql executado com sucesso - tabelas criadas` ✓
+- `ROLES NO BANCO: 9 rows` ✓ (all roles present)
+- Auth immediately gets `connection refused` on TCP port 5432 ✗
+- Server has only **3GB RAM** (minimum recommended: 4GB)
 
-### Solution: Run init.sql AFTER PostgreSQL is Fully Up
+Most likely cause: **PostgreSQL OOM-killed or crashes** under memory pressure from creating ~50 policies + ~20 triggers + 3 publications with `wal_level=logical` and `max_connections=200` on a 3GB server.
 
-Instead of running init.sql as part of PostgreSQL's boot sequence (where errors are fatal), we run it manually AFTER the database is fully healthy and all internal roles are created.
+### Changes Made (Attempt 3)
 
-### Changes (2 files)
+#### 1. `deploy/docker-compose.yml` - PostgreSQL Memory Tuning
+- Reduced `max_connections` from 200 → 100 (saves ~200MB RAM)
+- Added `shared_buffers=128MB` (default was 128MB but explicit is safer)
+- Added `effective_cache_size=256MB`
+- Added `work_mem=4MB` (prevents per-query memory spikes)
+- Added `maintenance_work_mem=64MB`
+- Added explicit `listen_addresses=*` (ensures TCP listening on all interfaces)
 
-#### 1. `deploy/docker-compose.yml`
-- Change the volume mount from `/docker-entrypoint-initdb.d/99-custom-init.sql` to `/docker-entrypoint-initdb.d/migrations/init.sql`
-- This path is NOT auto-executed by docker-entrypoint (only files directly in the directory root are executed, not subdirectories)
-- The Supabase internal init scripts run normally without interference
+#### 2. `deploy/scripts/install-unified.sh` - Post-init.sql Verification
+Added **ETAPA 1d** after init.sql:
+- Checks `dmesg` for OOM-kill events targeting PostgreSQL
+- Checks container restart count
+- Tests TCP connectivity as `supabase_auth_admin` (simulates exactly what Auth does)
+- Waits up to 60s for DB to recover if TCP fails
+- Shows detailed logs and diagnostics if DB is down
 
-#### 2. `deploy/scripts/install-unified.sh`
-Restructure the `start_services()` function:
-- After DB passes healthcheck, wait for Supabase internal init to complete by checking for the `supabase_auth_admin` role (instead of checking for `public.tenants` which we haven't created yet)
-- Run init.sql manually via `docker exec supabase-db psql -U postgres -f /docker-entrypoint-initdb.d/migrations/init.sql` (without ON_ERROR_STOP, so errors are warnings not crashes)
-- Only THEN start the Auth container
-- Remove the old init.sql completion check and the manual role creation fallback (they become unnecessary)
+### Expected Behavior
 
-### Technical Details
+With these changes:
+- PostgreSQL uses significantly less memory (suitable for 3GB servers)
+- If PostgreSQL crashes after init.sql, the script detects it and waits for recovery
+- Detailed diagnostics help identify the exact failure cause
+- Auth only starts after TCP connectivity is confirmed
 
-New startup flow:
-
-```text
-1. Start DB container
-2. Wait for pg_isready (healthcheck)
-3. Wait for supabase_auth_admin role to exist (confirms internal init completed)
-4. Run our init.sql via docker exec (non-fatal errors)
-5. Verify public.tenants table exists (confirms our init succeeded)
-6. Start Auth container (all roles + schemas ready)
-7. Wait for Auth healthy
-8. Start remaining services
+### Run Command
+```bash
+cd /opt/sistema
+git pull origin main
+cd deploy
+docker compose --profile baileys down -v 2>/dev/null || true
+sudo rm -rf volumes/db/data
+sudo bash scripts/install-unified.sh
 ```
-
-Key difference: Our init.sql runs via `docker exec psql` where errors are just warnings, NOT via `docker-entrypoint` where errors kill PostgreSQL.
-
-### Expected Result
-
-- Supabase internal init scripts run without interference, creating all required roles
-- Our init.sql runs safely after everything is set up, creating tables and policies
-- Auth starts and immediately connects successfully (roles already exist)
-- Kong starts and becomes healthy
-- Admin user creation works via API
-

@@ -71,7 +71,17 @@ services:
       - -c
       - max_slot_wal_keep_size=1024
       - -c
-      - max_connections=200
+      - max_connections=100
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - listen_addresses=*
     networks:
       - supabase-network
 
