@@ -5,7 +5,9 @@
 # Sistema de Atendimento + Baileys WhatsApp Server
 # ============================================
 
-set -e
+# NOTA: Não usar set -e em scripts de instalação complexos.
+# Qualquer comando que falhe mataria o script silenciosamente,
+# impedindo diagnóstico e fallback.
 
 # Cores para output
 RED='\033[0;31m'
@@ -587,124 +589,161 @@ build_frontend() {
     fi
 }
 
-# Iniciar serviços
+# Iniciar serviços em 3 etapas com diagnóstico e fallback
 start_services() {
     log_step "Iniciando Serviços"
-    
     cd "$DEPLOY_DIR"
+
+    # =============================================
+    # ETAPA 1: Banco de dados primeiro
+    # =============================================
+    log_info "Etapa 1/3: Iniciando banco de dados..."
+    docker compose up -d db
     
-    log_info "Iniciando containers Docker..."
-    docker compose --profile baileys up -d
-    
-    log_info "Aguardando containers iniciarem..."
-    
-    # Verificação ativa em vez de sleep fixo
-    local max_wait=60
-    local waited=0
-    while [ $waited -lt $max_wait ]; do
-        local running=$(docker compose --profile baileys ps --format '{{.State}}' 2>/dev/null | grep -c "running" || echo "0")
-        if [ "$running" -ge 5 ]; then
+    # Esperar banco ficar healthy
+    local db_wait=0
+    local db_max=60
+    while [ $db_wait -lt $db_max ]; do
+        local db_health=$(docker inspect --format='{{.State.Health.Status}}' supabase-db 2>/dev/null || echo "starting")
+        if [ "$db_health" = "healthy" ]; then
+            log_success "Banco de dados healthy"
             break
         fi
-        sleep 5
-        waited=$((waited + 5))
-        log_info "Aguardando containers... ($waited/${max_wait}s, $running rodando)"
+        sleep 3
+        db_wait=$((db_wait + 3))
+        log_info "Aguardando banco... ($db_wait/${db_max}s)"
     done
     
+    if [ "$db_health" != "healthy" ]; then
+        log_error "Banco não ficou healthy em ${db_max}s. Abortando."
+        docker logs supabase-db --tail 20 2>&1
+        return 1
+    fi
+
+    # =============================================
+    # ETAPA 2: Auth (GoTrue) - o container problemático
+    # =============================================
+    log_info "Etapa 2/3: Iniciando serviço de autenticação..."
+    docker compose up -d auth
+    
+    # Aguardar auth com diagnóstico detalhado
+    local auth_wait=0
+    local auth_max=60
+    local auth_ok=false
+    local auth_crash_handled=false
+    
+    while [ $auth_wait -lt $auth_max ]; do
+        # Verificar se o container ainda está rodando
+        local auth_running=$(docker inspect --format='{{.State.Running}}' supabase-auth 2>/dev/null || echo "false")
+        
+        if [ "$auth_running" = "false" ] && [ "$auth_crash_handled" = "false" ]; then
+            auth_crash_handled=true
+            log_error "GoTrue CRASHOU! Exibindo logs:"
+            echo "--- INICIO LOGS AUTH ---"
+            docker logs supabase-auth --tail 30 2>&1
+            echo "--- FIM LOGS AUTH ---"
+            
+            # Tentar criar roles manualmente e reiniciar
+            log_info "Tentando criar roles do Supabase manualmente..."
+            docker exec supabase-db psql -U postgres -c "
+                DO \$\$ BEGIN
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+                        CREATE ROLE supabase_auth_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
+                    END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
+                        CREATE ROLE supabase_storage_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
+                    END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
+                        CREATE ROLE authenticator WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
+                    END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+                        CREATE ROLE anon NOLOGIN NOINHERIT;
+                    END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+                        CREATE ROLE authenticated NOLOGIN NOINHERIT;
+                    END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+                        CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
+                    END IF;
+                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+                        CREATE ROLE supabase_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' BYPASSRLS;
+                    END IF;
+                END \$\$;
+                -- Grants essenciais
+                GRANT anon TO authenticator;
+                GRANT authenticated TO authenticator;
+                GRANT service_role TO authenticator;
+                GRANT supabase_admin TO authenticator;
+                -- Criar schema auth se nao existir
+                CREATE SCHEMA IF NOT EXISTS auth;
+                GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
+                GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role;
+                -- Grants no schema public
+                GRANT ALL ON SCHEMA public TO supabase_admin, supabase_auth_admin;
+                GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO supabase_admin, supabase_auth_admin;
+                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated, anon;
+            " 2>&1 || log_warn "Alguns grants podem ter falhado (normal se já existem)"
+            
+            log_info "Reiniciando auth após criar roles..."
+            docker compose up -d auth
+            sleep 5
+        fi
+        
+        local auth_health=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "starting")
+        if [ "$auth_health" = "healthy" ]; then
+            auth_ok=true
+            log_success "Serviço de autenticação healthy!"
+            break
+        fi
+        
+        sleep 3
+        auth_wait=$((auth_wait + 3))
+        log_info "Aguardando auth... ($auth_wait/${auth_max}s) [status: $auth_health]"
+    done
+    
+    if [ "$auth_ok" = "false" ]; then
+        log_error "Auth não ficou healthy em ${auth_max}s"
+        echo ""
+        log_error "=== LOGS DO AUTH ==="
+        docker logs supabase-auth --tail 40 2>&1
+        echo ""
+        log_error "=== ROLES NO BANCO ==="
+        docker exec supabase-db psql -U postgres -c "SELECT rolname FROM pg_roles WHERE rolname LIKE 'supabase%' OR rolname IN ('authenticator','anon','authenticated','service_role');" 2>&1
+        echo ""
+        log_warn "Continuando instalação mesmo com auth unhealthy..."
+    fi
+
+    # =============================================
+    # ETAPA 3: Todos os outros serviços
+    # =============================================
+    log_info "Etapa 3/3: Iniciando demais serviços..."
+    docker compose --profile baileys up -d || true
+    
+    sleep 5
+    
     echo ""
-    log_info "Status dos containers:"
-    services=("supabase-db" "supabase-auth" "supabase-rest" "supabase-kong" "supabase-functions" "supabase-storage" "baileys-server" "app-nginx")
+    log_info "Status final dos containers:"
+    local services=("supabase-db" "supabase-auth" "supabase-rest" "supabase-kong" "supabase-functions" "supabase-storage" "baileys-server" "app-nginx")
     for service in "${services[@]}"; do
         local status=$(docker inspect --format='{{.State.Status}}' "$service" 2>/dev/null || echo "not found")
+        local health=$(docker inspect --format='{{.State.Health.Status}}' "$service" 2>/dev/null || echo "n/a")
         if [ "$status" = "running" ]; then
-            log_success "$service: $status"
+            log_success "$service: $status (health: $health)"
         else
             log_warn "$service: $status"
         fi
     done
-    
-    # Verificar especificamente o container auth (causa mais comum de falha)
-    local auth_status=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "not found")
-    if [ "$auth_status" = "unhealthy" ]; then
-        log_error "Container supabase-auth está unhealthy!"
-        log_error "=== Últimas 20 linhas de log do Auth ==="
-        docker logs supabase-auth --tail 20 2>&1
-        log_info "Tentando reiniciar o auth..."
-        docker compose restart auth
-        sleep 15
-        
-        # Verificar novamente
-        auth_status=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "not found")
-        if [ "$auth_status" = "healthy" ]; then
-            log_success "Auth reiniciado com sucesso!"
-        else
-            log_error "Auth continua unhealthy após reinício. Verifique os logs acima."
-            log_error "Causa mais provável: senha do banco não corresponde aos roles internos."
-            log_info "Solução: remova volumes/db/data e rode a instalação novamente."
-        fi
-    fi
 }
 
-# Aguardar banco de dados ficar pronto
-wait_for_database() {
-    log_step "Aguardando Banco de Dados"
+# Aguardar Kong API Gateway ficar pronto (DB e Auth já foram tratados em start_services)
+wait_for_services() {
+    log_step "Verificando Conectividade dos Serviços"
     
-    local max_attempts=30
-    local attempt=0
-    
-    while [ $attempt -lt $max_attempts ]; do
-        attempt=$((attempt + 1))
-        
-        if docker exec supabase-db pg_isready -U postgres &>/dev/null; then
-            log_success "Banco de dados está pronto (tentativa $attempt/$max_attempts)"
-            return 0
-        fi
-        
-        log_info "Aguardando banco de dados... ($attempt/$max_attempts)"
-        sleep 5
-    done
-    
-    log_error "Banco de dados não ficou pronto após $max_attempts tentativas"
-    return 1
-}
-
-# Aguardar GoTrue (Auth) ficar pronto - verifica diretamente na porta 9999
-wait_for_auth() {
-    log_step "Aguardando Serviço de Autenticação (GoTrue)"
-    
-    local max_attempts=30
-    local attempt=0
-    
-    while [ $attempt -lt $max_attempts ]; do
-        attempt=$((attempt + 1))
-        
-        # Verificar GoTrue diretamente na porta 9999 (não via Kong)
-        local health_code
-        health_code=$(docker exec supabase-auth wget -q -O /dev/null --spider "http://localhost:9999/health" 2>&1 && echo "200" || echo "000")
-        
-        if [ "$health_code" = "200" ]; then
-            log_success "GoTrue (Auth) está pronto (tentativa $attempt/$max_attempts)"
-            break
-        fi
-        
-        log_info "Aguardando GoTrue... ($attempt/$max_attempts)"
-        sleep 5
-    done
-    
-    if [ "$health_code" != "200" ]; then
-        log_error "GoTrue não ficou pronto após $max_attempts tentativas"
-        log_error "=== Logs do GoTrue (últimas 30 linhas) ==="
-        docker logs supabase-auth --tail 30 2>&1 || true
-        echo ""
-        log_error "=== Status dos containers ==="
-        docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
-        return 1
-    fi
-    
-    # Agora verificar se Kong está acessível na porta 8000
+    # Verificar Kong na porta 8000 (precisa estar pronto para criar admin)
     log_info "Verificando Kong API Gateway (porta 8000)..."
     local kong_attempts=0
-    local kong_max=15
+    local kong_max=20
     
     while [ $kong_attempts -lt $kong_max ]; do
         kong_attempts=$((kong_attempts + 1))
@@ -725,8 +764,8 @@ wait_for_auth() {
     log_error "=== Logs do Kong (últimas 20 linhas) ==="
     docker logs supabase-kong --tail 20 2>&1 || true
     echo ""
-    log_error "=== Logs do Functions (últimas 10 linhas) ==="
-    docker logs supabase-functions --tail 10 2>&1 || true
+    log_error "=== Logs do Auth (últimas 10 linhas) ==="
+    docker logs supabase-auth --tail 10 2>&1 || true
     log_warn "Continuando instalação apesar do Kong não estar pronto..."
     return 1
 }
@@ -1011,8 +1050,7 @@ main() {
     configure_ssl
     build_frontend
     start_services
-    wait_for_database
-    wait_for_auth
+    wait_for_services
     create_admin_and_tenant
     save_credentials
     verify_installation
