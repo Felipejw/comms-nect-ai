@@ -1,183 +1,87 @@
 
 
-# Correcao Definitiva: Startup em Etapas + Diagnostico Real
+## Fix: Database Initialization Race Condition in Self-Hosted Deploy
 
-## Problemas Identificados
+### Problem Identified
 
-### Bug 1: `set -e` mata o script silenciosamente
-O script tem `set -e` na linha 8, o que significa que QUALQUER comando que falhe encerra o script inteiro. Quando `docker compose --profile baileys up -d` falha na linha 597 (porque Kong depende de auth e auth esta unhealthy), o script morre ali mesmo. Todo o codigo de diagnostico, captura de logs do auth, retry, etc. NUNCA EXECUTA. Voce nunca ve o erro real do GoTrue.
+The installation fails because of two related issues:
 
-### Bug 2: Startup monolitico
-O `docker compose up -d` tenta iniciar todos os 12 containers simultaneamente. O Kong tem `depends_on: auth: condition: service_healthy`. Se o GoTrue crashar no boot (por qualquer motivo), Docker marca como unhealthy e retorna erro imediato. Nao ha chance de diagnosticar ou tentar novamente.
+1. **Race condition**: The healthcheck (`pg_isready`) passes before the init.sql finishes executing. Auth starts too early and gets "connection refused" because PostgreSQL restarts after init script errors.
 
-## Solucao: Startup em 3 Etapas com Diagnostico
+2. **Fatal errors in init.sql**: The init.sql references objects that may not exist during first-boot initialization:
+   - `auth.users` table (created by Supabase's internal scripts, may not be ready)
+   - `storage.buckets` / `storage.objects` tables (created by the storage container, NOT during DB init)
+   - `supabase_realtime` publication (may not exist in this image version)
 
-Reescrever a funcao `start_services()` para iniciar os containers em ordem e capturar logs se algo falhar.
+### Solution (2 files to change)
 
-### Alteracao: `deploy/scripts/install-unified.sh`
+#### 1. Fix `deploy/supabase/init.sql`
 
-**Funcao `start_services()` - reescrita completa:**
+Wrap all operations that reference external schemas in safe exception handlers:
+
+- **auth.users trigger** (line 959-962): Wrap in a DO block that catches the error if `auth.users` doesn't exist yet. The trigger will be created later by GoTrue's own migrations.
+- **storage.buckets inserts** (lines 1235-1314): Wrap ALL storage operations in a single DO block with EXCEPTION handler, since the storage schema is created by the storage container, not during DB init.
+- **ALTER PUBLICATION** (lines 1320-1335): Already has exception handling but needs an additional catch for "undefined_object" (publication doesn't exist).
+
+#### 2. Fix `deploy/scripts/install-unified.sh`
+
+Add resilience to the staged startup:
+
+- **Add a post-healthcheck delay**: After DB passes `pg_isready`, wait an additional 15 seconds for init scripts to complete before starting Auth.
+- **Add init completion check**: Run a simple SQL query (`SELECT 1 FROM public.tenants LIMIT 0`) to verify the custom init.sql has finished executing. Only proceed to Auth after this confirms.
+- **Increase auth wait time**: Extend the auth wait from 60s to 90s to give more room for the fallback role-creation logic to work.
+
+### Technical Details
 
 ```text
-start_services() {
-    log_step "Iniciando Servicos"
-    cd "$DEPLOY_DIR"
+Startup Flow (Fixed):
 
-    # ETAPA 1: Banco de dados primeiro
-    log_info "Etapa 1/3: Iniciando banco de dados..."
-    docker compose up -d db
-    
-    # Esperar banco ficar healthy
-    local db_wait=0
-    local db_max=60
-    while [ $db_wait -lt $db_max ]; do
-        local db_health=$(docker inspect --format='{{.State.Health.Status}}' supabase-db 2>/dev/null || echo "starting")
-        if [ "$db_health" = "healthy" ]; then
-            log_success "Banco de dados healthy"
-            break
-        fi
-        sleep 3
-        db_wait=$((db_wait + 3))
-        log_info "Aguardando banco... ($db_wait/${db_max}s)"
-    done
-
-    # ETAPA 2: Auth (GoTrue) - o container problematico
-    log_info "Etapa 2/3: Iniciando servico de autenticacao..."
-    docker compose up -d auth
-    
-    # Aguardar auth com diagnostico detalhado
-    local auth_wait=0
-    local auth_max=45
-    local auth_ok=false
-    while [ $auth_wait -lt $auth_max ]; do
-        # Verificar se o container ainda esta rodando
-        local auth_running=$(docker inspect --format='{{.State.Running}}' supabase-auth 2>/dev/null || echo "false")
-        if [ "$auth_running" = "false" ]; then
-            log_error "GoTrue CRASHOU! Exibindo logs:"
-            docker logs supabase-auth --tail 30 2>&1
-            
-            # Tentar criar roles manualmente e reiniciar
-            log_info "Tentando criar roles do Supabase manualmente..."
-            docker exec supabase-db psql -U postgres -c "
-                DO \$\$ BEGIN
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
-                        CREATE ROLE supabase_auth_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
-                        CREATE ROLE supabase_storage_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
-                        CREATE ROLE authenticator WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
-                        CREATE ROLE anon NOLOGIN NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
-                        CREATE ROLE authenticated NOLOGIN NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
-                        CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
-                        CREATE ROLE supabase_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' BYPASSRLS;
-                    END IF;
-                END \$\$;
-                -- Grants essenciais
-                GRANT anon TO authenticator;
-                GRANT authenticated TO authenticator;
-                GRANT service_role TO authenticator;
-                GRANT supabase_admin TO authenticator;
-                -- Criar schema auth se nao existir
-                CREATE SCHEMA IF NOT EXISTS auth;
-                GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
-                GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role;
-                -- Grants no schema public
-                GRANT ALL ON SCHEMA public TO supabase_admin, supabase_auth_admin;
-                GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO supabase_admin, supabase_auth_admin;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated, anon;
-            " 2>&1 || log_warn "Alguns grants podem ter falhado (normal se ja existem)"
-            
-            log_info "Reiniciando auth apos criar roles..."
-            docker compose up -d auth
-            sleep 5
-        fi
-        
-        local auth_health=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "starting")
-        if [ "$auth_health" = "healthy" ]; then
-            auth_ok=true
-            log_success "Servico de autenticacao healthy!"
-            break
-        fi
-        
-        sleep 3
-        auth_wait=$((auth_wait + 3))
-        log_info "Aguardando auth... ($auth_wait/${auth_max}s) [status: $auth_health]"
-    done
-    
-    if [ "$auth_ok" = false ]; then
-        log_error "Auth nao ficou healthy em ${auth_max}s"
-        log_error "=== LOGS DO AUTH ==="
-        docker logs supabase-auth --tail 40 2>&1
-        log_error "=== ROLES NO BANCO ==="
-        docker exec supabase-db psql -U postgres -c "SELECT rolname FROM pg_roles WHERE rolname LIKE 'supabase%' OR rolname IN ('authenticator','anon','authenticated','service_role');" 2>&1
-        log_warn "Continuando instalacao mesmo com auth unhealthy..."
-    fi
-
-    # ETAPA 3: Todos os outros servicos
-    log_info "Etapa 3/3: Iniciando demais servicos..."
-    docker compose --profile baileys up -d || true
-    
-    sleep 5
-    
-    echo ""
-    log_info "Status final dos containers:"
-    services=("supabase-db" "supabase-auth" "supabase-rest" "supabase-kong" "supabase-functions" "supabase-storage" "baileys-server" "app-nginx")
-    for service in "${services[@]}"; do
-        local status=$(docker inspect --format='{{.State.Status}}' "$service" 2>/dev/null || echo "not found")
-        if [ "$status" = "running" ]; then
-            log_success "$service: $status"
-        else
-            log_warn "$service: $status"
-        fi
-    done
-}
+1. Start DB container
+2. Wait for pg_isready (healthcheck) 
+3. NEW: Wait 10s additional for init scripts
+4. NEW: Verify init.sql completed (query public.tenants)
+5. Start Auth container
+6. Wait for Auth healthy (with crash recovery fallback)
+7. Start remaining services
 ```
 
-**Pontos-chave da mudanca:**
+Changes to init.sql storage section (example):
 
-1. Remove o `set -e` que mata o script silenciosamente (ou usa `|| true` nos comandos criticos)
-2. Inicia em 3 etapas: DB -> Auth -> Resto
-3. Se o GoTrue crashar, captura os logs E tenta criar os roles manualmente como fallback
-4. Se tudo falhar, mostra exatamente quais roles existem no banco para diagnostico
-5. Nunca para o script por causa de falha do auth - continua e mostra o diagnostico
+```sql
+-- Before (crashes if storage schema doesn't exist):
+INSERT INTO storage.buckets (id, name, public) VALUES (...);
 
-**Tambem remover `set -e` da linha 8:**
+-- After (safely skips if not ready):
+DO $$ BEGIN
+  INSERT INTO storage.buckets (id, name, public) 
+  VALUES ('chat-attachments', 'chat-attachments', true) 
+  ON CONFLICT (id) DO NOTHING;
+EXCEPTION WHEN undefined_table THEN 
+  RAISE NOTICE 'storage.buckets not available yet - skipped';
+END $$;
+```
 
-Trocar `set -e` por nada, ou por um handler mais inteligente. O `set -e` e perigoso em scripts de instalacao complexos porque qualquer comando trivial que falhe mata tudo silenciosamente.
+Changes to init.sql auth trigger section:
 
-### Funcoes `wait_for_database()` e `wait_for_auth()`
+```sql
+-- Before (crashes if auth.users doesn't exist):
+CREATE TRIGGER on_auth_user_created ...
 
-Como a nova `start_services()` ja faz toda a espera e diagnostico, essas funcoes se tornam redundantes. Simplificar para apenas uma verificacao rapida, ou remover e deixar a logica toda em `start_services()`.
+-- After (safely skips):
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+  CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+EXCEPTION WHEN undefined_table THEN
+  RAISE NOTICE 'auth.users not available yet - trigger will be created by GoTrue';
+END $$;
+```
 
-## Resumo das Alteracoes
+### Expected Result
 
-| Arquivo | Alteracao |
-|---------|-----------|
-| `deploy/scripts/install-unified.sh` | Remover `set -e`, reescrever `start_services()` com startup em etapas, fallback de criacao de roles, e diagnostico completo |
-
-Nenhuma alteracao no docker-compose.yml ou init.sql (as correcoes anteriores ja estao corretas).
-
-## Por que desta vez vai funcionar
-
-O problema nunca foi so o volume mount (ja corrigido). O problema e que quando o GoTrue falha por QUALQUER motivo:
-- `set -e` mata o script
-- Voce nunca ve o log do erro real
-- Nao ha fallback
-
-Com esta mudanca:
-- O script NAO morre quando algo falha
-- Se GoTrue crashar, voce VE os logs do crash no terminal
-- Se os roles nao existirem, o script os CRIA manualmente
-- Se mesmo assim falhar, voce ve exatamente quais roles existem vs quais faltam
-
+After these changes, the installation should:
+- Complete the DB initialization without fatal errors
+- Wait for init scripts to finish before starting Auth
+- Auth should connect successfully to the DB with all roles and schemas in place
+- Kong should become healthy, enabling admin user creation via API
