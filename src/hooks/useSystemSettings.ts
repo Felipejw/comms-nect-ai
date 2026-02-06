@@ -41,8 +41,8 @@ export function useSystemSettings() {
       queryClient.invalidateQueries({ queryKey: ["system-settings"] });
       toast.success("Configuração atualizada!");
     },
-    onError: () => {
-      toast.error("Erro ao atualizar configuração");
+    onError: (error: any) => {
+      toast.error(`Erro ao atualizar: ${error?.message || 'desconhecido'}`);
     },
   });
 
@@ -81,8 +81,8 @@ export function useSystemSettings() {
       queryClient.invalidateQueries({ queryKey: ["system-settings"] });
       toast.success("Configuração salva!");
     },
-    onError: () => {
-      toast.error("Erro ao salvar configuração");
+    onError: (error: any) => {
+      toast.error(`Erro ao salvar: ${error?.message || 'desconhecido'}`);
     },
   });
 
