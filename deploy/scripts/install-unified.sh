@@ -620,6 +620,27 @@ start_services() {
         return 1
     fi
 
+    # Aguardar init.sql terminar de executar (pg_isready passa antes do init.sql concluir)
+    log_info "Aguardando init.sql concluir (15s de segurança)..."
+    sleep 15
+
+    # Verificar se o init.sql realmente terminou checando a tabela tenants
+    local init_check=0
+    local init_max=30
+    while [ $init_check -lt $init_max ]; do
+        if docker exec supabase-db psql -U postgres -t -c "SELECT 1 FROM public.tenants LIMIT 0;" 2>/dev/null | grep -q ""; then
+            log_success "init.sql concluído - tabelas públicas prontas"
+            break
+        fi
+        sleep 3
+        init_check=$((init_check + 3))
+        log_info "Aguardando init.sql finalizar... ($init_check/${init_max}s)"
+    done
+
+    if [ $init_check -ge $init_max ]; then
+        log_warn "Não foi possível confirmar que init.sql terminou, continuando mesmo assim..."
+    fi
+
     # =============================================
     # ETAPA 2: Auth (GoTrue) - o container problemático
     # =============================================
@@ -628,7 +649,7 @@ start_services() {
     
     # Aguardar auth com diagnóstico detalhado
     local auth_wait=0
-    local auth_max=60
+    local auth_max=90
     local auth_ok=false
     local auth_crash_handled=false
     
