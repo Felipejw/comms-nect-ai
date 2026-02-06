@@ -63,7 +63,7 @@ services:
       JWT_EXP: ${JWT_EXPIRY:-3600}
     volumes:
       - ./volumes/db/data:/var/lib/postgresql/data:Z
-      - ./volumes/db/init/init.sql:/docker-entrypoint-initdb.d/99-custom-init.sql:ro
+      - ./volumes/db/init/init.sql:/docker-entrypoint-initdb.d/migrations/init.sql:ro
     command:
       - postgres
       - -c

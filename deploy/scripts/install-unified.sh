@@ -620,29 +620,83 @@ start_services() {
         return 1
     fi
 
-    # Aguardar init.sql terminar de executar (pg_isready passa antes do init.sql concluir)
-    log_info "Aguardando init.sql concluir (15s de segurança)..."
-    sleep 15
-
-    # Verificar se o init.sql realmente terminou checando a tabela tenants
-    local init_check=0
-    local init_max=30
-    while [ $init_check -lt $init_max ]; do
-        if docker exec supabase-db psql -U postgres -t -c "SELECT 1 FROM public.tenants LIMIT 0;" 2>/dev/null | grep -q ""; then
-            log_success "init.sql concluído - tabelas públicas prontas"
+    # =============================================
+    # ETAPA 1b: Aguardar roles internas do Supabase
+    # O init.sql NÃO é mais auto-executado (está em subdiretório).
+    # Precisamos esperar apenas as roles internas do Supabase.
+    # =============================================
+    log_info "Aguardando roles internas do Supabase serem criadas..."
+    local role_check=0
+    local role_max=60
+    while [ $role_check -lt $role_max ]; do
+        if docker exec supabase-db psql -U postgres -t -c "SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin';" 2>/dev/null | grep -q "1"; then
+            log_success "Roles internas do Supabase prontas"
             break
         fi
         sleep 3
-        init_check=$((init_check + 3))
-        log_info "Aguardando init.sql finalizar... ($init_check/${init_max}s)"
+        role_check=$((role_check + 3))
+        log_info "Aguardando roles internas... ($role_check/${role_max}s)"
     done
 
-    if [ $init_check -ge $init_max ]; then
-        log_warn "Não foi possível confirmar que init.sql terminou, continuando mesmo assim..."
+    if [ $role_check -ge $role_max ]; then
+        log_warn "Roles internas não encontradas após ${role_max}s"
+        log_info "Criando roles manualmente como fallback..."
+        docker exec supabase-db psql -U postgres -c "
+            DO \$\$ BEGIN
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
+                    CREATE ROLE supabase_auth_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
+                    CREATE ROLE supabase_storage_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
+                    CREATE ROLE authenticator WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
+                    CREATE ROLE anon NOLOGIN NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
+                    CREATE ROLE authenticated NOLOGIN NOINHERIT;
+                END IF;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
+                    CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
+                END IF;
+                IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
+                    CREATE ROLE supabase_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' BYPASSRLS;
+                END IF;
+            END \$\$;
+            GRANT anon TO authenticator;
+            GRANT authenticated TO authenticator;
+            GRANT service_role TO authenticator;
+            GRANT supabase_admin TO authenticator;
+            CREATE SCHEMA IF NOT EXISTS auth;
+            GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
+            GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role;
+            GRANT ALL ON SCHEMA public TO supabase_admin, supabase_auth_admin;
+            GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO supabase_admin, supabase_auth_admin;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated, anon;
+        " 2>&1 || log_warn "Alguns grants podem ter falhado"
     fi
 
     # =============================================
-    # ETAPA 2: Auth (GoTrue) - o container problemático
+    # ETAPA 1c: Executar init.sql manualmente
+    # Rodamos via docker exec (sem ON_ERROR_STOP), então
+    # erros são avisos e NÃO matam o PostgreSQL.
+    # =============================================
+    log_info "Executando init.sql manualmente (modo seguro)..."
+    docker exec supabase-db psql -U postgres -f /docker-entrypoint-initdb.d/migrations/init.sql 2>&1 | tail -5
+    
+    # Verificar se init.sql criou as tabelas
+    if docker exec supabase-db psql -U postgres -t -c "SELECT 1 FROM public.tenants LIMIT 0;" 2>/dev/null | grep -q ""; then
+        log_success "init.sql executado com sucesso - tabelas criadas"
+    else
+        log_error "init.sql falhou - tabela public.tenants não encontrada"
+        log_warn "Continuando mesmo assim..."
+    fi
+
+    # =============================================
+    # ETAPA 2: Auth (GoTrue) - agora com roles + schemas prontos
     # =============================================
     log_info "Etapa 2/3: Iniciando serviço de autenticação..."
     docker compose up -d auth
@@ -659,54 +713,10 @@ start_services() {
         
         if [ "$auth_running" = "false" ] && [ "$auth_crash_handled" = "false" ]; then
             auth_crash_handled=true
-            log_error "GoTrue CRASHOU! Exibindo logs:"
-            echo "--- INICIO LOGS AUTH ---"
-            docker logs supabase-auth --tail 30 2>&1
-            echo "--- FIM LOGS AUTH ---"
+            log_error "GoTrue crashou! Exibindo logs:"
+            docker logs supabase-auth --tail 15 2>&1
             
-            # Tentar criar roles manualmente e reiniciar
-            log_info "Tentando criar roles do Supabase manualmente..."
-            docker exec supabase-db psql -U postgres -c "
-                DO \$\$ BEGIN
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
-                        CREATE ROLE supabase_auth_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_storage_admin') THEN
-                        CREATE ROLE supabase_storage_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
-                        CREATE ROLE authenticator WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'anon') THEN
-                        CREATE ROLE anon NOLOGIN NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticated') THEN
-                        CREATE ROLE authenticated NOLOGIN NOINHERIT;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'service_role') THEN
-                        CREATE ROLE service_role NOLOGIN NOINHERIT BYPASSRLS;
-                    END IF;
-                    IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'supabase_admin') THEN
-                        CREATE ROLE supabase_admin WITH LOGIN PASSWORD '${POSTGRES_PASSWORD}' BYPASSRLS;
-                    END IF;
-                END \$\$;
-                -- Grants essenciais
-                GRANT anon TO authenticator;
-                GRANT authenticated TO authenticator;
-                GRANT service_role TO authenticator;
-                GRANT supabase_admin TO authenticator;
-                -- Criar schema auth se nao existir
-                CREATE SCHEMA IF NOT EXISTS auth;
-                GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
-                GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role;
-                -- Grants no schema public
-                GRANT ALL ON SCHEMA public TO supabase_admin, supabase_auth_admin;
-                GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO supabase_admin, supabase_auth_admin;
-                ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO authenticated, anon;
-            " 2>&1 || log_warn "Alguns grants podem ter falhado (normal se já existem)"
-            
-            log_info "Reiniciando auth após criar roles..."
+            log_info "Reiniciando auth..."
             docker compose up -d auth
             sleep 5
         fi
