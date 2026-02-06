@@ -55,7 +55,8 @@ Deno.serve(async (req) => {
       // ==========================================
       case "create": {
         const name = instanceName?.toLowerCase().replace(/\s+/g, "_") || `session_${Date.now()}`;
-        const webhookUrl = `${supabaseUrl}/functions/v1/baileys-webhook`;
+        const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+        const webhookUrl = `${supabaseUrl}/functions/v1/baileys-webhook?apikey=${anonKey}`;
 
         // Verificar se conexao ja existe
         const { data: existingConn } = await supabaseClient
@@ -433,7 +434,8 @@ Deno.serve(async (req) => {
 
         // Criar nova sessao
         const newSessionName = `${connection.name.toLowerCase().replace(/\s+/g, "_")}_${Date.now()}`;
-        const webhookUrl = `${supabaseUrl}/functions/v1/baileys-webhook`;
+        const anonKey = Deno.env.get("SUPABASE_ANON_KEY") || "";
+        const webhookUrl = `${supabaseUrl}/functions/v1/baileys-webhook?apikey=${anonKey}`;
 
         // Atualizar conexao com novo sessionName PRIMEIRO (resposta rápida)
         console.log(`[Baileys Instance] Recreate: updating sessionName to ${newSessionName}`);
