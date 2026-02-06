@@ -57,9 +57,7 @@ OLD_DOMAIN="$DOMAIN"
 
 echo -e "${CYAN}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║                                                               ║"
 echo "║              ALTERAÇÃO DE DOMÍNIO DO SISTEMA                 ║"
-echo "║                                                               ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -136,14 +134,17 @@ log_step "Atualizando Frontend"
 # Recarregar ANON_KEY do .env atualizado
 source "$DEPLOY_DIR/.env"
 
-cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
+# Usar window.location.origin para que funcione em HTTP e HTTPS
+cat > "$DEPLOY_DIR/frontend/dist/config.js" << 'CONFIGEOF'
 window.__SUPABASE_CONFIG__ = {
-  url: "https://${NEW_DOMAIN}",
-  anonKey: "${ANON_KEY}"
-};
+  url: window.location.origin,
 CONFIGEOF
 
-log_success "config.js atualizado com novo domínio"
+# Adicionar anonKey com o valor real (não pode ser template literal)
+echo "  anonKey: \"${ANON_KEY}\"" >> "$DEPLOY_DIR/frontend/dist/config.js"
+echo "};" >> "$DEPLOY_DIR/frontend/dist/config.js"
+
+log_success "config.js atualizado (usa origin dinâmico)"
 
 # =============================================
 # 4. Atualizar CREDENCIAIS.txt
@@ -154,17 +155,33 @@ if [ -f "$DEPLOY_DIR/CREDENCIAIS.txt" ]; then
 fi
 
 # =============================================
-# 5. Reiniciar serviços afetados
+# 5. Sincronizar senhas do Auth (preventivo)
+# =============================================
+log_step "Verificando Auth"
+
+# Sincronizar senhas das roles (corrige SASL se necessário)
+docker exec supabase-db psql -U postgres -c \
+    "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>/dev/null || true
+docker exec supabase-db psql -U postgres -c \
+    "ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>/dev/null || true
+docker exec supabase-db psql -U postgres -c \
+    "ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>/dev/null || true
+docker exec supabase-db psql -U postgres -c "SELECT pg_reload_conf();" 2>/dev/null || true
+
+log_success "Senhas sincronizadas"
+
+# =============================================
+# 6. Reiniciar serviços afetados
 # =============================================
 log_step "Reiniciando Serviços"
 
 cd "$DEPLOY_DIR"
 
 # Reiniciar Auth (usa API_EXTERNAL_URL e SITE_URL)
-docker compose up -d auth 2>/dev/null
+docker compose restart auth 2>/dev/null || docker compose up -d auth 2>/dev/null
 log_info "Auth reiniciado"
 
-# Reiniciar Kong (para pegar novas URLs)
+# Reiniciar Kong
 docker compose up -d kong 2>/dev/null
 log_info "Kong reiniciado"
 
@@ -172,16 +189,30 @@ log_info "Kong reiniciado"
 docker compose up -d nginx 2>/dev/null
 log_info "Nginx reiniciado"
 
-sleep 5
+# Aguardar Auth ficar healthy
+log_info "Aguardando Auth ficar saudável..."
+auth_wait=0
+auth_max=60
+while [ $auth_wait -lt $auth_max ]; do
+    auth_health=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "starting")
+    if [ "$auth_health" = "healthy" ]; then
+        log_success "Auth está saudável!"
+        break
+    fi
+    sleep 3
+    auth_wait=$((auth_wait + 3))
+done
+
+if [ "$auth_health" != "healthy" ]; then
+    log_warn "Auth pode demorar para ficar saudável. Execute 'sudo bash scripts/repair-auth.sh' se necessário."
+fi
 
 # =============================================
 # Resumo
 # =============================================
 echo -e "\n${GREEN}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
-echo "║                                                               ║"
 echo "║            DOMÍNIO ALTERADO COM SUCESSO!                     ║"
-echo "║                                                               ║"
 echo "╚═══════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
@@ -189,7 +220,8 @@ echo ""
 echo -e "  Domínio anterior: ${YELLOW}$OLD_DOMAIN${NC}"
 echo -e "  Novo domínio:     ${GREEN}$NEW_DOMAIN${NC}"
 echo ""
-echo -e "  Acesse o sistema: ${GREEN}https://$NEW_DOMAIN${NC}"
+echo -e "  Acesse via HTTP:  ${GREEN}http://$NEW_DOMAIN${NC}"
+echo -e "  Acesse via HTTPS: ${GREEN}https://$NEW_DOMAIN${NC}"
 echo ""
 
 if ! is_ip "$NEW_DOMAIN"; then

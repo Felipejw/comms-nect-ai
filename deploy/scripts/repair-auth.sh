@@ -3,6 +3,7 @@
 # ============================================
 # Script de Reparo do Auth (GoTrue)
 # Corrige SASL authentication failures sem reinstalar
+# Também regenera config.js para garantir conectividade
 # ============================================
 
 RED='\033[0;31m'
@@ -123,7 +124,25 @@ else
 fi
 
 # =============================================
-# ETAPA 4: Reiniciar Auth
+# ETAPA 4: Regenerar config.js do frontend
+# =============================================
+log_step "Atualizando config.js"
+
+if [ -d "$DEPLOY_DIR/frontend/dist" ]; then
+    # Usar window.location.origin para funcionar em HTTP e HTTPS
+    cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
+window.__SUPABASE_CONFIG__ = {
+  url: window.location.origin,
+  anonKey: "${ANON_KEY}"
+};
+CONFIGEOF
+    log_success "config.js atualizado (usa origin dinâmico)"
+else
+    log_warn "Diretório frontend/dist não encontrado"
+fi
+
+# =============================================
+# ETAPA 5: Reiniciar Auth
 # =============================================
 log_step "Reiniciando Serviço de Autenticação"
 
@@ -168,8 +187,12 @@ if [ "$auth_ok" = "false" ]; then
     exit 1
 fi
 
+# Reiniciar Nginx para pegar novo config.js
+docker compose restart nginx 2>/dev/null || docker restart app-nginx 2>/dev/null
+log_success "Nginx reiniciado"
+
 # =============================================
-# ETAPA 5: Verificar/Criar admin
+# ETAPA 6: Verificar/Criar admin
 # =============================================
 log_step "Verificando Usuário Admin"
 
@@ -256,4 +279,6 @@ for svc in supabase-db supabase-auth supabase-rest supabase-kong app-nginx; do
         log_warn "$svc: $status"
     fi
 done
+echo ""
+echo -e "  Acesse: ${GREEN}http://$DOMAIN${NC} ou ${GREEN}https://$DOMAIN${NC}"
 echo ""
