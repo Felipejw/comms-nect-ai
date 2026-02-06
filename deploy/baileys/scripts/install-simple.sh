@@ -104,6 +104,9 @@ API_KEY=$API_KEY
 # Webhook para enviar eventos ao Lovable Cloud
 WEBHOOK_URL=$WEBHOOK_URL
 
+# Supabase Anon Key para autenticacao do webhook
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdWNhbndicGxlb2NleW5tZW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTUxODIsImV4cCI6MjA4MjYzMTE4Mn0.1EQ_XXifnOx3REsjE9ZCbd7dYC7IvXxEjZFIP25vmOA
+
 # Nível de log: debug, info, warn, error
 LOG_LEVEL=info
 EOF
