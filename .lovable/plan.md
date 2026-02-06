@@ -1,173 +1,99 @@
 
 
-# Correcao: Mensagens Enviadas no WhatsApp e Audio Nao Aparecem
+# Melhorias: Preview de Mensagem, Dropdown de Setor e Grupos WhatsApp
 
-## Problemas Encontrados
+## Problema 1 - "Nova conversa" em vez da ultima mensagem
 
-### Problema 1 - Mensagens enviadas diretamente no WhatsApp nao aparecem
+O campo `subject` da conversa so e atualizado quando voce envia uma mensagem pela interface do sistema (via `useSendMessage`). Quando mensagens chegam pelo webhook do WhatsApp, o `subject` nunca e atualizado -- fica `null`, e o frontend mostra "Nova conversa".
 
-As mensagens que voce envia pelo WhatsApp (no celular) sao bloqueadas em **dois niveis**:
-
-1. **Servidor Baileys** (`deploy/baileys/src/baileys.ts`, linha 196): O servidor filtra mensagens com `fromMe: true` e nunca as envia ao webhook
-2. **Edge Function Webhook** (`supabase/functions/baileys-webhook/index.ts`, linha 320-326): Mesmo que chegassem, o webhook tambem as descarta
-
-Resultado: mensagens enviadas pelo celular nunca sao salvas no banco de dados.
-
-### Problema 2 - Audio recebido nao aparece
-
-O audio chega com o formato `data:audio/ogg; codecs=opus;base64,T2dn...`. A funcao `storeMediaFromBase64` usa uma regex que nao consegue lidar com mimetypes que contem parametros (o `;` no `audio/ogg; codecs=opus` quebra o parsing):
-
-```text
-Regex atual: /^data:([^;]+);base64,(.+)$/
-Dado real:   data:audio/ogg; codecs=opus;base64,T2dn...
-
-A regex para no primeiro ";" e espera "base64," logo depois,
-mas encontra " codecs=opus;base64," -- falha no match.
-```
-
-Resultado: `media_url` fica `null` no banco, e o audio nunca e exibido.
-
-### Problema 3 - Frontend nao mostra audio sem media_url
-
-Na tela de Atendimento (linha 1041):
-```text
-{message.message_type === "audio" && message.media_url && (
-  <AudioPlayer ... />
-)}
-```
-
-Se `media_url` e `null` E `content` e vazio (audio nao tem texto), a bolha da mensagem fica completamente invisivel.
+**Solucao**: Atualizar o webhook (`baileys-webhook`) para salvar um preview da ultima mensagem no campo `subject` sempre que uma mensagem for recebida ou enviada (fromMe). Para audios, imagens e videos, usar icones descritivos como "Audio", "Imagem", etc.
 
 ---
 
-## Plano de Correcao
+## Problema 2 - Dropdown de Setor nao abre
 
-### Correcao 1 - Servidor Baileys: Enviar mensagens fromMe ao webhook
+O badge "Setor" na lista de conversas usa um `DropdownMenu` do Radix, mas tem `onPointerDown` e `onClick` com `e.stopPropagation()` no trigger. Isso pode causar conflito com o clique na conversa. Alem disso, a renderizacao do dropdown pode estar sendo bloqueada pelo container `overflow-y-auto` da lista de conversas.
 
-**Arquivo**: `deploy/baileys/src/baileys.ts`
+**Solucao**: Ajustar o `DropdownMenuContent` para usar portal rendering e garantir que o z-index e posicionamento funcionem corretamente sobre a lista de conversas scrollavel.
 
-Remover o filtro `if (msg.key.fromMe) continue` na linha 196 para que mensagens enviadas pelo usuario tambem sejam processadas e enviadas ao webhook. Manter apenas o filtro de `status@broadcast`.
+---
 
-### Correcao 2 - Webhook: Salvar mensagens fromMe como "agent"
+## Problema 3 - Grupos WhatsApp misturados com contatos
 
-**Arquivo**: `supabase/functions/baileys-webhook/index.ts`
+O numero grande (`120363423042084921`) e o identificador de um grupo WhatsApp (`@g.us`). O servidor Baileys ja detecta `isGroup` e envia essa informacao no payload do webhook, mas o webhook ignora completamente esse dado. O grupo e salvo como um contato normal.
 
-Em vez de ignorar mensagens `fromMe`, salva-las com `sender_type: "agent"` e `is_read: true`. Isso permite que apareçam no chat como mensagens enviadas pelo atendente.
+**Solucao em 3 partes**:
 
-Logica:
-- Se `fromMe = true`: salvar com `sender_type: "agent"`, `is_read: true`
-- Se `fromMe = false`: manter comportamento atual (`sender_type: "contact"`, `is_read: false`)
-
-### Correcao 3 - Webhook: Corrigir regex para mimetypes com parametros
-
-**Arquivo**: `supabase/functions/baileys-webhook/index.ts`
-
-Atualizar a regex na funcao `storeMediaFromBase64` para aceitar mimetypes com parametros:
-
-```text
-Regex atual:  /^data:([^;]+);base64,(.+)$/
-Regex nova:   /^data:([^;,]+(?:;[^;,]*)*?);base64,(.+)$/
-
-Essa nova regex aceita:
-- data:audio/ogg;base64,...
-- data:audio/ogg; codecs=opus;base64,...
-- data:image/jpeg;base64,...
-```
-
-Tambem ajustar a extracao do mimetype para pegar apenas a parte principal (antes dos parametros): `audio/ogg; codecs=opus` -> `audio/ogg`
-
-### Correcao 4 - Frontend: Fallback para audio sem media_url
-
-**Arquivo**: `src/pages/Atendimento.tsx`
-
-Adicionar indicador visual quando a mensagem e do tipo "audio" mas nao tem `media_url`:
-
-```text
-{message.message_type === "audio" && !message.media_url && (
-  <div className="flex items-center gap-2 p-2 ...">
-    <Mic className="w-4 h-4" />
-    <span>Audio</span>
-  </div>
-)}
-```
+1. **Banco de dados**: Adicionar coluna `is_group` (boolean) na tabela `contacts` para marcar contatos que sao grupos
+2. **Webhook**: Usar o campo `isGroup` do payload para marcar o contato como grupo e usar o nome do grupo (pushName) como nome
+3. **Frontend**: Filtrar grupos separados na lista de conversas, com uma aba ou filtro dedicado
 
 ---
 
 ## Detalhes Tecnicos
 
-### Baileys Server (deploy/baileys/src/baileys.ts)
+### Correcao 1 - Webhook: Atualizar subject com preview da mensagem
 
-Linha 194-196 - Antes:
+**Arquivo**: `supabase/functions/baileys-webhook/index.ts`
+
+Ao salvar a mensagem (apos a insercao na tabela `messages`), atualizar o campo `subject` da conversa com um preview do conteudo:
+
 ```text
-for (const msg of messages) {
-  if (!msg.key || msg.key.fromMe) continue;
-  if (msg.key.remoteJid === 'status@broadcast') continue;
+let subjectPreview = body;
+if (messageType === 'audio') subjectPreview = 'Audio';
+else if (messageType === 'image') subjectPreview = 'Imagem';
+else if (messageType === 'video') subjectPreview = 'Video';
+else if (messageType === 'document') subjectPreview = 'Documento';
+else if (messageType === 'sticker') subjectPreview = 'Figurinha';
+else subjectPreview = body.substring(0, 100);
 ```
 
-Depois:
+Adicionar `subject: subjectPreview` nos updates da conversa (tanto no update de conversa existente quanto na criacao de nova conversa).
+
+### Correcao 2 - Dropdown de Setor
+
+**Arquivo**: `src/pages/Atendimento.tsx`
+
+O `DropdownMenuContent` precisa de ajustes para funcionar dentro da lista scrollavel:
+- Garantir que o portal rendering esta ativo (comportamento padrao do Radix)
+- Aumentar o z-index para ficar acima de tudo
+- Verificar se `onPointerDown` no trigger nao esta impedindo o dropdown de abrir
+
+### Correcao 3 - Separacao de Grupos
+
+**Migracao SQL**: Adicionar coluna `is_group` na tabela `contacts`:
+
 ```text
-for (const msg of messages) {
-  if (!msg.key) continue;
-  if (msg.key.remoteJid === 'status@broadcast') continue;
+ALTER TABLE contacts ADD COLUMN is_group BOOLEAN DEFAULT false;
 ```
 
-### Webhook - fromMe handling (baileys-webhook/index.ts)
+Tambem atualizar o contato de grupo existente:
 
-Linhas 320-326 - Antes:
 ```text
-if (msg.fromMe) {
-  console.log("[Baileys Webhook] Skipping outgoing message");
-  return new Response(...);
-}
+UPDATE contacts SET is_group = true WHERE phone = '120363423042084921';
 ```
 
-Depois:
-```text
-const isFromMe = msg.fromMe || false;
-if (isFromMe) {
-  console.log("[Baileys Webhook] Processing outgoing (fromMe) message");
-}
-```
+**Webhook** (`baileys-webhook/index.ts`):
+- Ao criar/buscar contato, verificar se `msg.isGroup` e `true`
+- Se for grupo, marcar `is_group = true` no contato
+- Usar `msg.pushName` como nome do grupo (grupos enviam o nome do grupo como pushName)
 
-E na insercao da mensagem (linha 515-523):
-```text
-sender_type: isFromMe ? "agent" : "contact",
-is_read: isFromMe ? true : false,
-```
+**Frontend** (`Atendimento.tsx`):
+- Adicionar uma aba "Grupos" nas tabs de conversas (ao lado de "Atendendo", "Finalizados", "Chatbot")
+- Filtrar conversas com `contact.is_group === true` para a aba Grupos
+- Excluir grupos das abas normais de atendimento
+- Usar icone diferenciado para grupos (por exemplo, `Users` do lucide ao inves do avatar)
 
-Tambem nao incrementar unread_count para mensagens fromMe e nao disparar resolucao de LID.
+**Tipo TypeScript** (`useConversations.ts`):
+- Adicionar `is_group?: boolean` ao tipo do contact dentro de Conversation
+- Incluir `is_group` no select da query de conversas
 
-### Webhook - Regex do base64 (baileys-webhook/index.ts)
+### Resumo das Alteracoes
 
-Linha 44 - Antes:
-```text
-const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
-```
-
-Depois:
-```text
-const matches = base64Data.match(/^data:([\w\/\-\+\.]+(?:;\s*[\w\-]+=[\w\-]+)*);base64,(.+)$/);
-if (!matches) return null;
-const fullMimetype = matches[1];
-const mimetype = fullMimetype.split(';')[0].trim();
-```
-
-### Frontend - Audio fallback (Atendimento.tsx)
-
-Adicionar entre as linhas 1043-1044:
-```text
-{message.message_type === "audio" && !message.media_url && (
-  <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg">
-    <Mic className="w-4 h-4 text-muted-foreground" />
-    <span className="text-sm text-muted-foreground">Mensagem de audio</span>
-  </div>
-)}
-```
-
-## Resultado Esperado
-
-- Mensagens enviadas diretamente no WhatsApp aparecerao no chat como mensagens do atendente
-- Audios recebidos serao armazenados corretamente e exibidos com o player de audio
-- Audios antigos (sem media_url) mostrarao um indicador visual em vez de bolha vazia
-- IMPORTANTE: O servidor Baileys no VPS precisara ser atualizado e reiniciado para que a Correcao 1 tenha efeito (deploy/baileys e um projeto separado rodando no seu servidor)
+| Arquivo | Alteracao |
+|---------|-----------|
+| `supabase/functions/baileys-webhook/index.ts` | Atualizar `subject` com preview da mensagem; detectar e marcar grupos |
+| `src/pages/Atendimento.tsx` | Corrigir dropdown de Setor; adicionar aba Grupos; icone diferenciado para grupos |
+| `src/hooks/useConversations.ts` | Adicionar `is_group` no select e no tipo |
+| Migracao SQL | Adicionar coluna `is_group` na tabela `contacts` |
 
