@@ -1,53 +1,45 @@
 
 
-# Corrigir API Key do Baileys - Banco de Dados e Container
+# Deploy da Edge Function baileys-create-session
 
-## Problema
-A API Key no banco de dados foi alterada incorretamente para `0d78af0a...` na tentativa anterior. A chave correta (da instalacao) e `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`.
+## Causa raiz identificada
 
-Alem disso, o container Docker ignora o arquivo `.env` porque provavelmente existe uma variavel de ambiente `API_KEY` definida no shell do sistema, que tem prioridade sobre o `.env`.
-
-## Solucao
-
-### Passo 1 - Corrigir a chave no banco de dados
-Atualizar `system_settings` para usar a chave correta: `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`
-
-### Passo 2 - Instrucoes para corrigir o container Docker
-O container precisa ser recriado forcando a variavel de ambiente correta. Sera necessario executar no VPS:
+A Edge Function `baileys-create-session` existe no codigo fonte mas **nao esta deployada** no servidor. Ao chamar diretamente, o servidor retorna:
 
 ```text
-cd /opt/baileys
-sudo docker compose down
-sudo API_KEY=9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435 docker compose up -d
+{"code":"NOT_FOUND","message":"Requested function was not found"}
 ```
 
-Ou alternativamente, verificar se ha uma variavel de ambiente no sistema:
+### Fluxo do problema
 
-```text
-echo $API_KEY
-env | grep API_KEY
-```
+1. Usuario clica em "Criar Conexao" ou "Tentar Novamente"
+2. A funcao `baileys-instance` cria o registro no banco e delega a criacao da sessao para `baileys-create-session`
+3. Mas essa funcao nao existe no servidor - retorna 404
+4. A sessao nunca e criada no servidor Baileys (0 sessoes ativas)
+5. O polling tenta buscar QR Code para uma sessao inexistente - recebe 404 do Baileys
+6. Apos 5 tentativas, exibe erro
 
-Se existir, remover com `unset API_KEY` antes de recriar o container.
+### Solucao
 
-### Passo 3 - Melhorar a tela de Conexoes para mostrar erros
-Atualmente quando o QR Code falha, a tela fica apenas "carregando" indefinidamente. Vamos melhorar para:
-- Mostrar mensagem de erro clara quando a API Key e invalida
-- Parar o polling apos detectar erro 401
-- Exibir botao de "Tentar Novamente" em vez de ficar carregando infinitamente
+Fazer o deploy da funcao `baileys-create-session`. Nenhuma alteracao de codigo e necessaria - a funcao ja esta escrita corretamente e configurada no `config.toml`. Basta forcar o deploy.
+
+### Passo 1 - Deplovar a funcao
+Forcar o deploy da Edge Function `baileys-create-session` que ja existe no codigo.
+
+### Passo 2 - Recriar a sessao
+Apos o deploy, acionar o `recreate` na conexao existente para que a funcao delegada funcione e crie a sessao no servidor Baileys, gerando o QR Code.
+
+### Passo 3 - Verificacao
+Confirmar que:
+- A funcao responde corretamente (nao mais 404)
+- O servidor Baileys mostra 1 sessao ativa
+- O QR Code aparece na tela de Conexoes
 
 ## Detalhes tecnicos
 
-### Arquivo: src/pages/Conexoes.tsx
-- No modal de QR Code, ao detectar erro na busca do QR (especialmente 401), exibir mensagem de erro em vez de manter o spinner de carregamento infinito
-- Melhorar a logica de polling para parar imediatamente ao receber erro de autenticacao
+### Arquivo: supabase/functions/baileys-create-session/index.ts
+O arquivo ja esta completo e funcional. Sera deployado sem alteracoes de codigo. Apenas sera necessario um "touch" no arquivo (adicionar um comentario na primeira linha) para que o sistema de build reconheca uma alteracao e faca o deploy.
 
-### Arquivo: src/hooks/useWhatsAppConnections.ts
-- Adicionar tratamento especifico para erros de API Key invalida no `getQrCode` e `checkStatus`
-- Propagar o tipo de erro (auth vs network vs server) para que a UI possa reagir adequadamente
+### Validacao pos-deploy
+Apos o deploy, sera feita uma chamada direta a funcao para confirmar que esta acessivel e funcionando.
 
-### Atualizacao no banco de dados
-Executar UPDATE na tabela `system_settings` para corrigir o valor da chave `baileys_api_key` para `9759d46309e1eeae92d423f1ee860177671095af60ead9d23422fb4c8fb8b435`.
-
-## Resultado esperado
-Apos a correcao no banco e no container, a Edge Function enviara a chave correta, o servidor Baileys aceitara as requisicoes, e o QR Code sera exibido normalmente na tela de Conexoes. Caso haja erro, uma mensagem descritiva sera mostrada em vez do spinner infinito.
