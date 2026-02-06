@@ -373,6 +373,20 @@ EOF
 create_directories() {
     log_step "Criando Estrutura de Diretórios"
     
+    # Limpar dados do banco se existirem (reinstalação limpa)
+    # Isso garante que o PostgreSQL rode o init.sql com a senha nova
+    if [ -d "$DEPLOY_DIR/volumes/db/data" ]; then
+        log_warn "Dados anteriores do banco encontrados"
+        log_info "Limpando para reinstalação limpa..."
+        
+        # Parar containers antes de limpar
+        cd "$DEPLOY_DIR"
+        docker compose --profile baileys down -v 2>/dev/null || true
+        
+        rm -rf "$DEPLOY_DIR/volumes/db/data"
+        log_success "Dados antigos removidos - banco será reinicializado com senha nova"
+    fi
+    
     mkdir -p "$DEPLOY_DIR/volumes/db/data"
     mkdir -p "$DEPLOY_DIR/volumes/db/init"
     mkdir -p "$DEPLOY_DIR/volumes/storage"
@@ -605,6 +619,27 @@ start_services() {
             log_warn "$service: $status"
         fi
     done
+    
+    # Verificar especificamente o container auth (causa mais comum de falha)
+    local auth_status=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "not found")
+    if [ "$auth_status" = "unhealthy" ]; then
+        log_error "Container supabase-auth está unhealthy!"
+        log_error "=== Últimas 20 linhas de log do Auth ==="
+        docker logs supabase-auth --tail 20 2>&1
+        log_info "Tentando reiniciar o auth..."
+        docker compose restart auth
+        sleep 15
+        
+        # Verificar novamente
+        auth_status=$(docker inspect --format='{{.State.Health.Status}}' supabase-auth 2>/dev/null || echo "not found")
+        if [ "$auth_status" = "healthy" ]; then
+            log_success "Auth reiniciado com sucesso!"
+        else
+            log_error "Auth continua unhealthy após reinício. Verifique os logs acima."
+            log_error "Causa mais provável: senha do banco não corresponde aos roles internos."
+            log_info "Solução: remova volumes/db/data e rode a instalação novamente."
+        fi
+    fi
 }
 
 # Aguardar banco de dados ficar pronto
