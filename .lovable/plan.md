@@ -1,173 +1,131 @@
 
+# Atualizar o Pacote Self-Hosted para Banco de Dados Independente
 
-# Fluxo Completo de Onboarding + Configuracao de Usuarios Existentes
+## Situacao Atual
 
-## Visao Geral
+Seu projeto ja tem uma infraestrutura de deploy self-hosted muito bem construida na pasta `deploy/`:
 
-O sistema atual tem toda a estrutura de multi-tenancy pronta (tabelas `tenants`, `tenant_subscriptions`, `profiles.tenant_id`), mas falta o fluxo automatico que conecta tudo. Atualmente:
-- Nenhum tenant existe no banco de dados
-- Todos os 4 usuarios tem `tenant_id = null`
-- A funcao `handle_new_user` cria perfil e role, mas nao cria tenant
+- Docker Compose com PostgreSQL, GoTrue (Auth), PostgREST (API), Kong (Gateway), Realtime, Storage, Edge Functions, Baileys e Nginx
+- Script de instalacao automatizada (`install-unified.sh`) que gera todas as credenciais
+- Script de empacotamento (`package.sh`) que cria ZIPs para distribuicao
+- Frontend com suporte a configuracao em runtime (`window.__SUPABASE_CONFIG__`)
 
-Este plano implementa:
-1. Uma Edge Function que cria tenant automaticamente no signup
-2. Uma pagina de onboarding pos-cadastro (nome da empresa + escolha de plano)
-3. Configuracao dos usuarios existentes com um tenant principal
+O problema e que o `deploy/supabase/init.sql` esta **desatualizado**. Ele nao inclui:
 
----
+| O que falta | Impacto |
+|-------------|---------|
+| 7 tabelas (tenants, subscription_plans, tenant_subscriptions, subscription_payments, products, sales, tenant_settings, message_templates) | Erro ao acessar funcionalidades SaaS |
+| Coluna `tenant_id` em 29 tabelas | Frontend quebra ao fazer queries |
+| Enum `super_admin` no app_role | Funcao `is_super_admin()` falha |
+| 9 funcoes auxiliares (is_super_admin, get_user_tenant_id, can_access_tenant, etc.) | RLS policies nao funcionam |
+| Politicas RLS tenant-aware | Dados sem isolamento |
+| Coluna `name_source` em contacts, `media_type` em campaigns, etc. | Campos faltando |
+| Criacao automatica do admin + tenant | Cliente nao consegue logar |
 
-## Parte 1: Configurar Usuarios Existentes
+## Solucao
 
-Criar um tenant principal para o admin atual e associar todos os usuarios existentes a ele.
-
-**Migracao SQL:**
-- Inserir um tenant com `owner_user_id` do super admin (`33c631a4...`)
-- Atualizar todos os perfis existentes para apontar para esse tenant
-- Criar uma subscription trial para o tenant (plano Basico, 14 dias)
-
----
-
-## Parte 2: Edge Function `setup-tenant`
-
-Uma funcao backend que sera chamada apos o onboarding para:
-1. Criar o registro na tabela `tenants`
-2. Atualizar o `tenant_id` no perfil do usuario
-3. Atualizar o role do usuario para `admin` (dono do tenant)
-4. Criar uma subscription trial (14 dias, plano Basico)
-
-A funcao recebe: `company_name`, `slug` (gerado automaticamente)
+Reescrever o `deploy/supabase/init.sql` para espelhar 100% o schema atual do banco Cloud, e ajustar o script de instalacao para criar automaticamente o primeiro admin com seu tenant.
 
 ---
 
-## Parte 3: Pagina de Onboarding
+## Parte 1: Atualizar `deploy/supabase/init.sql`
 
-Nova pagina `/onboarding` com 2 etapas:
+Reescrever o arquivo completo com:
 
-**Etapa 1 - Dados da Empresa:**
-- Campo "Nome da sua empresa"
-- Slug gerado automaticamente a partir do nome
+### 1.1 Adicionar enum `super_admin`
+O enum `app_role` no init.sql atual tem apenas `admin`, `manager`, `operator`. Precisa incluir `super_admin`.
 
-**Etapa 2 - Escolha de Plano:**
-- Exibir os 3 planos disponiveis (Basico, Profissional, Enterprise)
-- Opcao de iniciar trial gratuito de 14 dias com o plano escolhido
-- Botao "Comecar Trial Gratuito"
+### 1.2 Adicionar todas as funcoes auxiliares que faltam
+- `is_super_admin(_user_id uuid)`
+- `get_user_tenant_id(_user_id uuid)`
+- `can_access_tenant(_user_id uuid, _tenant_id uuid)`
+- `get_tenant_plan_limits(_tenant_id uuid)`
+- `tenant_has_active_subscription(_tenant_id uuid)`
+- `normalize_phone(phone_input text)`
+- `log_activity()` (trigger function)
+- `increment_campaign_delivered(campaign_id uuid)`
+- `increment_campaign_read(campaign_id uuid, was_delivered boolean)`
 
-**Design:** Pagina limpa, similar ao login, com progresso visual (steps 1/2)
+### 1.3 Adicionar coluna `tenant_id` em todas as tabelas
+Adicionar `tenant_id uuid` em: profiles, contacts, contact_tags, tags, conversations, conversation_tags, messages, connections, campaigns, campaign_contacts, chatbot_rules, chatbot_flows, flow_nodes, flow_edges, queues, queue_agents, kanban_columns, schedules, quick_replies, integrations, google_calendar_events, ai_settings, api_keys, activity_logs, chat_messages, system_settings, message_templates.
 
----
+### 1.4 Adicionar tabelas faltantes
+- `tenants` - Registro de cada empresa/cliente
+- `subscription_plans` - Planos disponiveis (Basico, Profissional, Enterprise)
+- `tenant_subscriptions` - Assinatura ativa do tenant
+- `subscription_payments` - Historico de pagamentos
+- `products` - Produtos para venda
+- `sales` - Registro de vendas
+- `tenant_settings` - Configuracoes por tenant
+- `message_templates` - Templates de mensagem
 
-## Parte 4: Fluxo de Redirecionamento
+### 1.5 Atualizar todas as politicas RLS
+Substituir todas as politicas simples pelas versoes tenant-aware que usam `is_super_admin()`, `get_user_tenant_id()` e `can_access_tenant()`.
 
-Alterar a logica de redirecionamento no `AuthContext` e `Login.tsx`:
+### 1.6 Adicionar colunas faltantes em tabelas existentes
+- `contacts`: `name_source text DEFAULT 'auto'`
+- `contacts`: `is_group boolean DEFAULT false`
+- `campaigns`: `use_variations boolean`, `use_buttons boolean`, `buttons jsonb`, `min_interval integer`, `max_interval integer`, `template_id uuid`, `message_variations text[]`, `media_type text`
+- `campaign_contacts`: `retry_count integer`, `next_retry_at timestamp`, `last_error text`
+- `profiles`: `signature_enabled boolean DEFAULT false`
 
-1. Apos login/signup, verificar se o usuario tem `tenant_id`
-2. Se nao tem -> redirecionar para `/onboarding`
-3. Se tem -> redirecionar para `/dashboard` (fluxo normal)
-
-O `ProtectedRoute` tambem precisa verificar: se o usuario nao tem tenant, redireciona para onboarding em vez de mostrar a pagina protegida.
-
-**Excecao:** Super Admin nao precisa de tenant para navegar.
-
----
-
-## Detalhes Tecnicos
-
-### Migracao SQL (usuarios existentes)
-
-```text
--- 1. Criar tenant principal para o super admin
-INSERT INTO tenants (name, slug, owner_user_id, plan, subscription_status, is_active)
-VALUES ('Admin Principal', 'admin-principal', '33c631a4-a9c5-4623-85c2-eb7d604298df', 'basic', 'trial', true);
-
--- 2. Atualizar todos os perfis com o tenant_id
-UPDATE profiles SET tenant_id = (SELECT id FROM tenants WHERE slug = 'admin-principal')
-WHERE tenant_id IS NULL;
-
--- 3. Criar subscription trial (14 dias, plano Basico)
-INSERT INTO tenant_subscriptions (tenant_id, plan_id, billing_cycle, status, current_period_end, trial_ends_at)
-VALUES (
-  (SELECT id FROM tenants WHERE slug = 'admin-principal'),
-  '08fabb60-5fb9-466e-9dc2-17aca0df337d',
-  'monthly',
-  'active',
-  now() + interval '14 days',
-  now() + interval '14 days'
-);
-```
-
-### Nova Edge Function: `setup-tenant`
-
-- Recebe `{ company_name: string }` via POST
-- Gera slug a partir do nome (sanitizado, lowercase, hifens)
-- Verifica se slug ja existe (adiciona sufixo se necessario)
-- Cria tenant, atualiza perfil com tenant_id, promove user para admin
-- Cria subscription trial de 14 dias com plano Basico
-- Retorna dados do tenant criado
-
-### Nova pagina: `src/pages/Onboarding.tsx`
-
-- Formulario com nome da empresa
-- Cards de planos (reutilizando dados de `useSubscriptionPlans`)
-- Botao que chama a edge function `setup-tenant`
-- Apos sucesso: recarrega dados do usuario e redireciona para `/dashboard`
-
-### Alteracoes em arquivos existentes:
-
-| Arquivo | Alteracao |
-|---------|-----------|
-| `src/App.tsx` | Adicionar rota `/onboarding` |
-| `src/contexts/AuthContext.tsx` | Expor `refreshUserData()` para recarregar apos onboarding |
-| `src/components/auth/ProtectedRoute.tsx` | Se `profile.tenant_id` null e nao e super_admin, redirecionar para `/onboarding` |
-| `src/pages/Login.tsx` | Apos login, verificar `tenant_id` antes de redirecionar |
-| `supabase/functions/create-user/index.ts` | Copiar `tenant_id` do admin criador para o novo usuario |
-
-### Edge Function `create-user` (ajuste)
-
-Quando um admin cria um atendente, o novo usuario precisa herdar o `tenant_id` do admin. Adicionar logica para:
-1. Buscar `tenant_id` do admin que esta criando
-2. Atualizar o perfil do novo usuario com esse `tenant_id`
+### 1.7 Dados iniciais para planos
+Inserir os 3 planos de assinatura com limites:
+- Basico: 3 usuarios, 1 conexao WhatsApp, 500 contatos
+- Profissional: 10 usuarios, 3 conexoes, 5000 contatos
+- Enterprise: ilimitado
 
 ---
 
-## Fluxo Completo (resumo visual)
+## Parte 2: Atualizar Script de Instalacao
 
-```text
-Novo usuario se cadastra
-    |
-    v
-handle_new_user() cria perfil + role operator
-    |
-    v
-Login -> verifica tenant_id = null
-    |
-    v
-Redireciona para /onboarding
-    |
-    v
-Preenche nome da empresa + escolhe plano
-    |
-    v
-Edge Function setup-tenant:
-  - Cria tenant
-  - Atualiza perfil.tenant_id
-  - Promove para admin
-  - Cria subscription trial
-    |
-    v
-Redireciona para /dashboard (fluxo normal)
-```
+### 2.1 Criar admin automaticamente
+Adicionar uma etapa no `install-unified.sh` que, apos o banco iniciar, cria:
+1. Um usuario admin via GoTrue API
+2. Um tenant vinculado ao admin
+3. Promove o usuario para `super_admin`
+4. Cria uma subscription trial de 30 dias
+5. Injeta as credenciais do Baileys no `system_settings`
 
-Para atendentes criados por um admin:
-```text
-Admin usa pagina /usuarios -> Criar Atendente
-    |
-    v
-Edge Function create-user:
-  - Cria usuario no Auth
-  - handle_new_user() cria perfil
-  - Copia tenant_id do admin para o novo perfil
-    |
-    v
-Atendente faz login -> ja tem tenant_id -> vai direto pro /dashboard
-```
+### 2.2 Salvar credenciais em arquivo
+Adicionar criacao do arquivo `CREDENCIAIS.txt` com:
+- URL de acesso
+- Email e senha do admin
+- API Key do Baileys
+- Senha do banco de dados
 
+### 2.3 Aguardar banco ficar pronto
+Adicionar verificacao de health do banco antes de criar o admin (loop com timeout).
+
+---
+
+## Parte 3: Ajustar `handle_new_user()` no init.sql
+
+A funcao `handle_new_user()` atual no init.sql nao inclui `super_admin` no role. Atualizar para que funcione com o novo schema.
+
+---
+
+## Resumo dos Arquivos
+
+| Arquivo | Acao |
+|---------|------|
+| `deploy/supabase/init.sql` | Reescrever completo - sincronizar com schema Cloud |
+| `deploy/scripts/install-unified.sh` | Adicionar criacao de admin + tenant + credenciais |
+
+## O que NAO muda
+
+- Nenhuma alteracao no frontend ou backend Cloud
+- A experiencia de desenvolvimento continua igual
+- O Docker Compose ja esta correto
+- O Nginx ja esta correto
+- Os scripts de backup/restore/update continuam iguais
+
+## Resultado Final
+
+Quando voce rodar `./scripts/package.sh`, o ZIP gerado contera tudo que o cliente precisa. Ele roda `sudo ./scripts/install-unified.sh` e em 5 minutos tem:
+- Banco de dados PostgreSQL proprio com todo o schema
+- Admin criado automaticamente
+- Tenant configurado com trial de 30 dias
+- Baileys integrado e funcionando
+- SSL configurado
+- Arquivo CREDENCIAIS.txt com todas as informacoes de acesso
