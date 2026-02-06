@@ -197,15 +197,11 @@ collect_user_info() {
     JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 48)
     log_success "JWT Secret gerado"
     
-    # Credenciais do admin (permite senha fixa via variável de ambiente)
+    # Credenciais do admin (senha fixa padrão)
     ADMIN_EMAIL="admin@admin.com"
-    if [ -z "$ADMIN_PASSWORD" ]; then
-        ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
-        log_success "Senha do admin gerada automaticamente"
-    else
-        log_success "Usando senha do admin fornecida via variável ADMIN_PASSWORD"
-    fi
+    ADMIN_PASSWORD="123456"
     ADMIN_NAME="Administrador"
+    log_success "Admin: $ADMIN_EMAIL / $ADMIN_PASSWORD"
 }
 
 # Gerar chaves JWT válidas usando Python3 (disponível em toda VPS Ubuntu)
@@ -427,6 +423,20 @@ echo "=== Senhas sincronizadas com sucesso ==="
 PASSEOF
     chmod +x "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh"
     log_success "Script 99-sync-passwords.sh gerado"
+    
+    # Gerar roles.sql que será montado em /docker-entrypoint-initdb.d/init-scripts/
+    # Este é o padrão oficial do Supabase para definir senhas das roles internas
+    # O PostgreSQL executa este arquivo durante a fase de init-scripts
+    cat > "$DEPLOY_DIR/volumes/db/roles.sql" << ROLESEOF
+-- roles.sql: Set passwords for internal Supabase roles
+-- This file follows the official Supabase self-hosted pattern
+-- Mounted at /docker-entrypoint-initdb.d/init-scripts/99-roles.sql
+
+ALTER USER authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
+ALTER USER supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+ALTER USER supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+ROLESEOF
+    log_success "roles.sql gerado (padrão oficial Supabase)"
     
     log_success "Diretórios criados"
 }
