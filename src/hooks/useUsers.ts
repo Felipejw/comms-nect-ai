@@ -117,10 +117,10 @@ export function useUpdateUserRole() {
       userId: string;
       role: 'admin' | 'atendente';
     }) => {
-      // Update existing role - use type assertion since DB enum was updated
+      const dbRole = role === 'admin' ? 'admin' : 'operator';
       const { error } = await supabase
         .from('user_roles')
-        .update({ role: role as unknown as 'admin' | 'manager' | 'operator' })
+        .update({ role: dbRole as any })
         .eq('user_id', userId);
 
       if (error) throw error;
