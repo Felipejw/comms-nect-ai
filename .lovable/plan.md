@@ -1,115 +1,95 @@
 
+# Correcoes na Pagina de Atendentes (Usuarios)
 
-# Correção: Reimplantar baileys-instance e Tornar Disconnect Resiliente
+## Diagnostico Completo
 
-## Causa Raiz
+### Problema 1 e 4 - Erros ao criar e excluir usuarios
+**Causa**: As funcoes `create-user` e `delete-user` nao estao implantadas no servidor (retornam 404). Alem disso, os headers CORS estao incompletos -- faltam headers que o cliente Supabase JS envia automaticamente.
 
-A função `baileys-instance` não está implantada no servidor (retorna 404 em todas as chamadas). Isso fez o servidor aparecer como "Offline" e impediu a desconexão pelo sistema. Além disso, as ações `disconnect` e `delete` não possuem tratamento de erro para quando o servidor Baileys está inacessível.
+**Solucao**:
+- Atualizar os headers CORS em ambas as funcoes para incluir todos os headers necessarios
+- Reimplantar ambas as funcoes
 
-## Correções Necessárias
+### Problema 2 - Mudanca de nivel nao funciona visualmente
+**Causa**: O hook `useUpdateUserRole` tenta gravar o valor `'atendente'` no banco de dados, porem o enum do banco aceita apenas `super_admin`, `admin`, `manager` e `operator`. O valor `'atendente'` e rejeitado silenciosamente, e o badge na interface nao muda.
 
-### 1. Reimplantar a função `baileys-instance`
+**Solucao**: Corrigir o mapeamento no hook para converter `'atendente'` para `'operator'` antes de gravar.
 
-Forçar o deploy da função para que ela volte a responder. Não há alteração de código necessária para isso -- basta garantir que o deploy ocorra corretamente.
+### Problema 3 - Status sempre aparece Offline
+**Causa**: Nenhum codigo no sistema atualiza o campo `is_online` no banco de dados. Todos os usuarios tem `is_online = false` permanentemente.
 
-### 2. Adicionar try-catch no `disconnect` (linhas 354-359)
+**Solucao**: Adicionar um hook de presenca que atualiza `is_online = true` e `last_seen = now()` quando o usuario esta logado, e marca como offline ao sair.
 
-**Arquivo**: `supabase/functions/baileys-instance/index.ts`
+---
 
-Atualmente, se o servidor Baileys estiver fora do ar, a chamada DELETE falha e a função inteira crasheia sem atualizar o banco de dados. A correção:
+## Detalhes Tecnicos
 
+### 1. Atualizar CORS do `create-user`
+**Arquivo**: `supabase/functions/create-user/index.ts` (linhas 4-7)
+
+Substituir os corsHeaders por:
 ```text
-// ANTES (sem proteção):
-if (sessionName) {
-  await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-    method: "DELETE",
-    headers,
-  });
-}
-
-// DEPOIS (com proteção):
-if (sessionName) {
-  try {
-    await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-      method: "DELETE",
-      headers,
-    });
-  } catch (fetchError) {
-    console.error(`[Baileys Instance] Disconnect: server unreachable, proceeding with DB update`);
-    // Continuar mesmo se o servidor estiver offline
-    // O importante é atualizar o banco de dados
-  }
-}
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
+};
 ```
 
-Isso garante que, mesmo que o servidor Baileys esteja indisponível, o status da conexão no banco será atualizado para "disconnected" e o usuário verá a mudança na interface.
+### 2. Atualizar CORS do `delete-user`
+**Arquivo**: `supabase/functions/delete-user/index.ts` (linhas 3-6)
 
-### 3. Adicionar try-catch no `delete` (linhas 391-396)
-
-**Arquivo**: `supabase/functions/baileys-instance/index.ts`
-
-Mesma correção para a ação de excluir conexão:
-
+Substituir os corsHeaders por:
 ```text
-// ANTES:
-if (sessionName) {
-  await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-    method: "DELETE",
-    headers,
-  });
-}
-
-// DEPOIS:
-if (sessionName) {
-  try {
-    await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-      method: "DELETE",
-      headers,
-    });
-  } catch (fetchError) {
-    console.error(`[Baileys Instance] Delete: server unreachable, proceeding with DB cleanup`);
-  }
-}
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+};
 ```
 
-### 4. Adicionar try-catch no `recreate` (linhas 428-433)
+### 3. Reimplantar as funcoes
+Forcar deploy de `create-user` e `delete-user` para que voltem a responder.
 
-**Arquivo**: `supabase/functions/baileys-instance/index.ts`
+### 4. Corrigir mapeamento de role
+**Arquivo**: `src/hooks/useUsers.ts` (linhas 109-136)
 
-A ação de reconectar também deleta a sessão antiga sem proteção:
+Alterar a mutacao `useUpdateUserRole` para mapear corretamente:
+- `'admin'` -> `'admin'` (sem mudanca)
+- `'atendente'` -> `'operator'` (valor valido no enum do banco)
 
 ```text
-// ANTES:
-if (oldSessionName) {
-  await fetch(`${baileysUrl}/sessions/${oldSessionName}`, {
-    method: "DELETE",
-    headers,
-  });
-}
-
-// DEPOIS:
-if (oldSessionName) {
-  try {
-    await fetch(`${baileysUrl}/sessions/${oldSessionName}`, {
-      method: "DELETE",
-      headers,
-    });
-  } catch (fetchError) {
-    console.error(`[Baileys Instance] Recreate: could not delete old session, proceeding anyway`);
-  }
-}
+mutationFn: async ({ userId, role }: { userId: string; role: 'admin' | 'atendente' }) => {
+  const dbRole = role === 'admin' ? 'admin' : 'operator';
+  const { error } = await supabase
+    .from('user_roles')
+    .update({ role: dbRole as any })
+    .eq('user_id', userId);
+  if (error) throw error;
+},
 ```
 
-## Resumo das Alterações
+### 5. Adicionar rastreamento de presenca online
+**Novo arquivo**: `src/hooks/usePresence.ts`
 
-| Arquivo | Alteração |
+Criar um hook que:
+- Ao montar (usuario logado), atualiza `is_online = true` e `last_seen = now()` no perfil
+- A cada 60 segundos, atualiza `last_seen = now()` (heartbeat)
+- Ao desmontar ou ao fazer logout, atualiza `is_online = false`
+- Usa `window.addEventListener('beforeunload')` para marcar offline ao fechar a aba
+
+### 6. Integrar presenca no layout
+**Arquivo**: `src/components/layout/AppLayout.tsx`
+
+Chamar o hook `usePresence()` dentro do AppLayout para que ele funcione em todas as paginas autenticadas.
+
+---
+
+## Resumo das Alteracoes
+
+| Arquivo | Alteracao |
 |---------|-----------|
-| `supabase/functions/baileys-instance/index.ts` | Adicionar try-catch nas ações disconnect, delete e recreate para proteger contra servidor Baileys inacessível |
-| Deploy | Forçar reimplantação da função `baileys-instance` |
-
-## Resultado Esperado
-
-Após a correção:
-- O servidor voltará a aparecer como "Online" na tela de Conexões
-- Desconectar pelo sistema sempre funcionará (mesmo com o servidor Baileys offline, o banco será atualizado)
-- Excluir e reconectar conexões também funcionarão de forma resiliente
+| `supabase/functions/create-user/index.ts` | Atualizar headers CORS |
+| `supabase/functions/delete-user/index.ts` | Atualizar headers CORS |
+| `src/hooks/useUsers.ts` | Corrigir mapeamento 'atendente' -> 'operator' no useUpdateUserRole |
+| `src/hooks/usePresence.ts` | Novo hook para rastreamento de presenca online |
+| `src/components/layout/AppLayout.tsx` | Integrar hook de presenca |
+| Deploy | Reimplantar create-user e delete-user |
