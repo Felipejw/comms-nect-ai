@@ -29,7 +29,7 @@ services:
       - ./volumes/kong/kong.yml:/home/kong/temp.yml:ro
     depends_on:
       auth:
-        condition: service_healthy
+        condition: service_started
       rest:
         condition: service_started
       storage:
