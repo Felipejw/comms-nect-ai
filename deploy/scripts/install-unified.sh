@@ -413,7 +413,7 @@ create_directories() {
 configure_kong() {
     log_step "Configurando Kong API Gateway"
     
-    cat > "$DEPLOY_DIR/volumes/kong/kong.yml" << 'EOF'
+    cat > "$DEPLOY_DIR/volumes/kong/kong.yml" << EOF
 _format_version: "2.1"
 _transform: true
 
@@ -485,10 +485,10 @@ services:
 consumers:
   - username: anon
     keyauth_credentials:
-      - key: ${SUPABASE_ANON_KEY}
+      - key: $ANON_KEY
   - username: service_role
     keyauth_credentials:
-      - key: ${SUPABASE_SERVICE_KEY}
+      - key: $SERVICE_ROLE_KEY
 
 plugins:
   - name: cors
@@ -697,14 +697,40 @@ start_services() {
     # se houve crash/restart, as senhas podem estar inconsistentes.
     # Forçamos a senha correta para todas as roles de serviço.
     # =============================================
-    log_info "Sincronizando senhas das roles de serviço..."
-    docker exec supabase-db psql -U postgres -c "
-        ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-        ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-        ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
-        ALTER ROLE supabase_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-    " 2>&1 || log_warn "Falha ao sincronizar senhas (continuando...)"
-    log_success "Senhas das roles sincronizadas"
+    log_info "Sincronizando senhas das roles de serviço (comandos individuais)..."
+    
+    # CRITICAL: Each ALTER ROLE must be a SEPARATE psql call.
+    # If combined in one -c, PostgreSQL runs them in a single transaction.
+    # The supabase_admin ALTER fails (superuser), which rolls back ALL changes.
+    
+    docker exec supabase-db psql -U postgres -c \
+        "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
+    if [ $? -eq 0 ]; then
+        log_success "Senha sincronizada: supabase_auth_admin"
+    else
+        log_error "Falha ao sincronizar senha: supabase_auth_admin"
+    fi
+    
+    docker exec supabase-db psql -U postgres -c \
+        "ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
+    if [ $? -eq 0 ]; then
+        log_success "Senha sincronizada: supabase_storage_admin"
+    else
+        log_error "Falha ao sincronizar senha: supabase_storage_admin"
+    fi
+    
+    docker exec supabase-db psql -U postgres -c \
+        "ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
+    if [ $? -eq 0 ]; then
+        log_success "Senha sincronizada: authenticator"
+    else
+        log_error "Falha ao sincronizar senha: authenticator"
+    fi
+    
+    # NOTE: supabase_admin is a superuser - skip it.
+    # The postgres user in this Docker image cannot alter superuser roles.
+    # supabase_admin is not needed for Auth or Storage connectivity.
+    log_info "Pulando supabase_admin (superuser - não alterável e não necessário)"
 
     # =============================================
     # ETAPA 1d: Executar init.sql manualmente
@@ -734,48 +760,58 @@ start_services() {
         log_warn "Container DB reiniciou $restart_count vezes! Possível OOM ou crash."
     fi
     
-    # Testar conectividade TCP COM SENHA (simula exatamente o que Auth faz)
+    # Test TCP auth FROM THE DOCKER NETWORK (not localhost which uses trust auth).
+    # This simulates exactly how GoTrue connects: via hostname "db" on the Docker network.
+    log_info "Testando autenticação via rede Docker (como Auth vai conectar)..."
     local tcp_ok=false
     local tcp_wait=0
-    local tcp_max=60
+    local tcp_max=30
+    
+    # Determine the Docker network name (usually deploy_supabase-network or similar)
+    local network_name
+    network_name=$(docker inspect supabase-db --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null | head -1)
+    
+    if [ -z "$network_name" ]; then
+        log_warn "Não foi possível detectar a rede Docker do banco"
+        network_name="deploy_supabase-network"
+    fi
+    log_info "Rede Docker detectada: $network_name"
+    
     while [ $tcp_wait -lt $tcp_max ]; do
-        # Usar PGPASSWORD para testar auth real (não trust)
-        if docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" supabase-db \
-            psql -U supabase_auth_admin -h 127.0.0.1 -p 5432 -d postgres \
-            -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
+        # Use a temporary postgres container on the SAME Docker network
+        # to test password auth exactly like GoTrue will
+        if docker run --rm --network "$network_name" \
+            -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+            postgres:15-alpine \
+            psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
             tcp_ok=true
-            log_success "Banco aceitando conexões TCP com senha para supabase_auth_admin"
+            log_success "Autenticação por senha verificada via rede Docker!"
             break
-        fi
-        
-        # Se falhou, checar se container ainda está rodando
-        local db_status=$(docker inspect --format='{{.State.Status}}' supabase-db 2>/dev/null || echo "unknown")
-        
-        if [ "$db_status" != "running" ]; then
-            log_error "Container DB não está rodando! Status: $db_status"
-            docker logs supabase-db --tail 10 2>&1
         fi
         
         sleep 3
         tcp_wait=$((tcp_wait + 3))
-        log_info "Aguardando DB aceitar TCP com senha... ($tcp_wait/${tcp_max}s)"
+        log_info "Aguardando auth TCP via rede Docker... ($tcp_wait/${tcp_max}s)"
     done
     
     if [ "$tcp_ok" = "false" ]; then
-        log_error "DB não aceita conexões TCP com senha após ${tcp_max}s!"
-        log_info "Tentando re-sincronizar senhas..."
-        docker exec supabase-db psql -U postgres -c "
-            ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-        " 2>&1 || true
+        log_error "Autenticação por senha falhou via rede Docker!"
+        log_info "Tentando re-sincronizar senha de supabase_auth_admin..."
+        docker exec supabase-db psql -U postgres -c \
+            "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1 || true
         
-        # Testar novamente
-        if docker exec -e PGPASSWORD="${POSTGRES_PASSWORD}" supabase-db \
-            psql -U supabase_auth_admin -h 127.0.0.1 -p 5432 -d postgres \
-            -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
-            log_success "Senha re-sincronizada com sucesso!"
+        sleep 2
+        
+        # Retry once after re-sync
+        if docker run --rm --network "$network_name" \
+            -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+            postgres:15-alpine \
+            psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
+            log_success "Senha re-sincronizada e verificada com sucesso!"
         else
-            log_error "Falha persistente de autenticação. Verifique pg_hba.conf"
-            docker logs supabase-db --tail 20 2>&1
+            log_error "Falha persistente de autenticação por senha."
+            log_error "GoTrue não conseguirá conectar ao banco."
+            docker logs supabase-db --tail 10 2>&1
             log_warn "Tentando continuar mesmo assim..."
         fi
     fi
