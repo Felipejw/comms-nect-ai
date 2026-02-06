@@ -28,8 +28,15 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    networks:
+      - supabase-network
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
+
+networks:
+  supabase-network:
+    name: deploy_supabase-network
+    external: true
