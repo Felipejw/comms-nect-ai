@@ -396,10 +396,13 @@ create_directories() {
     mkdir -p "$DEPLOY_DIR/backups"
     mkdir -p "$DEPLOY_DIR/frontend/dist"
     
-    # Copiar init.sql se existir
+    # Copiar init.sql como arquivo único (Docker precisa que exista para file mount)
     if [ -f "$DEPLOY_DIR/supabase/init.sql" ]; then
-        cp "$DEPLOY_DIR/supabase/init.sql" "$DEPLOY_DIR/volumes/db/init/"
+        cp "$DEPLOY_DIR/supabase/init.sql" "$DEPLOY_DIR/volumes/db/init/init.sql"
     fi
+    
+    # Criar arquivo vazio se não existir (evita erro de mount)
+    touch "$DEPLOY_DIR/volumes/db/init/init.sql"
     
     log_success "Diretórios criados"
 }

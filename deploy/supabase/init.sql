@@ -3,79 +3,74 @@
 -- ============================================================
 -- Versão sincronizada com o schema Cloud
 -- Inclui: multi-tenancy, SaaS, subscriptions, todas as funções
+-- NOTA: Todos os CREATE usam IF NOT EXISTS / CREATE OR REPLACE
+--       para rodar com segurança após os scripts internos do Supabase
 -- ============================================================
 
 -- Criar schema para extensões (necessário para self-hosted)
 CREATE SCHEMA IF NOT EXISTS extensions;
 
--- Extensões necessárias (pg_stat_statements removido - pode não existir no container)
+-- Extensões necessárias
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 -- ============================================================
--- PARTE 1: TIPOS ENUMERADOS (ENUMs)
+-- PARTE 1: TIPOS ENUMERADOS (ENUMs) - com checagem prévia
 -- ============================================================
 
-CREATE TYPE public.app_role AS ENUM (
-    'super_admin',
-    'admin',
-    'manager',
-    'operator'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'app_role') THEN
+        CREATE TYPE public.app_role AS ENUM ('super_admin', 'admin', 'manager', 'operator');
+    END IF;
+END $$;
 
-CREATE TYPE public.campaign_status AS ENUM (
-    'draft',
-    'active',
-    'paused',
-    'completed'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'campaign_status') THEN
+        CREATE TYPE public.campaign_status AS ENUM ('draft', 'active', 'paused', 'completed');
+    END IF;
+END $$;
 
-CREATE TYPE public.contact_status AS ENUM (
-    'active',
-    'inactive'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'contact_status') THEN
+        CREATE TYPE public.contact_status AS ENUM ('active', 'inactive');
+    END IF;
+END $$;
 
-CREATE TYPE public.conversation_status AS ENUM (
-    'new',
-    'in_progress',
-    'resolved',
-    'archived'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'conversation_status') THEN
+        CREATE TYPE public.conversation_status AS ENUM ('new', 'in_progress', 'resolved', 'archived');
+    END IF;
+END $$;
 
-CREATE TYPE public.kanban_stage AS ENUM (
-    'lead',
-    'contacted',
-    'proposal',
-    'negotiation',
-    'closed_won',
-    'closed_lost'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'kanban_stage') THEN
+        CREATE TYPE public.kanban_stage AS ENUM ('lead', 'contacted', 'proposal', 'negotiation', 'closed_won', 'closed_lost');
+    END IF;
+END $$;
 
-CREATE TYPE public.message_type AS ENUM (
-    'text',
-    'image',
-    'audio',
-    'document',
-    'video'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'message_type') THEN
+        CREATE TYPE public.message_type AS ENUM ('text', 'image', 'audio', 'document', 'video');
+    END IF;
+END $$;
 
-CREATE TYPE public.queue_status AS ENUM (
-    'active',
-    'paused'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'queue_status') THEN
+        CREATE TYPE public.queue_status AS ENUM ('active', 'paused');
+    END IF;
+END $$;
 
-CREATE TYPE public.schedule_status AS ENUM (
-    'pending',
-    'completed',
-    'cancelled'
-);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'schedule_status') THEN
+        CREATE TYPE public.schedule_status AS ENUM ('pending', 'completed', 'cancelled');
+    END IF;
+END $$;
 
 -- ============================================================
--- PARTE 2: FUNÇÕES AUXILIARES
+-- PARTE 2: FUNÇÕES AUXILIARES (CREATE OR REPLACE)
 -- ============================================================
 
--- Função para atualizar updated_at automaticamente
-CREATE FUNCTION public.update_updated_at_column() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.update_updated_at_column() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public'
     AS $$
@@ -85,8 +80,7 @@ BEGIN
 END;
 $$;
 
--- Função para verificar se usuário tem determinada role
-CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean
+CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -98,8 +92,7 @@ CREATE FUNCTION public.has_role(_user_id uuid, _role public.app_role) RETURNS bo
   )
 $$;
 
--- Função para verificar se usuário é super admin
-CREATE FUNCTION public.is_super_admin(_user_id uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION public.is_super_admin(_user_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -111,8 +104,7 @@ CREATE FUNCTION public.is_super_admin(_user_id uuid) RETURNS boolean
   )
 $$;
 
--- Função para verificar se usuário é admin ou manager
-CREATE FUNCTION public.is_admin_or_manager(_user_id uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION public.is_admin_or_manager(_user_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -124,8 +116,7 @@ CREATE FUNCTION public.is_admin_or_manager(_user_id uuid) RETURNS boolean
   )
 $$;
 
--- Função para obter tenant_id do usuário
-CREATE FUNCTION public.get_user_tenant_id(_user_id uuid) RETURNS uuid
+CREATE OR REPLACE FUNCTION public.get_user_tenant_id(_user_id uuid) RETURNS uuid
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -135,8 +126,7 @@ CREATE FUNCTION public.get_user_tenant_id(_user_id uuid) RETURNS uuid
   LIMIT 1
 $$;
 
--- Função para verificar se usuário pode acessar um tenant
-CREATE FUNCTION public.can_access_tenant(_user_id uuid, _tenant_id uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION public.can_access_tenant(_user_id uuid, _tenant_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -145,8 +135,7 @@ CREATE FUNCTION public.can_access_tenant(_user_id uuid, _tenant_id uuid) RETURNS
     OR public.get_user_tenant_id(_user_id) = _tenant_id
 $$;
 
--- Função para obter limites do plano do tenant
-CREATE FUNCTION public.get_tenant_plan_limits(_tenant_id uuid) RETURNS jsonb
+CREATE OR REPLACE FUNCTION public.get_tenant_plan_limits(_tenant_id uuid) RETURNS jsonb
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -158,8 +147,7 @@ CREATE FUNCTION public.get_tenant_plan_limits(_tenant_id uuid) RETURNS jsonb
   LIMIT 1
 $$;
 
--- Função para verificar se tenant tem subscription ativa
-CREATE FUNCTION public.tenant_has_active_subscription(_tenant_id uuid) RETURNS boolean
+CREATE OR REPLACE FUNCTION public.tenant_has_active_subscription(_tenant_id uuid) RETURNS boolean
     LANGUAGE sql STABLE SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -177,8 +165,7 @@ CREATE FUNCTION public.tenant_has_active_subscription(_tenant_id uuid) RETURNS b
   )
 $$;
 
--- Função para normalizar telefone
-CREATE FUNCTION public.normalize_phone(phone_input text) RETURNS text
+CREATE OR REPLACE FUNCTION public.normalize_phone(phone_input text) RETURNS text
     LANGUAGE plpgsql IMMUTABLE
     SET search_path TO 'public'
     AS $$
@@ -203,8 +190,7 @@ BEGIN
 END;
 $$;
 
--- Função para prevenir contatos duplicados
-CREATE FUNCTION public.prevent_duplicate_contacts()
+CREATE OR REPLACE FUNCTION public.prevent_duplicate_contacts()
 RETURNS TRIGGER AS $$
 DECLARE
   existing_contact_id UUID;
@@ -252,8 +238,7 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
--- Função para criar perfil e role quando usuário é criado
-CREATE FUNCTION public.handle_new_user() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.handle_new_user() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -272,8 +257,7 @@ BEGIN
 END;
 $$;
 
--- Função para incrementar contador de uso de resposta rápida
-CREATE FUNCTION public.increment_quick_reply_usage() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.increment_quick_reply_usage() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -283,8 +267,7 @@ BEGIN
 END;
 $$;
 
--- Função para atualizar última mensagem da conversa
-CREATE FUNCTION public.update_conversation_last_message() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.update_conversation_last_message() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -300,8 +283,7 @@ BEGIN
 END;
 $$;
 
--- Função para atualizar último contato do contato
-CREATE FUNCTION public.update_contact_last_contact() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.update_contact_last_contact() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -313,8 +295,7 @@ BEGIN
 END;
 $$;
 
--- Função para log de atividades
-CREATE FUNCTION public.log_activity() RETURNS trigger
+CREATE OR REPLACE FUNCTION public.log_activity() RETURNS trigger
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -424,8 +405,7 @@ BEGIN
 END;
 $$;
 
--- Função para incrementar contagem de entregues em campanhas
-CREATE FUNCTION public.increment_campaign_delivered(campaign_id uuid) RETURNS void
+CREATE OR REPLACE FUNCTION public.increment_campaign_delivered(campaign_id uuid) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -436,8 +416,7 @@ BEGIN
 END;
 $$;
 
--- Função para incrementar contagem de lidos em campanhas
-CREATE FUNCTION public.increment_campaign_read(campaign_id uuid, was_delivered boolean DEFAULT false) RETURNS void
+CREATE OR REPLACE FUNCTION public.increment_campaign_read(campaign_id uuid, was_delivered boolean DEFAULT false) RETURNS void
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public'
     AS $$
@@ -454,11 +433,10 @@ END;
 $$;
 
 -- ============================================================
--- PARTE 3: TABELAS PRINCIPAIS
+-- PARTE 3: TABELAS PRINCIPAIS (IF NOT EXISTS)
 -- ============================================================
 
--- Tabela de tenants (empresas/clientes)
-CREATE TABLE public.tenants (
+CREATE TABLE IF NOT EXISTS public.tenants (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     slug text NOT NULL UNIQUE,
@@ -476,8 +454,7 @@ CREATE TABLE public.tenants (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de planos de assinatura
-CREATE TABLE public.subscription_plans (
+CREATE TABLE IF NOT EXISTS public.subscription_plans (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     slug text NOT NULL UNIQUE,
@@ -492,8 +469,7 @@ CREATE TABLE public.subscription_plans (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de assinaturas dos tenants
-CREATE TABLE public.tenant_subscriptions (
+CREATE TABLE IF NOT EXISTS public.tenant_subscriptions (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
     plan_id uuid NOT NULL REFERENCES public.subscription_plans(id),
@@ -508,8 +484,7 @@ CREATE TABLE public.tenant_subscriptions (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de pagamentos
-CREATE TABLE public.subscription_payments (
+CREATE TABLE IF NOT EXISTS public.subscription_payments (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     subscription_id uuid NOT NULL REFERENCES public.tenant_subscriptions(id) ON DELETE CASCADE,
     tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
@@ -524,8 +499,7 @@ CREATE TABLE public.subscription_payments (
     created_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de roles de usuários
-CREATE TABLE public.user_roles (
+CREATE TABLE IF NOT EXISTS public.user_roles (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     user_id uuid NOT NULL,
     role public.app_role DEFAULT 'operator'::public.app_role NOT NULL,
@@ -533,8 +507,7 @@ CREATE TABLE public.user_roles (
     UNIQUE(user_id, role)
 );
 
--- Tabela de perfis de usuários
-CREATE TABLE public.profiles (
+CREATE TABLE IF NOT EXISTS public.profiles (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     user_id uuid NOT NULL UNIQUE,
     name text NOT NULL,
@@ -549,8 +522,7 @@ CREATE TABLE public.profiles (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de permissões de usuários
-CREATE TABLE public.user_permissions (
+CREATE TABLE IF NOT EXISTS public.user_permissions (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     user_id uuid NOT NULL,
     module text NOT NULL,
@@ -561,8 +533,7 @@ CREATE TABLE public.user_permissions (
     UNIQUE(user_id, module)
 );
 
--- Tabela de tags
-CREATE TABLE public.tags (
+CREATE TABLE IF NOT EXISTS public.tags (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     color text DEFAULT '#3B82F6'::text NOT NULL,
@@ -571,8 +542,7 @@ CREATE TABLE public.tags (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de contatos
-CREATE TABLE public.contacts (
+CREATE TABLE IF NOT EXISTS public.contacts (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     email text,
@@ -591,8 +561,7 @@ CREATE TABLE public.contacts (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de tags de contatos
-CREATE TABLE public.contact_tags (
+CREATE TABLE IF NOT EXISTS public.contact_tags (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     contact_id uuid NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
     tag_id uuid NOT NULL REFERENCES public.tags(id) ON DELETE CASCADE,
@@ -601,8 +570,7 @@ CREATE TABLE public.contact_tags (
     UNIQUE(contact_id, tag_id)
 );
 
--- Tabela de filas
-CREATE TABLE public.queues (
+CREATE TABLE IF NOT EXISTS public.queues (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     description text,
@@ -615,8 +583,7 @@ CREATE TABLE public.queues (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de agentes de filas
-CREATE TABLE public.queue_agents (
+CREATE TABLE IF NOT EXISTS public.queue_agents (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     queue_id uuid NOT NULL REFERENCES public.queues(id) ON DELETE CASCADE,
     user_id uuid NOT NULL,
@@ -626,8 +593,7 @@ CREATE TABLE public.queue_agents (
     UNIQUE(queue_id, user_id)
 );
 
--- Tabela de conexões (WhatsApp, etc)
-CREATE TABLE public.connections (
+CREATE TABLE IF NOT EXISTS public.connections (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     type text DEFAULT 'whatsapp'::text,
@@ -643,8 +609,7 @@ CREATE TABLE public.connections (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de colunas do Kanban
-CREATE TABLE public.kanban_columns (
+CREATE TABLE IF NOT EXISTS public.kanban_columns (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     color text DEFAULT '#3B82F6',
@@ -654,8 +619,7 @@ CREATE TABLE public.kanban_columns (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de fluxos de chatbot
-CREATE TABLE public.chatbot_flows (
+CREATE TABLE IF NOT EXISTS public.chatbot_flows (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     description text,
@@ -668,8 +632,7 @@ CREATE TABLE public.chatbot_flows (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de conversas
-CREATE TABLE public.conversations (
+CREATE TABLE IF NOT EXISTS public.conversations (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     contact_id uuid NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
     assigned_to uuid,
@@ -690,8 +653,7 @@ CREATE TABLE public.conversations (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de tags de conversas
-CREATE TABLE public.conversation_tags (
+CREATE TABLE IF NOT EXISTS public.conversation_tags (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     conversation_id uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
     tag_id uuid NOT NULL REFERENCES public.tags(id) ON DELETE CASCADE,
@@ -700,8 +662,7 @@ CREATE TABLE public.conversation_tags (
     UNIQUE(conversation_id, tag_id)
 );
 
--- Tabela de mensagens
-CREATE TABLE public.messages (
+CREATE TABLE IF NOT EXISTS public.messages (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     conversation_id uuid NOT NULL REFERENCES public.conversations(id) ON DELETE CASCADE,
     sender_id uuid,
@@ -714,8 +675,7 @@ CREATE TABLE public.messages (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de nós do fluxo
-CREATE TABLE public.flow_nodes (
+CREATE TABLE IF NOT EXISTS public.flow_nodes (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     flow_id uuid NOT NULL REFERENCES public.chatbot_flows(id) ON DELETE CASCADE,
     type text NOT NULL,
@@ -726,8 +686,7 @@ CREATE TABLE public.flow_nodes (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de arestas do fluxo
-CREATE TABLE public.flow_edges (
+CREATE TABLE IF NOT EXISTS public.flow_edges (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     flow_id uuid NOT NULL REFERENCES public.chatbot_flows(id) ON DELETE CASCADE,
     source_id uuid NOT NULL REFERENCES public.flow_nodes(id) ON DELETE CASCADE,
@@ -737,8 +696,7 @@ CREATE TABLE public.flow_edges (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de regras do chatbot
-CREATE TABLE public.chatbot_rules (
+CREATE TABLE IF NOT EXISTS public.chatbot_rules (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     trigger_text text NOT NULL,
     response text NOT NULL,
@@ -752,8 +710,7 @@ CREATE TABLE public.chatbot_rules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de templates de mensagem
-CREATE TABLE public.message_templates (
+CREATE TABLE IF NOT EXISTS public.message_templates (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     message text NOT NULL,
@@ -765,8 +722,7 @@ CREATE TABLE public.message_templates (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de campanhas
-CREATE TABLE public.campaigns (
+CREATE TABLE IF NOT EXISTS public.campaigns (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     description text,
@@ -792,8 +748,7 @@ CREATE TABLE public.campaigns (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de contatos de campanhas
-CREATE TABLE public.campaign_contacts (
+CREATE TABLE IF NOT EXISTS public.campaign_contacts (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     campaign_id uuid NOT NULL REFERENCES public.campaigns(id) ON DELETE CASCADE,
     contact_id uuid NOT NULL REFERENCES public.contacts(id) ON DELETE CASCADE,
@@ -809,8 +764,7 @@ CREATE TABLE public.campaign_contacts (
     UNIQUE(campaign_id, contact_id)
 );
 
--- Tabela de agendamentos
-CREATE TABLE public.schedules (
+CREATE TABLE IF NOT EXISTS public.schedules (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     contact_id uuid REFERENCES public.contacts(id) ON DELETE CASCADE,
     conversation_id uuid REFERENCES public.conversations(id) ON DELETE SET NULL,
@@ -827,8 +781,7 @@ CREATE TABLE public.schedules (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de respostas rápidas
-CREATE TABLE public.quick_replies (
+CREATE TABLE IF NOT EXISTS public.quick_replies (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     shortcut text NOT NULL,
     title text NOT NULL,
@@ -841,8 +794,7 @@ CREATE TABLE public.quick_replies (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de integrações
-CREATE TABLE public.integrations (
+CREATE TABLE IF NOT EXISTS public.integrations (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     type text NOT NULL,
@@ -854,8 +806,7 @@ CREATE TABLE public.integrations (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de eventos do Google Calendar
-CREATE TABLE public.google_calendar_events (
+CREATE TABLE IF NOT EXISTS public.google_calendar_events (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     integration_id uuid REFERENCES public.integrations(id) ON DELETE CASCADE,
     google_event_id text NOT NULL,
@@ -870,8 +821,7 @@ CREATE TABLE public.google_calendar_events (
     created_at timestamp with time zone NOT NULL DEFAULT now()
 );
 
--- Tabela de configurações de IA
-CREATE TABLE public.ai_settings (
+CREATE TABLE IF NOT EXISTS public.ai_settings (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text DEFAULT 'Default'::text NOT NULL,
     system_prompt text DEFAULT 'Você é um assistente virtual amigável e prestativo.'::text,
@@ -885,8 +835,7 @@ CREATE TABLE public.ai_settings (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de chaves de API
-CREATE TABLE public.api_keys (
+CREATE TABLE IF NOT EXISTS public.api_keys (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     key_hash text NOT NULL,
@@ -900,8 +849,7 @@ CREATE TABLE public.api_keys (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de logs de atividade
-CREATE TABLE public.activity_logs (
+CREATE TABLE IF NOT EXISTS public.activity_logs (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     user_id uuid,
     action text NOT NULL,
@@ -913,8 +861,7 @@ CREATE TABLE public.activity_logs (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de chat interno
-CREATE TABLE public.chat_messages (
+CREATE TABLE IF NOT EXISTS public.chat_messages (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     sender_id uuid NOT NULL,
     receiver_id uuid NOT NULL,
@@ -924,8 +871,7 @@ CREATE TABLE public.chat_messages (
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
--- Tabela de configurações do sistema
-CREATE TABLE public.system_settings (
+CREATE TABLE IF NOT EXISTS public.system_settings (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     key text UNIQUE NOT NULL,
     value text NOT NULL,
@@ -935,8 +881,7 @@ CREATE TABLE public.system_settings (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de configurações por tenant
-CREATE TABLE public.tenant_settings (
+CREATE TABLE IF NOT EXISTS public.tenant_settings (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
     key text NOT NULL,
@@ -947,8 +892,7 @@ CREATE TABLE public.tenant_settings (
     UNIQUE(tenant_id, key)
 );
 
--- Tabela de produtos
-CREATE TABLE public.products (
+CREATE TABLE IF NOT EXISTS public.products (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     name text NOT NULL,
     description text,
@@ -959,70 +903,88 @@ CREATE TABLE public.products (
     updated_at timestamp with time zone DEFAULT now()
 );
 
--- Tabela de vendas
-CREATE TABLE public.sales (
+CREATE TABLE IF NOT EXISTS public.sales (
     id uuid DEFAULT gen_random_uuid() NOT NULL PRIMARY KEY,
     product_id uuid REFERENCES public.products(id),
-    seller_tenant_id uuid REFERENCES public.tenants(id),
     buyer_tenant_id uuid REFERENCES public.tenants(id),
+    seller_tenant_id uuid REFERENCES public.tenants(id),
     buyer_name text,
     buyer_email text,
     total_amount numeric NOT NULL,
     commission_amount numeric NOT NULL,
-    status text DEFAULT 'pending'::text,
+    status text DEFAULT 'pending',
     paid_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now()
 );
 
 -- ============================================================
--- PARTE 4: ÍNDICES
+-- PARTE 4: ÍNDICES (IF NOT EXISTS)
 -- ============================================================
 
-CREATE INDEX idx_activity_logs_created_at ON public.activity_logs USING btree (created_at);
-CREATE INDEX idx_activity_logs_user_id ON public.activity_logs USING btree (user_id);
-CREATE INDEX idx_activity_logs_tenant_id ON public.activity_logs USING btree (tenant_id);
-CREATE INDEX idx_campaigns_status ON public.campaigns USING btree (status);
-CREATE INDEX idx_campaigns_tenant_id ON public.campaigns USING btree (tenant_id);
-CREATE INDEX idx_chat_messages_sender_receiver ON public.chat_messages USING btree (sender_id, receiver_id);
-CREATE INDEX idx_chat_messages_tenant_id ON public.chat_messages USING btree (tenant_id);
-CREATE INDEX idx_contacts_kanban_stage ON public.contacts USING btree (kanban_stage);
-CREATE INDEX idx_contacts_status ON public.contacts USING btree (status);
-CREATE INDEX idx_contacts_whatsapp_lid ON public.contacts USING btree (whatsapp_lid);
-CREATE INDEX idx_contacts_tenant_id ON public.contacts USING btree (tenant_id);
-CREATE INDEX idx_contacts_phone ON public.contacts USING btree (phone);
-CREATE INDEX idx_conversations_assigned_to ON public.conversations USING btree (assigned_to);
-CREATE INDEX idx_conversations_contact_id ON public.conversations USING btree (contact_id);
-CREATE INDEX idx_conversations_status ON public.conversations USING btree (status);
-CREATE INDEX idx_conversations_tenant_id ON public.conversations USING btree (tenant_id);
-CREATE INDEX idx_messages_conversation_id ON public.messages USING btree (conversation_id);
-CREATE INDEX idx_messages_created_at ON public.messages USING btree (created_at);
-CREATE INDEX idx_messages_tenant_id ON public.messages USING btree (tenant_id);
-CREATE INDEX idx_schedules_scheduled_at ON public.schedules USING btree (scheduled_at);
-CREATE INDEX idx_schedules_user_id ON public.schedules USING btree (user_id);
-CREATE INDEX idx_schedules_tenant_id ON public.schedules USING btree (tenant_id);
-CREATE INDEX idx_google_calendar_events_integration ON public.google_calendar_events(integration_id);
-CREATE INDEX idx_google_calendar_events_contact ON public.google_calendar_events(contact_id);
-CREATE INDEX idx_google_calendar_events_conversation ON public.google_calendar_events(conversation_id);
-CREATE INDEX idx_google_calendar_events_start_time ON public.google_calendar_events(start_time);
-CREATE INDEX idx_google_calendar_events_tenant_id ON public.google_calendar_events(tenant_id);
-CREATE INDEX idx_tenants_slug ON public.tenants USING btree (slug);
-CREATE INDEX idx_tenants_owner ON public.tenants USING btree (owner_user_id);
-CREATE INDEX idx_tenant_subscriptions_tenant ON public.tenant_subscriptions USING btree (tenant_id);
-CREATE INDEX idx_profiles_tenant_id ON public.profiles USING btree (tenant_id);
-CREATE INDEX idx_connections_tenant_id ON public.connections USING btree (tenant_id);
-CREATE INDEX idx_tags_tenant_id ON public.tags USING btree (tenant_id);
-CREATE INDEX idx_queues_tenant_id ON public.queues USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_phone ON public.contacts USING btree (phone);
+CREATE INDEX IF NOT EXISTS idx_contacts_tenant_id ON public.contacts USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_contacts_whatsapp_lid ON public.contacts USING btree (whatsapp_lid);
+CREATE INDEX IF NOT EXISTS idx_conversations_contact_id ON public.conversations USING btree (contact_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_assigned_to ON public.conversations USING btree (assigned_to);
+CREATE INDEX IF NOT EXISTS idx_conversations_tenant_id ON public.conversations USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_status ON public.conversations USING btree (status);
+CREATE INDEX IF NOT EXISTS idx_conversations_last_message_at ON public.conversations USING btree (last_message_at);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON public.messages USING btree (conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_tenant_id ON public.messages USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages USING btree (created_at);
+CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON public.user_roles USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_contacts_campaign ON public.campaign_contacts USING btree (campaign_id);
+CREATE INDEX IF NOT EXISTS idx_campaign_contacts_status ON public.campaign_contacts USING btree (status);
+CREATE INDEX IF NOT EXISTS idx_schedules_scheduled_at ON public.schedules USING btree (scheduled_at);
+CREATE INDEX IF NOT EXISTS idx_schedules_user_id ON public.schedules USING btree (user_id);
+CREATE INDEX IF NOT EXISTS idx_schedules_tenant_id ON public.schedules USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_google_calendar_events_integration ON public.google_calendar_events(integration_id);
+CREATE INDEX IF NOT EXISTS idx_google_calendar_events_contact ON public.google_calendar_events(contact_id);
+CREATE INDEX IF NOT EXISTS idx_google_calendar_events_conversation ON public.google_calendar_events(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_google_calendar_events_start_time ON public.google_calendar_events(start_time);
+CREATE INDEX IF NOT EXISTS idx_google_calendar_events_tenant_id ON public.google_calendar_events(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenants_slug ON public.tenants USING btree (slug);
+CREATE INDEX IF NOT EXISTS idx_tenants_owner ON public.tenants USING btree (owner_user_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_subscriptions_tenant ON public.tenant_subscriptions USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_profiles_tenant_id ON public.profiles USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_connections_tenant_id ON public.connections USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tags_tenant_id ON public.tags USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS idx_queues_tenant_id ON public.queues USING btree (tenant_id);
 
 -- ============================================================
--- PARTE 5: TRIGGERS
+-- PARTE 5: TRIGGERS (com DROP IF EXISTS para segurança)
 -- ============================================================
 
 -- Trigger para criar perfil quando usuário é criado
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
 
 -- Triggers para atualização de timestamp
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS update_ai_settings_updated_at ON public.ai_settings;
+  DROP TRIGGER IF EXISTS update_campaigns_updated_at ON public.campaigns;
+  DROP TRIGGER IF EXISTS update_chatbot_flows_updated_at ON public.chatbot_flows;
+  DROP TRIGGER IF EXISTS update_chatbot_rules_updated_at ON public.chatbot_rules;
+  DROP TRIGGER IF EXISTS update_connections_updated_at ON public.connections;
+  DROP TRIGGER IF EXISTS update_contacts_updated_at ON public.contacts;
+  DROP TRIGGER IF EXISTS update_conversations_updated_at ON public.conversations;
+  DROP TRIGGER IF EXISTS update_integrations_updated_at ON public.integrations;
+  DROP TRIGGER IF EXISTS update_kanban_columns_updated_at ON public.kanban_columns;
+  DROP TRIGGER IF EXISTS update_profiles_updated_at ON public.profiles;
+  DROP TRIGGER IF EXISTS update_queues_updated_at ON public.queues;
+  DROP TRIGGER IF EXISTS update_quick_replies_updated_at ON public.quick_replies;
+  DROP TRIGGER IF EXISTS update_schedules_updated_at ON public.schedules;
+  DROP TRIGGER IF EXISTS update_system_settings_updated_at ON public.system_settings;
+  DROP TRIGGER IF EXISTS update_tenants_updated_at ON public.tenants;
+  DROP TRIGGER IF EXISTS update_tenant_settings_updated_at ON public.tenant_settings;
+  DROP TRIGGER IF EXISTS update_message_templates_updated_at ON public.message_templates;
+  DROP TRIGGER IF EXISTS on_message_created ON public.messages;
+  DROP TRIGGER IF EXISTS on_message_update_contact ON public.messages;
+  DROP TRIGGER IF EXISTS check_duplicate_contacts ON public.contacts;
+END $$;
+
 CREATE TRIGGER update_ai_settings_updated_at BEFORE UPDATE ON public.ai_settings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_campaigns_updated_at BEFORE UPDATE ON public.campaigns FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_chatbot_flows_updated_at BEFORE UPDATE ON public.chatbot_flows FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
@@ -1041,11 +1003,9 @@ CREATE TRIGGER update_tenants_updated_at BEFORE UPDATE ON public.tenants FOR EAC
 CREATE TRIGGER update_tenant_settings_updated_at BEFORE UPDATE ON public.tenant_settings FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 CREATE TRIGGER update_message_templates_updated_at BEFORE UPDATE ON public.message_templates FOR EACH ROW EXECUTE FUNCTION public.update_updated_at_column();
 
--- Triggers para mensagens
 CREATE TRIGGER on_message_created AFTER INSERT ON public.messages FOR EACH ROW EXECUTE FUNCTION public.update_conversation_last_message();
 CREATE TRIGGER on_message_update_contact AFTER INSERT ON public.messages FOR EACH ROW EXECUTE FUNCTION public.update_contact_last_contact();
 
--- Trigger para prevenir contatos duplicados
 CREATE TRIGGER check_duplicate_contacts BEFORE INSERT ON public.contacts FOR EACH ROW EXECUTE FUNCTION public.prevent_duplicate_contacts();
 
 -- ============================================================
@@ -1090,8 +1050,22 @@ ALTER TABLE public.user_permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.user_roles ENABLE ROW LEVEL SECURITY;
 
 -- ============================================================
--- PARTE 7: POLÍTICAS RLS (Tenant-Aware)
+-- PARTE 7: POLÍTICAS RLS (Tenant-Aware) - com DROP IF EXISTS
 -- ============================================================
+
+-- Helper: drop policy seguro
+DO $$ 
+DECLARE
+  pol RECORD;
+BEGIN
+  -- Dropar todas as policies criadas por este script para recriar
+  FOR pol IN 
+    SELECT policyname, tablename FROM pg_policies 
+    WHERE schemaname = 'public'
+  LOOP
+    EXECUTE format('DROP POLICY IF EXISTS %I ON public.%I', pol.policyname, pol.tablename);
+  END LOOP;
+END $$;
 
 -- ---- tenants ----
 CREATE POLICY "Super admins can manage all tenants" ON public.tenants FOR ALL USING (is_super_admin(auth.uid())) WITH CHECK (is_super_admin(auth.uid()));
@@ -1258,10 +1232,15 @@ CREATE POLICY "Admins and managers can delete settings" ON public.system_setting
 -- PARTE 8: STORAGE BUCKETS
 -- ============================================================
 
--- Bucket para anexos de chat
 INSERT INTO storage.buckets (id, name, public)
 VALUES ('chat-attachments', 'chat-attachments', true)
 ON CONFLICT (id) DO NOTHING;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Authenticated users can upload chat attachments" ON storage.objects;
+  DROP POLICY IF EXISTS "Anyone can view chat attachments" ON storage.objects;
+  DROP POLICY IF EXISTS "Authenticated users can delete chat attachments" ON storage.objects;
+END $$;
 
 CREATE POLICY "Authenticated users can upload chat attachments"
 ON storage.objects FOR INSERT TO authenticated
@@ -1275,7 +1254,6 @@ CREATE POLICY "Authenticated users can delete chat attachments"
 ON storage.objects FOR DELETE TO authenticated
 USING (bucket_id = 'chat-attachments');
 
--- Bucket para mídia do WhatsApp
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
   'whatsapp-media',
@@ -1284,6 +1262,13 @@ VALUES (
   52428800,
   ARRAY['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/opus', 'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/3gpp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
 ) ON CONFLICT (id) DO NOTHING;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "WhatsApp media is publicly accessible" ON storage.objects;
+  DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
+  DROP POLICY IF EXISTS "Service role can update WhatsApp media" ON storage.objects;
+  DROP POLICY IF EXISTS "Service role can delete WhatsApp media" ON storage.objects;
+END $$;
 
 CREATE POLICY "WhatsApp media is publicly accessible"
 ON storage.objects FOR SELECT
@@ -1301,10 +1286,16 @@ CREATE POLICY "Service role can delete WhatsApp media"
 ON storage.objects FOR DELETE
 USING (bucket_id = 'whatsapp-media');
 
--- Bucket para assets da plataforma
 INSERT INTO storage.buckets (id, name, public) 
 VALUES ('platform-assets', 'platform-assets', true)
 ON CONFLICT (id) DO NOTHING;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Platform assets are publicly accessible" ON storage.objects;
+  DROP POLICY IF EXISTS "Authenticated users can upload platform assets" ON storage.objects;
+  DROP POLICY IF EXISTS "Authenticated users can update platform assets" ON storage.objects;
+  DROP POLICY IF EXISTS "Authenticated users can delete platform assets" ON storage.objects;
+END $$;
 
 CREATE POLICY "Platform assets are publicly accessible"
 ON storage.objects FOR SELECT
@@ -1326,16 +1317,27 @@ USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
 -- PARTE 9: REALTIME
 -- ============================================================
 
-ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.conversations;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.conversation_tags;
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.conversations;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.conversation_tags;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 ALTER TABLE public.messages REPLICA IDENTITY FULL;
 
 -- ============================================================
 -- PARTE 10: DADOS INICIAIS
 -- ============================================================
 
--- Planos de assinatura
 INSERT INTO public.subscription_plans (name, slug, description, price_monthly, price_yearly, features, limits, display_order) VALUES
   ('Básico', 'basico', 'Ideal para pequenas empresas', 97, 970, 
    '["3 usuários", "1 conexão WhatsApp", "500 contatos", "Chatbot básico", "Kanban"]'::jsonb,
@@ -1345,16 +1347,16 @@ INSERT INTO public.subscription_plans (name, slug, description, price_monthly, p
    '{"max_users": 10, "max_connections": 3, "max_contacts": 5000}'::jsonb, 2),
   ('Enterprise', 'enterprise', 'Para grandes operações', 497, 4970, 
    '["Usuários ilimitados", "Conexões ilimitadas", "Contatos ilimitados", "Todos os recursos", "Suporte prioritário"]'::jsonb,
-   '{"max_users": -1, "max_connections": -1, "max_contacts": -1}'::jsonb, 3);
+   '{"max_users": -1, "max_connections": -1, "max_contacts": -1}'::jsonb, 3)
+ON CONFLICT (slug) DO NOTHING;
 
--- Colunas padrão do Kanban
 INSERT INTO public.kanban_columns (name, color, position) VALUES
   ('Novo', '#3B82F6', 0),
   ('Em Atendimento', '#EAB308', 1),
   ('Aguardando', '#8B5CF6', 2),
-  ('Concluído', '#22C55E', 3);
+  ('Concluído', '#22C55E', 3)
+ON CONFLICT DO NOTHING;
 
--- Configurações padrão do sistema
 INSERT INTO public.system_settings (key, value, description, category) VALUES
   ('send_transfer_message', 'disabled', 'Enviar mensagem ao transferir setor/atendente', 'options'),
   ('allow_operator_signature', 'disabled', 'Permite atendente escolher enviar assinatura', 'options'),
