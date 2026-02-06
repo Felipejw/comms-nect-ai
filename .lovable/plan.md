@@ -1,59 +1,39 @@
 
 
-# Corrigir SUPABASE_ANON_KEY ausente no Baileys
+# Corrigir API Key do Baileys no banco de dados
 
 ## Problema
 
-O script `install-simple.sh` gera o arquivo `.env` com apenas 3 variaveis (API_KEY, WEBHOOK_URL, LOG_LEVEL), mas o `docker-compose.yml` espera tambem a variavel `SUPABASE_ANON_KEY`. Sem ela:
+A API Key armazenada na tabela `system_settings` esta desatualizada. O bootstrap gerou uma nova chave ao reinstalar, mas o banco de dados ainda tem a chave antiga.
 
-- O Docker emite o warning: `The "SUPABASE_ANON_KEY" variable is not set. Defaulting to a blank string.`
-- O servidor Baileys nao consegue autenticar as chamadas de webhook para o backend (edge function `baileys-webhook`)
-- Mensagens recebidas no WhatsApp nao chegam ao sistema
+- Banco de dados: `9759d463...b435`
+- VPS (real): `9c23d1af...5d39`
+
+A edge function `send-whatsapp` le a chave do banco e envia ao Baileys. Como nao batem, o Baileys rejeita com "Unauthorized".
 
 ## Correcao
 
-### Arquivo: `deploy/baileys/scripts/install-simple.sh`
-
-Adicionar a variavel `SUPABASE_ANON_KEY` na geracao do arquivo `.env` (em torno da linha 95-109). O valor e a chave publica (anon key) do projeto, que ja e conhecida e segura para uso no frontend.
-
-O bloco `.env` passara a incluir:
+Atualizar o valor de `baileys_api_key` na tabela `system_settings` para a chave correta do VPS:
 
 ```text
-# Supabase Anon Key para autenticacao do webhook
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdWNhbndicGxlb2NleW5tZW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTUxODIsImV4cCI6MjA4MjYzMTE4Mn0.1EQ_XXifnOx3REsjE9ZCbd7dYC7IvXxEjZFIP25vmOA
+9c23d1af8df0df397b2c776b1db712d63314d24be907c60152438e54d5405d39
 ```
 
-### Resultado
+Nenhuma alteracao de codigo e necessaria. Apenas a atualizacao do dado no banco.
 
-Apos esta correcao, ao rodar o bootstrap novamente no VPS:
+## Resultado esperado
 
-1. O `.env` sera gerado com todas as 4 variaveis necessarias
-2. O Docker nao emitira mais o warning sobre SUPABASE_ANON_KEY
-3. O Baileys conseguira autenticar as chamadas de webhook
-4. Mensagens recebidas no WhatsApp chegarao ao sistema corretamente
-
-### Acao imediata no VPS
-
-Enquanto a correcao e publicada, o usuario pode adicionar a variavel manualmente:
-
-```text
-sudo nano /opt/baileys/.env
-```
-
-Adicionar a linha:
-```text
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdWNhbndicGxlb2NleW5tZW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTUxODIsImV4cCI6MjA4MjYzMTE4Mn0.1EQ_XXifnOx3REsjE9ZCbd7dYC7IvXxEjZFIP25vmOA
-```
-
-Depois reiniciar:
-```text
-cd /opt/baileys && sudo docker compose restart
-```
+Apos a atualizacao:
+- O envio de mensagens voltara a funcionar imediatamente
+- A edge function `send-whatsapp` enviara a chave correta ao Baileys
+- O botao "Testar Conexao" nas Configuracoes tambem validara corretamente
 
 ## Detalhes tecnicos
 
-### Arquivos modificados
-- `deploy/baileys/scripts/install-simple.sh` - adicionar SUPABASE_ANON_KEY ao bloco de geracao do .env
+### O que sera feito
+- UPDATE na tabela `system_settings` onde `key = 'baileys_api_key'` com o novo valor
 
-### Por que e seguro
-A anon key e uma chave publica, projetada para ser usada no frontend. Ela so permite operacoes autorizadas pelas politicas de seguranca (RLS) do banco de dados. Nao e uma chave secreta.
+### Por que receber funciona mas enviar nao
+- **Receber**: Baileys no VPS chama a edge function `baileys-webhook` diretamente. A autenticacao do webhook usa o `SUPABASE_ANON_KEY`, nao a API Key do Baileys.
+- **Enviar**: A edge function `send-whatsapp` faz uma requisicao HTTP ao Baileys enviando a `baileys_api_key` do banco como header `X-API-Key`. Com a chave errada, o Baileys retorna 401.
+
