@@ -71,11 +71,11 @@ Deno.serve(async (req) => {
     await supabaseAdmin.from("user_roles").delete().eq("user_id", userId);
     await supabaseAdmin.from("user_permissions").delete().eq("user_id", userId);
 
-    // Delete from auth
+    // Delete from auth (may already be gone)
     const { error: deleteError } = await supabaseAdmin.auth.admin.deleteUser(userId);
     if (deleteError) {
-      console.error(`[delete-user] Error deleting auth user:`, deleteError);
-      throw deleteError;
+      console.warn(`[delete-user] Auth user may not exist: ${deleteError.message}`);
+      // Continue anyway - profile/roles were already cleaned up
     }
 
     // Log activity
