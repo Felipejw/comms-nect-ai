@@ -359,6 +359,23 @@ Deno.serve(async (req) => {
       })
       .eq("id", conversationId);
 
+    // Log activity
+    await supabaseAdmin.from("activity_logs").insert({
+      tenant_id: connection.tenant_id,
+      user_id: user.id,
+      action: "send_message",
+      entity_type: "message",
+      entity_id: conversationId,
+      metadata: { 
+        contact_name: contact?.name, 
+        message_type: messageType,
+        connection_type: connection.type,
+        via: connection.type === "meta_api" ? "meta_api" : "baileys",
+      },
+    }).then(({ error: logError }) => {
+      if (logError) console.error("[ActivityLog] Error:", logError.message);
+    });
+
     return new Response(
       JSON.stringify({ 
         success: true, 

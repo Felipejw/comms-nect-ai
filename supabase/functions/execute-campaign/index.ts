@@ -366,6 +366,26 @@ Deno.serve(async (req) => {
 
     console.log("Campaign execution completed:", JSON.stringify(results));
 
+    // Log activity for each processed campaign
+    for (const result of results) {
+      const campaign = campaigns.find(c => c.id === result.campaign_id);
+      await supabase.from("activity_logs").insert({
+        tenant_id: campaign?.tenant_id,
+        action: "execute_campaign",
+        entity_type: "campaign",
+        entity_id: result.campaign_id,
+        metadata: {
+          campaign_name: result.campaign_name,
+          processed: result.processed,
+          sent: result.sent,
+          failed: result.failed,
+          completed: result.completed,
+        },
+      }).then(({ error: logErr }) => {
+        if (logErr) console.error("[ActivityLog] Error:", logErr.message);
+      });
+    }
+
     return new Response(
       JSON.stringify({ success: true, results }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }

@@ -1400,6 +1400,21 @@ Deno.serve(async (req) => {
       phone, messageContent, baileysConfig, contactName, activeFlowId
     );
 
+    // Log flow execution
+    await supabase.from("activity_logs").insert({
+      tenant_id: conversation.tenant_id,
+      action: "execute_flow",
+      entity_type: "chatbot_flow",
+      entity_id: activeFlowId,
+      metadata: {
+        conversation_id: conversationId,
+        contact_name: contactName,
+        trigger_type: triggerNode?.data?.triggerType,
+      },
+    }).then(({ error: logErr }: { error: { message: string } | null }) => {
+      if (logErr) console.error("[ActivityLog] Error:", logErr.message);
+    });
+
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
