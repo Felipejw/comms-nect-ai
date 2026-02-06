@@ -193,7 +193,7 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
 
     for (const msg of messages) {
       // Ignorar mensagens enviadas por mim
-      if (msg.key.fromMe) continue;
+      if (!msg.key || msg.key.fromMe) continue;
       // Ignorar mensagens de status/broadcast
       if (msg.key.remoteJid === 'status@broadcast') continue;
 
@@ -214,6 +214,8 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
 }
 
 async function processIncomingMessage(sessionName: string, msg: proto.IWebMessageInfo, webhookUrl: string) {
+  if (!msg.key) return;
+
   const session = sessions.get(sessionName);
   if (!session) return;
 
@@ -293,7 +295,7 @@ async function processIncomingMessage(sessionName: string, msg: proto.IWebMessag
   if (payload.payload.hasMedia && msg.message) {
     try {
       const buffer = await downloadMediaMessage(
-        msg,
+        msg as any,
         'buffer',
         {},
         {
