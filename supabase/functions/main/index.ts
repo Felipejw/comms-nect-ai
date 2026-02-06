@@ -3,8 +3,6 @@
 // Roteador principal para o Supabase Edge Runtime
 // ===========================================
 
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -53,8 +51,7 @@ async function loadFunction(name: string): Promise<((req: Request) => Promise<Re
 
   try {
     const module = await import(modulePath);
-    // Edge functions typically export a default handler or use Deno.serve
-    // We'll wrap the module's serve handler
+    // Edge functions export a default handler
     if (typeof module.default === 'function') {
       moduleCache.set(name, module.default);
       return module.default;
@@ -66,7 +63,7 @@ async function loadFunction(name: string): Promise<((req: Request) => Promise<Re
   }
 }
 
-serve(async (req: Request) => {
+const handler = async (req: Request): Promise<Response> => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -122,7 +119,6 @@ serve(async (req: Request) => {
 
   try {
     // Build the internal URL for the function
-    // The Edge Runtime handles routing internally when functions are in the same volume
     const functionUrl = new URL(req.url);
     
     // Remove the function name prefix from the path for the handler
@@ -140,9 +136,9 @@ serve(async (req: Request) => {
     });
 
     // Try to dynamically import and call the function
-    const handler = await loadFunction(functionName);
-    if (handler) {
-      const response = await handler(proxyReq);
+    const fnHandler = await loadFunction(functionName);
+    if (fnHandler) {
+      const response = await fnHandler(proxyReq);
       // Add CORS headers to response
       const newHeaders = new Headers(response.headers);
       Object.entries(corsHeaders).forEach(([key, value]) => {
@@ -176,4 +172,7 @@ serve(async (req: Request) => {
       }
     );
   }
-});
+};
+
+export default handler;
+Deno.serve(handler);

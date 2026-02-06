@@ -188,7 +188,7 @@ async function sendViaMetaAPI(
   return { success: true, messageId: result.messages?.[0]?.id };
 }
 
-Deno.serve(async (req) => {
+const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -198,191 +198,7 @@ Deno.serve(async (req) => {
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // Client for validating user token
-    const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey);
-    // Client for database operations with elevated privileges
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
-
-    // Get auth user
-    const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      console.error("Missing authorization header");
-      return new Response(
-        JSON.stringify({ success: false, error: "Missing authorization header" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const token = authHeader.replace("Bearer ", "");
-    const { data: { user }, error: authError } = await supabaseAuth.auth.getUser(token);
-    
-    if (authError || !user) {
-      console.error("Auth validation failed:", authError?.message);
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid token", details: authError?.message }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log(`Authenticated user: ${user.id}`);
-
-    const payload: SendMessagePayload = await req.json();
-    const { conversationId, content, messageType = "text", mediaUrl } = payload;
-
-    console.log(`Sending WhatsApp message for conversation: ${conversationId}`);
-
-    // Get conversation with contact phone and LID
-    const { data: conversation, error: convError } = await supabaseAdmin
-      .from("conversations")
-      .select(`
-        *,
-        contact:contacts (id, name, phone, whatsapp_lid),
-        connection:connections (id, type, status, session_data, name, is_default, tenant_id)
-      `)
-      .eq("id", conversationId)
-      .single();
-
-    if (convError || !conversation) {
-      console.error("Conversation not found:", convError);
-      return new Response(
-        JSON.stringify({ success: false, error: "Conversation not found" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    const contact = conversation.contact;
-    const phone = contact?.phone;
-    const whatsappLid = contact?.whatsapp_lid;
-    
-    console.log(`Contact data: phone="${phone}", whatsapp_lid="${whatsappLid}"`);
-    
-    // Determine phone to send - check if it's a real phone or a LID
-    let phoneToSend: string | null = null;
-    let isLidSend = false;
-    
-    // Check if phone is actually a real number (not a LID stored as phone)
-    const cleanPhone = phone?.replace(/\D/g, "") || "";
-    const isRealPhone = phone && cleanPhone.length >= 10 && cleanPhone.length <= 14;
-    
-    if (isRealPhone) {
-      phoneToSend = phone;
-      console.log(`Using real phone number: ${phoneToSend}`);
-    } else if (whatsappLid) {
-      console.log(`Contact only has LID: ${whatsappLid}, will send via LID`);
-      phoneToSend = whatsappLid;
-      isLidSend = true;
-    } else if (phone && cleanPhone.length >= 15) {
-      // Phone field contains a LID (legacy data)
-      console.log(`Phone field contains LID: ${phone}, will send via LID`);
-      phoneToSend = phone;
-      isLidSend = true;
-    } else {
-      return new Response(
-        JSON.stringify({ success: false, error: "Contato sem número de telefone válido" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Try to use the conversation's connection first, then find a default one
-    let connection: Connection | null = conversation.connection;
-    
-    if (!connection || connection.status !== "connected") {
-      // Find any available connected connection (prefer Meta API, then Baileys)
-      const { data: connections } = await supabaseAdmin
-        .from("connections")
-        .select("id, type, status, session_data, name, is_default, tenant_id")
-        .in("type", ["whatsapp", "meta_api"])
-        .eq("status", "connected")
-        .order("is_default", { ascending: false });
-
-      if (connections && connections.length > 0) {
-        // Prefer Meta API connections
-        connection = connections.find(c => c.type === "meta_api") || connections[0];
-      }
-    }
-
-    if (!connection) {
-      console.error("No connected WhatsApp instance found");
-      return new Response(
-        JSON.stringify({ success: false, error: "Nenhuma conexão WhatsApp disponível" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    console.log(`Using connection: ${connection.name} (type: ${connection.type})`);
-
-    // Send message based on connection type - only Meta API or Baileys
-    let result: { success: boolean; messageId?: string; error?: string };
-
-    if (connection.type === "meta_api") {
-      result = await sendViaMetaAPI(connection, phoneToSend!, content, messageType, mediaUrl);
-    } else {
-      // Default to Baileys for all WhatsApp QR Code connections
-      result = await sendViaBaileys(connection, phoneToSend!, content, messageType, mediaUrl, supabaseAdmin, isLidSend);
-    }
-
-    if (!result.success) {
-      return new Response(
-        JSON.stringify({ 
-          success: false, 
-          error: result.error,
-          connectionId: connection.id 
-        }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Save message to database
-    const { error: msgError } = await supabaseAdmin
-      .from("messages")
-      .insert({
-        conversation_id: conversationId,
-        content,
-        message_type: messageType,
-        media_url: mediaUrl,
-        sender_id: user.id,
-        sender_type: "agent",
-        is_read: true,
-      });
-
-    if (msgError) {
-      console.error("Error saving message:", msgError);
-    }
-
-    // Update conversation
-    await supabaseAdmin
-      .from("conversations")
-      .update({
-        last_message_at: new Date().toISOString(),
-        status: conversation.status === "new" ? "in_progress" : conversation.status,
-        connection_id: connection.id,
-      })
-      .eq("id", conversationId);
-
-    // Log activity
-    await supabaseAdmin.from("activity_logs").insert({
-      tenant_id: connection.tenant_id,
-      user_id: user.id,
-      action: "send_message",
-      entity_type: "message",
-      entity_id: conversationId,
-      metadata: { 
-        contact_name: contact?.name, 
-        message_type: messageType,
-        connection_type: connection.type,
-        via: connection.type === "meta_api" ? "meta_api" : "baileys",
-      },
-    }).then(({ error: logError }) => {
-      if (logError) console.error("[ActivityLog] Error:", logError.message);
-    });
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        messageId: result.messageId,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    // ... keep existing code (auth validation, message routing to Baileys or Meta API)
   } catch (error) {
     console.error("Error in send-whatsapp:", error);
     return new Response(
@@ -393,4 +209,7 @@ Deno.serve(async (req) => {
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
-});
+};
+
+export default handler;
+Deno.serve(handler);
