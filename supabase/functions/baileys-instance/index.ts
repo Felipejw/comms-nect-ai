@@ -352,10 +352,14 @@ Deno.serve(async (req) => {
         const sessionName = sessionData?.sessionName;
 
         if (sessionName) {
-          await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-            method: "DELETE",
-            headers,
-          });
+          try {
+            await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+              method: "DELETE",
+              headers,
+            });
+          } catch (fetchError) {
+            console.error(`[Baileys Instance] Disconnect: server unreachable, proceeding with DB update`);
+          }
         }
 
         // Atualizar status
@@ -389,10 +393,14 @@ Deno.serve(async (req) => {
           const sessionName = sessionData?.sessionName;
 
           if (sessionName) {
-            await fetch(`${baileysUrl}/sessions/${sessionName}`, {
-              method: "DELETE",
-              headers,
-            });
+            try {
+              await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+                method: "DELETE",
+                headers,
+              });
+            } catch (fetchError) {
+              console.error(`[Baileys Instance] Delete: server unreachable, proceeding with DB cleanup`);
+            }
           }
 
           await supabaseClient.from("connections").delete().eq("id", connectionId);
@@ -426,10 +434,14 @@ Deno.serve(async (req) => {
 
         // Deletar sessao antiga
         if (oldSessionName) {
-          await fetch(`${baileysUrl}/sessions/${oldSessionName}`, {
-            method: "DELETE",
-            headers,
-          });
+          try {
+            await fetch(`${baileysUrl}/sessions/${oldSessionName}`, {
+              method: "DELETE",
+              headers,
+            });
+          } catch (fetchError) {
+            console.error(`[Baileys Instance] Recreate: could not delete old session, proceeding anyway`);
+          }
         }
 
         // Criar nova sessao
