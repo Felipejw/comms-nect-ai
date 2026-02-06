@@ -340,12 +340,17 @@ fi
 
 # Teste 5: Nginx responde no /auth/v1/health
 echo -n "  Teste 5/7 - Nginx -> Kong -> Auth: "
-nginx_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost/auth/v1/health" 2>/dev/null || echo "000")
+nginx_response=$(curl -s -w "\n%{http_code}" "http://localhost/auth/v1/health" 2>/dev/null || echo -e "\n000")
+nginx_code=$(echo "$nginx_response" | tail -1)
+nginx_body=$(echo "$nginx_response" | head -n -1)
 if [ "$nginx_code" = "200" ]; then
     echo -e "${GREEN}OK (HTTP $nginx_code)${NC}"
     DIAG_PASS=$((DIAG_PASS + 1))
 else
     echo -e "${RED}FALHOU (HTTP $nginx_code)${NC}"
+    if [ -n "$nginx_body" ]; then
+        echo "    Resposta: $(echo "$nginx_body" | head -c 200)"
+    fi
     DIAG_FAIL=$((DIAG_FAIL + 1))
 fi
 
