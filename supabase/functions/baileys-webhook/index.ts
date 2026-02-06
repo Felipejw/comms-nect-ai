@@ -19,15 +19,25 @@ function mapBaileysStatus(status: string): string {
   return statusMap[status] || "disconnected";
 }
 
+// Detect if a "from" address is a WhatsApp LID
+function parseFromAddress(rawFrom: string): { identifier: string; isLid: boolean } {
+  const isLid = rawFrom.endsWith("@lid");
+  const identifier = rawFrom
+    .replace("@s.whatsapp.net", "")
+    .replace("@g.us", "")
+    .replace("@lid", "");
+  return { identifier, isLid };
+}
+
 // Store media from base64
 async function storeMediaFromBase64(
+  // deno-lint-ignore no-explicit-any
   supabaseClient: any,
   sessionName: string,
   messageId: string,
   base64Data: string
 ): Promise<string | null> {
   try {
-    // Parse data URL
     const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
     if (!matches) return null;
 
@@ -35,7 +45,6 @@ async function storeMediaFromBase64(
     const base64 = matches[2];
     const buffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
 
-    // Determine extension
     const extMap: Record<string, string> = {
       "image/jpeg": "jpg",
       "image/png": "png",
@@ -104,8 +113,8 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("type", "whatsapp");
 
-    const connection = connections?.find((c) => {
-      const sessionData = c.session_data as { sessionName?: string; engine?: string } | null;
+    const connection = connections?.find((c: { session_data: { sessionName?: string; engine?: string } | null }) => {
+      const sessionData = c.session_data;
       return sessionData?.sessionName === session && sessionData?.engine === "baileys";
     });
 
@@ -185,12 +194,15 @@ Deno.serve(async (req) => {
         });
       }
 
-      const from = msg.from?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+      // Parse the "from" address - detect LID vs real phone
+      const rawFrom = msg.from || "";
+      const { identifier: from, isLid } = parseFromAddress(rawFrom);
+      
       const body = msg.body || "";
       const messageId = msg.id || `baileys_${Date.now()}`;
       const timestamp = msg.timestamp ? new Date(Number(msg.timestamp) * 1000) : new Date();
 
-      console.log(`[Baileys Webhook] Message from: ${from}, body: ${body?.substring(0, 50)}`);
+      console.log(`[Baileys Webhook] Message from: ${rawFrom}, isLid: ${isLid}, parsed: ${from}, body: ${body?.substring(0, 50)}`);
 
       // Determine message type and handle media
       let messageType = "text";
@@ -199,50 +211,115 @@ Deno.serve(async (req) => {
       if (msg.hasMedia && msg.mediaUrl) {
         messageType = msg.type || "document";
         if (messageType === "ptt") messageType = "audio";
-
-        // Store media from base64
         mediaUrl = await storeMediaFromBase64(supabaseClient, session, messageId, msg.mediaUrl);
       }
 
-      // Find or create contact
+      // Find or create contact - handle LID vs real phone differently
       let contact;
-      const { data: existingContact } = await supabaseClient
-        .from("contacts")
-        .select("*")
-        .eq("phone", from)
-        .maybeSingle();
-
-      if (existingContact) {
-        contact = existingContact;
-        // Update name if we have a better one
-        if (
-          msg.pushName &&
-          (!contact.name || contact.name === from || contact.name === "Contato Desconhecido")
-        ) {
-          await supabaseClient
+      
+      if (isLid) {
+        // LID contact: search by whatsapp_lid first, then by phone (in case it was stored incorrectly before)
+        const { data: existingByLid } = await supabaseClient
+          .from("contacts")
+          .select("*")
+          .eq("whatsapp_lid", from)
+          .maybeSingle();
+        
+        if (existingByLid) {
+          contact = existingByLid;
+        } else {
+          // Check if LID was previously stored as phone
+          const { data: existingByPhone } = await supabaseClient
             .from("contacts")
-            .update({ name: msg.pushName, updated_at: new Date().toISOString() })
-            .eq("id", contact.id);
+            .select("*")
+            .eq("phone", from)
+            .maybeSingle();
+          
+          if (existingByPhone) {
+            // Fix: move LID from phone to whatsapp_lid
+            console.log(`[Baileys Webhook] Fixing contact ${existingByPhone.id}: moving LID from phone to whatsapp_lid`);
+            await supabaseClient
+              .from("contacts")
+              .update({ 
+                whatsapp_lid: from, 
+                phone: null,
+                name: msg.pushName && existingByPhone.name === from ? msg.pushName : existingByPhone.name,
+                updated_at: new Date().toISOString() 
+              })
+              .eq("id", existingByPhone.id);
+            contact = { ...existingByPhone, whatsapp_lid: from, phone: null };
+          } else {
+            // Create new contact with LID (not phone)
+            const { data: newContact, error: contactError } = await supabaseClient
+              .from("contacts")
+              .insert({
+                whatsapp_lid: from,
+                phone: null,
+                name: msg.pushName || `Contato ${from.slice(-6)}`,
+                tenant_id: connection.tenant_id,
+              })
+              .select()
+              .single();
+
+            if (contactError) {
+              console.error("[Baileys Webhook] Error creating LID contact:", contactError);
+              return new Response(
+                JSON.stringify({ success: false, error: contactError.message }),
+                { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
+            contact = newContact;
+            console.log(`[Baileys Webhook] Created LID contact: ${contact.id} (whatsapp_lid: ${from})`);
+          }
         }
       } else {
-        const { data: newContact, error: contactError } = await supabaseClient
+        // Regular phone contact
+        const { data: existingContact } = await supabaseClient
           .from("contacts")
-          .insert({
-            phone: from,
-            name: msg.pushName || from,
-            tenant_id: connection.tenant_id,
-          })
-          .select()
-          .single();
+          .select("*")
+          .eq("phone", from)
+          .maybeSingle();
 
-        if (contactError) {
-          console.error("[Baileys Webhook] Error creating contact:", contactError);
-          return new Response(
-            JSON.stringify({ success: false, error: contactError.message }),
-            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+        if (existingContact) {
+          contact = existingContact;
+          if (
+            msg.pushName &&
+            (!contact.name || contact.name === from || contact.name === "Contato Desconhecido")
+          ) {
+            await supabaseClient
+              .from("contacts")
+              .update({ name: msg.pushName, updated_at: new Date().toISOString() })
+              .eq("id", contact.id);
+          }
+        } else {
+          const { data: newContact, error: contactError } = await supabaseClient
+            .from("contacts")
+            .insert({
+              phone: from,
+              name: msg.pushName || from,
+              tenant_id: connection.tenant_id,
+            })
+            .select()
+            .single();
+
+          if (contactError) {
+            console.error("[Baileys Webhook] Error creating contact:", contactError);
+            return new Response(
+              JSON.stringify({ success: false, error: contactError.message }),
+              { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+          contact = newContact;
         }
-        contact = newContact;
+      }
+
+      // Update contact name if pushName is better
+      if (msg.pushName && contact.name !== msg.pushName && 
+          (contact.name === `Contato ${from.slice(-6)}` || contact.name === "Contato Desconhecido" || contact.name === from)) {
+        await supabaseClient
+          .from("contacts")
+          .update({ name: msg.pushName, updated_at: new Date().toISOString() })
+          .eq("id", contact.id);
       }
 
       // Find or create conversation
@@ -287,22 +364,22 @@ Deno.serve(async (req) => {
         conversation = newConversation;
       }
 
-      // Save message
+      // Save message - NO external_id (column doesn't exist)
       const { error: msgError } = await supabaseClient.from("messages").insert({
         conversation_id: conversation.id,
         content: body,
         message_type: messageType,
         media_url: mediaUrl,
         sender_type: "contact",
-        external_id: messageId,
         is_read: false,
+        tenant_id: connection.tenant_id,
       });
 
       if (msgError) {
         console.error("[Baileys Webhook] Error saving message:", msgError);
+      } else {
+        console.log(`[Baileys Webhook] ✅ Message saved for conversation: ${conversation.id}`);
       }
-
-      console.log(`[Baileys Webhook] Message saved for conversation: ${conversation.id}`);
 
       return new Response(JSON.stringify({ success: true }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
