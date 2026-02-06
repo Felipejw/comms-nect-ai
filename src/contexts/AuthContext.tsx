@@ -210,6 +210,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Super admins and admins have all permissions
     if (isSuperAdmin || isAdmin) return true;
     
+    // Se nao ha permissoes configuradas, permitir acesso por padrao
+    if (permissions.length === 0) return true;
+    
     const permission = permissions.find(p => p.module === module);
     if (!permission) return false;
     

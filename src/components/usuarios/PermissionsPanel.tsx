@@ -98,7 +98,7 @@ export function PermissionsPanel({ permissions, onPermissionsChange }: Permissio
 export function getDefaultPermissions(): Record<string, PermissionState> {
   const defaultPerms: Record<string, PermissionState> = {};
   MODULES.forEach(m => {
-    defaultPerms[m.key] = { can_view: false, can_edit: false };
+    defaultPerms[m.key] = { can_view: true, can_edit: false };
   });
   return defaultPerms;
 }
