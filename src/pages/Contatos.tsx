@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
-import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet, RefreshCw, AlertTriangle, CheckSquare, Square, X } from "lucide-react";
+import { Search, Plus, Filter, MoreHorizontal, MessageSquare, Edit, Trash2, Loader2, Eye, Phone, Mail, Building, Tag, FileText, Upload, FileSpreadsheet, RefreshCw, Info, CheckSquare, Square, X } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -49,6 +50,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useContacts, useCreateContact, useDeleteContact, useUpdateContact, Contact } from "@/hooks/useContacts";
 import { useSyncContacts, hasLidIssue, hasPlaceholderName } from "@/hooks/useSyncContacts";
 import { supabase } from "@/integrations/supabase/client";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -114,6 +116,7 @@ const parseCSV = (content: string): { headers: string[]; rows: string[][] } => {
 export default function Contatos() {
   const { hasPermission, isAdmin } = useAuth();
   const canEdit = isAdmin || hasPermission('contatos', 'edit');
+  const queryClient = useQueryClient();
   
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -146,6 +149,91 @@ export default function Contatos() {
   const problemContactsCount = contacts?.filter(c => 
     hasLidIssue(c) || hasPlaceholderName(c)
   ).length || 0;
+
+  // Count LID-only contacts (no real phone)
+  const lidOnlyContacts = contacts?.filter(c => 
+    !c.phone && (c as any).whatsapp_lid
+  ) || [];
+  const lidOnlyCount = lidOnlyContacts.length;
+
+  // State for LID resolution
+  const [resolvingLidIds, setResolvingLidIds] = useState<Set<string>>(new Set());
+  const [isBulkResolving, setIsBulkResolving] = useState(false);
+  const [bulkResolveProgress, setBulkResolveProgress] = useState({ current: 0, total: 0, resolved: 0 });
+
+  const handleResolveLid = async (contact: Contact) => {
+    const whatsappLid = (contact as any).whatsapp_lid;
+    if (!whatsappLid) return;
+    
+    setResolvingLidIds(prev => new Set(prev).add(contact.id));
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('resolve-lid-contact', {
+        body: { contactId: contact.id, whatsappLid }
+      });
+      
+      if (error) throw error;
+      
+      if (data?.success && data?.realPhone) {
+        toast.success(`Número encontrado: ${data.realPhone}`);
+        queryClient.invalidateQueries({ queryKey: ['contacts'] });
+      } else {
+        toast.info("Não foi possível resolver o número. O contato precisa enviar uma nova mensagem.");
+      }
+    } catch (err) {
+      console.error('Error resolving LID:', err);
+      toast.error("Erro ao tentar resolver o número");
+    } finally {
+      setResolvingLidIds(prev => {
+        const next = new Set(prev);
+        next.delete(contact.id);
+        return next;
+      });
+    }
+  };
+
+  const handleBulkResolveLids = async () => {
+    if (lidOnlyContacts.length === 0) return;
+    
+    setIsBulkResolving(true);
+    setBulkResolveProgress({ current: 0, total: lidOnlyContacts.length, resolved: 0 });
+    
+    let resolved = 0;
+    
+    for (let i = 0; i < lidOnlyContacts.length; i++) {
+      const contact = lidOnlyContacts[i];
+      const whatsappLid = (contact as any).whatsapp_lid;
+      
+      setBulkResolveProgress(prev => ({ ...prev, current: i + 1 }));
+      
+      if (!whatsappLid) continue;
+      
+      try {
+        const { data, error } = await supabase.functions.invoke('resolve-lid-contact', {
+          body: { contactId: contact.id, whatsappLid }
+        });
+        
+        if (!error && data?.success && data?.realPhone) {
+          resolved++;
+          setBulkResolveProgress(prev => ({ ...prev, resolved }));
+        }
+      } catch {
+        // Continue with next contact
+      }
+      
+      // Small delay to avoid overwhelming the server
+      await new Promise(r => setTimeout(r, 300));
+    }
+    
+    setIsBulkResolving(false);
+    
+    if (resolved > 0) {
+      toast.success(`${resolved} de ${lidOnlyContacts.length} números resolvidos!`);
+      queryClient.invalidateQueries({ queryKey: ['contacts'] });
+    } else {
+      toast.info("Nenhum número pôde ser resolvido. Os contatos precisam enviar novas mensagens.");
+    }
+  };
 
   const filteredContacts = contacts?.filter((c) => {
     if (searchQuery.startsWith("status:")) {
@@ -377,6 +465,33 @@ export default function Contatos() {
           {!canEdit && <ReadOnlyBadge />}
         </div>
         <div className="flex gap-2">
+          {lidOnlyCount > 0 && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    className="gap-2" 
+                    onClick={handleBulkResolveLids}
+                    disabled={isBulkResolving || !canEdit}
+                  >
+                    {isBulkResolving ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Search className="w-4 h-4" />
+                    )}
+                    {isBulkResolving 
+                      ? `Resolvendo ${bulkResolveProgress.current}/${bulkResolveProgress.total}...`
+                      : `Resolver Números (${lidOnlyCount})`
+                    }
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Tenta descobrir o número real dos {lidOnlyCount} contatos pendentes</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -483,6 +598,17 @@ export default function Contatos() {
         </Dialog>
         </div>
       </div>
+
+      {/* Bulk resolve progress bar */}
+      {isBulkResolving && (
+        <div className="space-y-2 p-3 bg-muted rounded-lg">
+          <div className="flex items-center justify-between text-sm">
+            <span>Resolvendo números... ({bulkResolveProgress.current}/{bulkResolveProgress.total})</span>
+            <span className="text-muted-foreground">{bulkResolveProgress.resolved} encontrados</span>
+          </div>
+          <Progress value={(bulkResolveProgress.current / bulkResolveProgress.total) * 100} className="h-2" />
+        </div>
+      )}
 
       <div className="flex items-center gap-4">
         <div className="relative flex-1 max-w-md">
@@ -603,21 +729,48 @@ export default function Contatos() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <span>{formatPhoneDisplay(contact.phone)}</span>
-                      {hasLidIssue(contact) && (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger>
-                              <AlertTriangle className="w-4 h-4 text-warning" />
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Número precisa de sincronização</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      )}
-                      {!contact.phone && (contact as any).whatsapp_lid && (
-                        <Badge variant="outline" className="text-xs">LID</Badge>
+                      {!contact.phone && (contact as any).whatsapp_lid ? (
+                        <>
+                          <span className="text-muted-foreground text-sm italic">Pendente</span>
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6"
+                                  onClick={() => handleResolveLid(contact)}
+                                  disabled={resolvingLidIds.has(contact.id) || !canEdit}
+                                >
+                                  {resolvingLidIds.has(contact.id) ? (
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  ) : (
+                                    <Search className="w-3.5 h-3.5" />
+                                  )}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Tentar descobrir o número real</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        </>
+                      ) : (
+                        <>
+                          <span>{formatPhoneDisplay(contact.phone)}</span>
+                          {hasLidIssue(contact) && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger>
+                                  <Info className="w-4 h-4 text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Número precisa de sincronização</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </>
                       )}
                     </div>
                   </TableCell>
