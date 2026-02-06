@@ -1,120 +1,84 @@
 
 
-## Solucao Definitiva: Erro de Login (Auth SASL) + Reparo sem Reinstalar
+## Fix Definitivo: Roles sem Senha + Senha Admin 123456
 
-### Diagnostico
+### O que estava errado
 
-O erro "Unexpected non-whitespace character after JSON" acontece porque o servico de autenticacao (GoTrue) esta **parado/crashando**. Quando o frontend tenta fazer login, o Kong retorna uma pagina HTML de erro (porque GoTrue esta fora do ar), e o cliente tenta interpretar esse HTML como JSON, causando o erro.
-
-**Por que o Auth continua falhando?** Apos 5 tentativas, o padrao ficou claro:
-
-A imagem `supabase/postgres:15.1.1.78` executa scripts internos em `/docker-entrypoint-initdb.d/` durante o primeiro boot. Esses scripts criam as roles (`supabase_auth_admin`, etc.) com senhas. O problema e que **todas as nossas tentativas de ALTER ROLE acontecem DEPOIS do init**, criando uma corrida (race condition) onde:
-
-1. PostgreSQL inicia e executa scripts de init (cria roles com senhas)
-2. Nosso script espera, testa, e faz ALTER ROLE
-3. Mas entre o teste e o inicio do Auth, **algo pode mudar** (ex: pg_hba.conf reload, cache de autenticacao, ou o DB reinicia por OOM e os scripts de init rodam novamente com senhas diferentes)
-
-**Solucao definitiva**: Em vez de tentar sincronizar senhas DEPOIS do init, vamos inserir nosso script de sincronizacao DENTRO da sequencia de init do PostgreSQL. Um arquivo `99-sync-passwords.sh` montado em `/docker-entrypoint-initdb.d/` roda automaticamente como o ULTIMO passo do init, garantindo que as senhas estejam corretas antes de qualquer servico conectar.
-
----
+O problema nunca foi uma "race condition" ou timing. A imagem `supabase/postgres:15.1.1.78` cria as roles internas (`supabase_auth_admin`, `supabase_storage_admin`, `authenticator`) **SEM SENHA** durante a inicializacao. O setup oficial do Supabase exige um arquivo chamado `roles.sql` montado em `/docker-entrypoint-initdb.d/init-scripts/99-roles.sql` que define as senhas dessas roles. Nos nunca montamos esse arquivo. Por isso, o servico de autenticacao (GoTrue) nunca conseguiu conectar ao banco e sempre retornou erro HTML em vez de JSON.
 
 ### O que sera feito
 
-#### 1. Script de sincronizacao dentro do PostgreSQL init (fix definitivo)
-
-Um script `99-sync-passwords.sh` sera:
-- Criado durante a instalacao com a senha gerada
-- Montado em `/docker-entrypoint-initdb.d/` (nao em subdiretorio)
-- Executado automaticamente pelo PostgreSQL como ultimo script de init
-- Garante que as senhas das roles correspondem ao `POSTGRES_PASSWORD`
-
-#### 2. Script de reparo rapido (para a instalacao atual)
-
-Como voce ja tem tudo instalado e o dominio apontado, nao precisa reinstalar. Um script `repair-auth.sh` vai:
-- Sincronizar senhas das roles diretamente
-- Reiniciar o servico Auth
-- Verificar se ficou healthy
-- Criar o usuario admin se nao existir
-
-#### 3. Correcoes no docker-compose.yml
-
-- Montar o `99-sync-passwords.sh` no init do PostgreSQL
-- Adicionar `ADDITIONAL_REDIRECT_URLS` para eliminar o aviso do Docker Compose
-
-#### 4. Melhorias no script de instalacao
-
-- Remover a logica complexa de "esperar 15s + testar + ALTER ROLE" (nao e mais necessaria)
-- Gerar o `99-sync-passwords.sh` durante `create_directories()`
-- Melhorar a mensagem final para indicar claramente se o Auth esta saudavel ou nao
+1. Criar um arquivo `roles.sql` durante a instalacao que define as senhas das roles internas
+2. Montar esse arquivo no local correto dentro do container PostgreSQL
+3. Definir a senha do admin como `123456` (fixa)
+4. Atualizar o `repair-auth.sh` para tambem corrigir instalacoes existentes
 
 ---
 
 ### Detalhes tecnicos
 
-#### Arquivo 1: `deploy/scripts/repair-auth.sh` (NOVO)
+#### Arquivo 1: `deploy/docker-compose.yml`
 
-Script que corrige o Auth sem reinstalar:
-
-```text
-1. Le POSTGRES_PASSWORD do .env
-2. Executa ALTER ROLE para cada role de servico (comandos separados)
-3. Faz pg_reload_conf()
-4. Reinicia o container supabase-auth
-5. Aguarda ate 120s pelo healthcheck
-6. Se Auth ficar healthy, tenta criar admin se nao existir
-7. Mostra status final
-```
-
-#### Arquivo 2: `deploy/docker-compose.yml`
-
-Adicionar novo volume mount no servico `db`:
+Adicionar volume mount para `roles.sql` no servico `db`:
 
 ```yaml
 volumes:
   - ./volumes/db/data:/var/lib/postgresql/data:Z
   - ./volumes/db/init/init.sql:/docker-entrypoint-initdb.d/migrations/init.sql:ro
   - ./volumes/db/init/99-sync-passwords.sh:/docker-entrypoint-initdb.d/99-sync-passwords.sh:ro
+  - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
 ```
 
-Adicionar `ADDITIONAL_REDIRECT_URLS` ao .env com valor padrao vazio.
+O arquivo `99-sync-passwords.sh` sera mantido como fallback redundante.
 
-#### Arquivo 3: `deploy/scripts/install-unified.sh`
+#### Arquivo 2: `deploy/scripts/install-unified.sh`
 
-**Mudanca A** - Em `create_directories()`, gerar o arquivo `99-sync-passwords.sh`:
-
+**Mudanca A** - Senha do admin fixa como `123456`:
 ```bash
-cat > "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh" << PASSEOF
-#!/bin/bash
-set -e
-echo "=== Sincronizando senhas dos roles internos ==="
-psql -v ON_ERROR_STOP=0 -U postgres <<-EOSQL
-    ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-    ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
-    ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
-EOSQL
-echo "=== Senhas sincronizadas ==="
-PASSEOF
-chmod +x "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh"
+ADMIN_EMAIL="admin@admin.com"
+ADMIN_PASSWORD="123456"
 ```
 
-**Mudanca B** - Em `start_services()`, remover as etapas 1c (wait 15s), 1e (test + ALTER ROLE fallback). Manter apenas a verificacao simples apos o init.sql.
+**Mudanca B** - Gerar `roles.sql` em `create_directories()` (seguindo o padrao oficial do Supabase):
+```sql
+-- roles.sql: Set passwords for internal Supabase roles
+-- This file follows the official Supabase self-hosted pattern
+\set pgpass `echo "$POSTGRES_PASSWORD"`
 
-**Mudanca C** - Adicionar `ADDITIONAL_REDIRECT_URLS=` ao `.env` gerado.
+ALTER USER authenticator WITH PASSWORD :'pgpass';
+ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
+ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
+```
+
+Este arquivo usa `\set pgpass` para ler a variavel de ambiente `POSTGRES_PASSWORD` de dentro do container PostgreSQL, garantindo que as senhas SEMPRE correspondam.
+
+#### Arquivo 3: `deploy/scripts/repair-auth.sh`
+
+Atualizar para:
+- Usar senha fixa `123456` ao criar o admin
+- Gerar o `roles.sql` se nao existir
+- Reiniciar o container DB (nao apenas o Auth) para que o `roles.sql` seja processado em reinstalacoes
+
+---
+
+### Por que as tentativas anteriores falharam
+
+Todas as tentativas anteriores usavam `ALTER ROLE` DEPOIS que o PostgreSQL ja tinha iniciado. Mas o Supabase postgres image processa o subdiretorio `init-scripts/` durante uma fase especifica da inicializacao. Nosso `99-sync-passwords.sh` no diretorio raiz executava no momento errado ou era ignorado.
+
+O arquivo `roles.sql` montado em `init-scripts/` segue exatamente o padrao oficial e roda na fase correta.
 
 ---
 
 ### Como executar
 
-**Para corrigir a instalacao atual (sem reinstalar):**
-
+Para a instalacao atual (sem reinstalar):
 ```bash
 cd /opt/sistema && git pull origin main
 cd deploy
 sudo bash scripts/repair-auth.sh
 ```
 
-**Para futuras instalacoes limpas:**
-
+Para instalacao limpa:
 ```bash
 cd /opt/sistema && git pull origin main
 cd deploy
@@ -123,12 +87,8 @@ sudo rm -rf volumes/db/data
 sudo bash scripts/install-unified.sh
 ```
 
----
+### Credenciais de acesso
 
-### Resultado esperado
+- Email: `admin@admin.com`
+- Senha: `123456`
 
-1. `repair-auth.sh` sincroniza as senhas e reinicia o Auth
-2. Auth conecta ao banco com sucesso (sem SASL error)
-3. Login com `admin@admin.com` funciona
-4. Kong retorna JSON valido para todas as chamadas de autenticacao
-5. Futuras instalacoes usam `99-sync-passwords.sh` dentro do init do PostgreSQL, eliminando a race condition permanentemente
