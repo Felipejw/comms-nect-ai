@@ -1,49 +1,115 @@
 
 
-# Melhorar exibicao de contatos LID na pagina de Contatos
+# Correção: Reimplantar baileys-instance e Tornar Disconnect Resiliente
 
-## Situacao Atual
+## Causa Raiz
 
-Na pagina de Contatos, os contatos que vieram do WhatsApp possuem apenas um identificador interno (LID) e nao o numero de telefone real. Atualmente, a coluna "Telefone" mostra "-" com um badge "LID", o que nao e informativo.
+A função `baileys-instance` não está implantada no servidor (retorna 404 em todas as chamadas). Isso fez o servidor aparecer como "Offline" e impediu a desconexão pelo sistema. Além disso, as ações `disconnect` e `delete` não possuem tratamento de erro para quando o servidor Baileys está inacessível.
 
-O problema raiz: o WhatsApp mais recente usa identificadores LID ao inves de numeros de telefone em algumas situacoes. O sistema tem uma funcao para resolver esses LIDs (`resolve-lid-contact`), mas ela so e chamada manualmente na tela de Atendimento.
+## Correções Necessárias
 
-## Solucao
+### 1. Reimplantar a função `baileys-instance`
 
-Melhorar a exibicao na pagina de Contatos para:
-1. Mostrar "Pendente" em vez de "-" com badge "LID" 
-2. Adicionar botao para tentar resolver o numero individualmente
-3. Adicionar botao de resolucao em massa para todos os contatos com LID
+Forçar o deploy da função para que ela volte a responder. Não há alteração de código necessária para isso -- basta garantir que o deploy ocorra corretamente.
 
----
+### 2. Adicionar try-catch no `disconnect` (linhas 354-359)
 
-## Detalhes Tecnicos
+**Arquivo**: `supabase/functions/baileys-instance/index.ts`
 
-### Arquivo: `src/pages/Contatos.tsx`
+Atualmente, se o servidor Baileys estiver fora do ar, a chamada DELETE falha e a função inteira crasheia sem atualizar o banco de dados. A correção:
 
-**Alteracao 1 - Coluna Telefone (linhas 604-621)**
+```text
+// ANTES (sem proteção):
+if (sessionName) {
+  await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+    method: "DELETE",
+    headers,
+  });
+}
 
-Substituir a exibicao atual:
-- Em vez de mostrar "-" com badge "LID", mostrar "Pendente" com um botao pequeno para tentar resolver o numero
-- Quando o contato tem `whatsapp_lid` mas nao tem `phone`, exibir:
-  - Texto "Pendente" em cor suave
-  - Botao com icone de busca para chamar `resolve-lid-contact`
-  - Mostrar o numero real se a resolucao for bem-sucedida
+// DEPOIS (com proteção):
+if (sessionName) {
+  try {
+    await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+      method: "DELETE",
+      headers,
+    });
+  } catch (fetchError) {
+    console.error(`[Baileys Instance] Disconnect: server unreachable, proceeding with DB update`);
+    // Continuar mesmo se o servidor estiver offline
+    // O importante é atualizar o banco de dados
+  }
+}
+```
 
-**Alteracao 2 - Botao "Resolver Numeros" na barra de acoes**
+Isso garante que, mesmo que o servidor Baileys esteja indisponível, o status da conexão no banco será atualizado para "disconnected" e o usuário verá a mudança na interface.
 
-Adicionar um botao ao lado do "Sincronizar" para resolver todos os contatos LID de uma vez:
-- Contar quantos contatos tem LID sem telefone real
-- Ao clicar, iterar sobre esses contatos chamando `resolve-lid-contact` para cada um
-- Mostrar progresso e resultado
+### 3. Adicionar try-catch no `delete` (linhas 391-396)
 
-**Alteracao 3 - Substituir icone AlertTriangle por Info**
+**Arquivo**: `supabase/functions/baileys-instance/index.ts`
 
-Trocar `AlertTriangle` por `Info` na importacao e nos indicadores de LID (consistente com as mudancas feitas na tela de Atendimento).
+Mesma correção para a ação de excluir conexão:
 
-### Resumo das Alteracoes
+```text
+// ANTES:
+if (sessionName) {
+  await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+    method: "DELETE",
+    headers,
+  });
+}
 
-| Arquivo | Alteracao |
+// DEPOIS:
+if (sessionName) {
+  try {
+    await fetch(`${baileysUrl}/sessions/${sessionName}`, {
+      method: "DELETE",
+      headers,
+    });
+  } catch (fetchError) {
+    console.error(`[Baileys Instance] Delete: server unreachable, proceeding with DB cleanup`);
+  }
+}
+```
+
+### 4. Adicionar try-catch no `recreate` (linhas 428-433)
+
+**Arquivo**: `supabase/functions/baileys-instance/index.ts`
+
+A ação de reconectar também deleta a sessão antiga sem proteção:
+
+```text
+// ANTES:
+if (oldSessionName) {
+  await fetch(`${baileysUrl}/sessions/${oldSessionName}`, {
+    method: "DELETE",
+    headers,
+  });
+}
+
+// DEPOIS:
+if (oldSessionName) {
+  try {
+    await fetch(`${baileysUrl}/sessions/${oldSessionName}`, {
+      method: "DELETE",
+      headers,
+    });
+  } catch (fetchError) {
+    console.error(`[Baileys Instance] Recreate: could not delete old session, proceeding anyway`);
+  }
+}
+```
+
+## Resumo das Alterações
+
+| Arquivo | Alteração |
 |---------|-----------|
-| `src/pages/Contatos.tsx` | Melhorar exibicao da coluna Telefone para contatos LID; adicionar botao de resolucao individual e em massa; trocar AlertTriangle por Info |
+| `supabase/functions/baileys-instance/index.ts` | Adicionar try-catch nas ações disconnect, delete e recreate para proteger contra servidor Baileys inacessível |
+| Deploy | Forçar reimplantação da função `baileys-instance` |
 
+## Resultado Esperado
+
+Após a correção:
+- O servidor voltará a aparecer como "Online" na tela de Conexões
+- Desconectar pelo sistema sempre funcionará (mesmo com o servidor Baileys offline, o banco será atualizado)
+- Excluir e reconectar conexões também funcionarão de forma resiliente
