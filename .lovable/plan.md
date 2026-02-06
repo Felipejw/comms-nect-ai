@@ -1,93 +1,131 @@
 
 
-## Fix Definitivo: Roles sem Senha + Senha Admin 123456
+## Correção Definitiva do Erro de Login ("Failed to fetch")
 
-### O que estava errado
+### Por que o login continua falhando
 
-O problema nunca foi uma "race condition" ou timing. A imagem `supabase/postgres:15.1.1.78` cria as roles internas (`supabase_auth_admin`, `supabase_storage_admin`, `authenticator`) **SEM SENHA** durante a inicializacao. O setup oficial do Supabase exige um arquivo chamado `roles.sql` montado em `/docker-entrypoint-initdb.d/init-scripts/99-roles.sql` que define as senhas dessas roles. Nos nunca montamos esse arquivo. Por isso, o servico de autenticacao (GoTrue) nunca conseguiu conectar ao banco e sempre retornou erro HTML em vez de JSON.
-
-### O que sera feito
-
-1. Criar um arquivo `roles.sql` durante a instalacao que define as senhas das roles internas
-2. Montar esse arquivo no local correto dentro do container PostgreSQL
-3. Definir a senha do admin como `123456` (fixa)
-4. Atualizar o `repair-auth.sh` para tambem corrigir instalacoes existentes
+Depois de analisar todo o código detalhadamente, identifiquei **dois problemas** que, combinados, causam o erro "Failed to fetch" no navegador:
 
 ---
 
-### Detalhes tecnicos
+### Problema 1: Headers CORS perdidos no Nginx (causa principal do "Failed to fetch")
 
-#### Arquivo 1: `deploy/docker-compose.yml`
+Quando voce clica em "Entrar", o navegador faz duas requisicoes:
 
-Adicionar volume mount para `roles.sql` no servico `db`:
+1. **OPTIONS** (preflight) - "Posso fazer essa requisicao?"
+2. **POST** (login real) - envia email/senha
 
-```yaml
-volumes:
-  - ./volumes/db/data:/var/lib/postgresql/data:Z
-  - ./volumes/db/init/init.sql:/docker-entrypoint-initdb.d/migrations/init.sql:ro
-  - ./volumes/db/init/99-sync-passwords.sh:/docker-entrypoint-initdb.d/99-sync-passwords.sh:ro
-  - ./volumes/db/roles.sql:/docker-entrypoint-initdb.d/init-scripts/99-roles.sql:ro
+O problema esta no Nginx. Olhe este trecho da configuracao atual:
+
+```text
+location /auth/v1/ {
+    add_header Access-Control-Allow-Origin * always;     <-- definido AQUI
+    add_header Access-Control-Allow-Methods "..." always;
+    add_header Access-Control-Allow-Headers "..." always;
+
+    if ($request_method = OPTIONS) {
+        return 204;    <-- mas NAO herda os headers acima!
+    }
+}
 ```
 
-O arquivo `99-sync-passwords.sh` sera mantido como fallback redundante.
+No Nginx, o bloco `if` cria um contexto novo que **nao herda** os `add_header` do bloco pai. O resultado:
 
-#### Arquivo 2: `deploy/scripts/install-unified.sh`
+- OPTIONS retorna 204 **sem nenhum header CORS**
+- O navegador bloqueia a requisicao POST
+- Voce ve "Failed to fetch"
 
-**Mudanca A** - Senha do admin fixa como `123456`:
-```bash
-ADMIN_EMAIL="admin@admin.com"
-ADMIN_PASSWORD="123456"
+Isso acontece em **todos** os 4 locations de API (auth, rest, storage, functions) nos **dois** server blocks (HTTP e HTTPS).
+
+### Problema 2: Diagnostico insuficiente no repair-auth.sh
+
+O script de reparo sincroniza senhas e reinicia o Auth, mas nao testa a cadeia completa:
+
+```text
+Browser -> Nginx -> Kong -> Auth -> DB
 ```
 
-**Mudanca B** - Gerar `roles.sql` em `create_directories()` (seguindo o padrao oficial do Supabase):
-```sql
--- roles.sql: Set passwords for internal Supabase roles
--- This file follows the official Supabase self-hosted pattern
-\set pgpass `echo "$POSTGRES_PASSWORD"`
-
-ALTER USER authenticator WITH PASSWORD :'pgpass';
-ALTER USER supabase_auth_admin WITH PASSWORD :'pgpass';
-ALTER USER supabase_storage_admin WITH PASSWORD :'pgpass';
-```
-
-Este arquivo usa `\set pgpass` para ler a variavel de ambiente `POSTGRES_PASSWORD` de dentro do container PostgreSQL, garantindo que as senhas SEMPRE correspondam.
-
-#### Arquivo 3: `deploy/scripts/repair-auth.sh`
-
-Atualizar para:
-- Usar senha fixa `123456` ao criar o admin
-- Gerar o `roles.sql` se nao existir
-- Reiniciar o container DB (nao apenas o Auth) para que o `roles.sql` seja processado em reinstalacoes
+Ele testa apenas `DB <-> Auth` mas nao testa se o Nginx esta servindo as respostas corretamente para o navegador.
 
 ---
 
-### Por que as tentativas anteriores falharam
+### O que sera alterado
 
-Todas as tentativas anteriores usavam `ALTER ROLE` DEPOIS que o PostgreSQL ja tinha iniciado. Mas o Supabase postgres image processa o subdiretorio `init-scripts/` durante uma fase especifica da inicializacao. Nosso `99-sync-passwords.sh` no diretorio raiz executava no momento errado ou era ignorado.
+#### 1. Nginx: Corrigir CORS em todos os locations
 
-O arquivo `roles.sql` montado em `init-scripts/` segue exatamente o padrao oficial e roda na fase correta.
+Para cada location de API (`/auth/v1/`, `/rest/v1/`, `/storage/v1/`, `/functions/v1/`), tanto no server HTTP quanto HTTPS:
+
+**Antes (quebrado):**
+```text
+add_header Access-Control-Allow-Origin * always;
+add_header Access-Control-Allow-Methods "..." always;
+add_header Access-Control-Allow-Headers "..." always;
+
+if ($request_method = OPTIONS) {
+    return 204;
+}
+```
+
+**Depois (corrigido):**
+```text
+if ($request_method = OPTIONS) {
+    add_header Access-Control-Allow-Origin * always;
+    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+    add_header Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, x-upsert" always;
+    add_header Access-Control-Max-Age 3600;
+    add_header Content-Length 0;
+    return 204;
+}
+
+add_header Access-Control-Allow-Origin * always;
+add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, PATCH, OPTIONS" always;
+add_header Access-Control-Allow-Headers "Authorization, Content-Type, apikey, X-Client-Info, x-upsert" always;
+```
+
+Os headers ficam **duplicados de proposito**: uma vez dentro do `if` (para OPTIONS) e outra fora (para GET/POST/etc).
+
+#### 2. repair-auth.sh: Diagnostico completo da cadeia
+
+Adicionar teste end-to-end apos o reparo:
+
+```text
+Teste 1: DB esta healthy?
+Teste 2: Senha do supabase_auth_admin funciona? (psql direto)
+Teste 3: Auth esta healthy? (wget no container)
+Teste 4: Kong responde? (curl localhost:8000/auth/v1/health)
+Teste 5: Nginx responde? (curl localhost/auth/v1/health)
+Teste 6: OPTIONS tem CORS? (curl -X OPTIONS com headers)
+Teste 7: Login funciona? (curl POST com email/senha)
+```
+
+Se qualquer teste falhar, o script mostra exatamente onde esta o problema.
+
+#### 3. install-unified.sh: Forcar rebuild do frontend
+
+Remover `frontend/dist` antes de compilar para garantir que o `config.js` e a tag `<script>` sejam sempre injetados.
 
 ---
 
-### Como executar
+### Arquivos que serao alterados
 
-Para a instalacao atual (sem reinstalar):
+1. **`deploy/nginx/nginx.conf`** - Corrigir CORS em 8 locations (4 por server block)
+2. **`deploy/scripts/repair-auth.sh`** - Adicionar diagnostico completo da cadeia
+3. **`deploy/scripts/install-unified.sh`** - Forcar rebuild do frontend
+
+### Como executar apos a aprovacao
+
 ```bash
 cd /opt/sistema && git pull origin main
 cd deploy
 sudo bash scripts/repair-auth.sh
 ```
 
-Para instalacao limpa:
-```bash
-cd /opt/sistema && git pull origin main
-cd deploy
-docker compose --profile baileys down -v 2>/dev/null || true
-sudo rm -rf volumes/db/data
-sudo bash scripts/install-unified.sh
-```
+O repair-auth.sh vai:
+1. Sincronizar senhas das roles
+2. Reiniciar Auth + Nginx
+3. Testar toda a cadeia e mostrar exatamente onde falha (se falhar)
 
-### Credenciais de acesso
+### Credenciais
 
 - Email: `admin@admin.com`
 - Senha: `123456`
