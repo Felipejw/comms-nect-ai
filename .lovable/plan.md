@@ -1,55 +1,59 @@
 
 
-# Restaurar Baileys - Edge Function nao deployada
+# Corrigir SUPABASE_ANON_KEY ausente no Baileys
 
-## Diagnostico
+## Problema
 
-Ao testar a edge function `baileys-instance` diretamente, ela retorna:
+O script `install-simple.sh` gera o arquivo `.env` com apenas 3 variaveis (API_KEY, WEBHOOK_URL, LOG_LEVEL), mas o `docker-compose.yml` espera tambem a variavel `SUPABASE_ANON_KEY`. Sem ela:
 
-```text
-404 NOT_FOUND - Requested function was not found
-```
-
-Isso significa que a funcao existe no codigo (`supabase/functions/baileys-instance/index.ts`) e na configuracao (`supabase/config.toml`), mas nao esta deployada no servidor Lovable Cloud. Por isso o frontend mostra "Failed to fetch" ao tentar verificar a saude do servidor Baileys.
+- O Docker emite o warning: `The "SUPABASE_ANON_KEY" variable is not set. Defaulting to a blank string.`
+- O servidor Baileys nao consegue autenticar as chamadas de webhook para o backend (edge function `baileys-webhook`)
+- Mensagens recebidas no WhatsApp nao chegam ao sistema
 
 ## Correcao
 
-### Passo 1: Redeployar as edge functions
+### Arquivo: `deploy/baileys/scripts/install-simple.sh`
 
-A correcao e simples: forcar o redeploy das edge functions criticas do Baileys:
-- `baileys-instance` (a principal, que gerencia sessoes e health check)
-- `baileys-webhook` (recebe eventos do servidor Baileys)
-- `baileys-create-session` (cria sessoes em background)
-- `send-whatsapp` (envia mensagens)
+Adicionar a variavel `SUPABASE_ANON_KEY` na geracao do arquivo `.env` (em torno da linha 95-109). O valor e a chave publica (anon key) do projeto, que ja e conhecida e segura para uso no frontend.
 
-Nenhuma alteracao de codigo e necessaria. Apenas o deploy precisa ser disparado.
+O bloco `.env` passara a incluir:
 
-### Passo 2: Verificar o VPS
-
-Apos o deploy das edge functions, o usuario deve:
-
-1. Verificar se o bootstrap do VPS completou com sucesso re-executando:
 ```text
-curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/baileys/scripts/bootstrap.sh | sudo bash
+# Supabase Anon Key para autenticacao do webhook
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdWNhbndicGxlb2NleW5tZW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTUxODIsImV4cCI6MjA4MjYzMTE4Mn0.1EQ_XXifnOx3REsjE9ZCbd7dYC7IvXxEjZFIP25vmOA
 ```
 
-2. Confirmar que o container esta rodando:
+### Resultado
+
+Apos esta correcao, ao rodar o bootstrap novamente no VPS:
+
+1. O `.env` sera gerado com todas as 4 variaveis necessarias
+2. O Docker nao emitira mais o warning sobre SUPABASE_ANON_KEY
+3. O Baileys conseguira autenticar as chamadas de webhook
+4. Mensagens recebidas no WhatsApp chegarao ao sistema corretamente
+
+### Acao imediata no VPS
+
+Enquanto a correcao e publicada, o usuario pode adicionar a variavel manualmente:
+
 ```text
-cd /opt/baileys && docker compose ps
+sudo nano /opt/baileys/.env
 ```
 
-3. Testar a saude localmente:
+Adicionar a linha:
 ```text
-curl http://localhost:3000/health
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdWNhbndicGxlb2NleW5tZW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTUxODIsImV4cCI6MjA4MjYzMTE4Mn0.1EQ_XXifnOx3REsjE9ZCbd7dYC7IvXxEjZFIP25vmOA
 ```
 
-### Resultado esperado
-
-Apos o redeploy, o botao "Testar Conexao" na pagina de Configuracoes vai conseguir chamar a edge function, que por sua vez vai se conectar ao servidor Baileys no VPS e retornar o status correto.
+Depois reiniciar:
+```text
+cd /opt/baileys && sudo docker compose restart
+```
 
 ## Detalhes tecnicos
 
-- A edge function `baileys-instance` nao requer nenhuma alteracao de codigo
-- O arquivo `supabase/config.toml` ja contem a configuracao correta (linha 57-58)
-- O diretorio `supabase/functions/baileys-instance/` existe com o `index.ts`
-- O deploy sera feito automaticamente pelo sistema ao aplicar este plano
+### Arquivos modificados
+- `deploy/baileys/scripts/install-simple.sh` - adicionar SUPABASE_ANON_KEY ao bloco de geracao do .env
+
+### Por que e seguro
+A anon key e uma chave publica, projetada para ser usada no frontend. Ela so permite operacoes autorizadas pelas politicas de seguranca (RLS) do banco de dados. Nao e uma chave secreta.
