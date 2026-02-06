@@ -192,8 +192,7 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
     if (type !== 'notify') return;
 
     for (const msg of messages) {
-      // Ignorar mensagens enviadas por mim
-      if (!msg.key || msg.key.fromMe) continue;
+      if (!msg.key) continue;
       // Ignorar mensagens de status/broadcast
       if (msg.key.remoteJid === 'status@broadcast') continue;
 
