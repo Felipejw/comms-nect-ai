@@ -1,45 +1,76 @@
 
+# Correção do Connection Failure no Baileys
 
-# Deploy da Edge Function baileys-create-session
+## Problemas identificados
 
-## Causa raiz identificada
+### 1. Variavel SUPABASE_ANON_KEY nao chega ao container
+O arquivo `deploy/baileys/docker-compose.yml` lista apenas 4 variaveis de ambiente (`API_KEY`, `WEBHOOK_URL`, `NODE_ENV`, `LOG_LEVEL`). A `SUPABASE_ANON_KEY` adicionada ao `.env` nunca e repassada ao container Docker.
 
-A Edge Function `baileys-create-session` existe no codigo fonte mas **nao esta deployada** no servidor. Ao chamar diretamente, o servidor retorna:
+**Correção:** Adicionar `SUPABASE_ANON_KEY` na seção `environment` do `docker-compose.yml`.
 
+### 2. Falha de conexao no noise handler (problema critico)
+Os logs mostram um ciclo repetitivo:
 ```text
-{"code":"NOT_FOUND","message":"Requested function was not found"}
+"connected to WA"
+"not logged in, attempting registration..."
+"Error: Connection Failure" (noise-handler.js:140)
+"Connection closed" (shouldReconnect: true)
 ```
 
-### Fluxo do problema
+O QR Code nunca e gerado porque o handshake de criptografia falha antes. A versao `@whiskeysockets/baileys@^6.7.16` pode estar desatualizada em relacao ao protocolo atual do WhatsApp.
 
-1. Usuario clica em "Criar Conexao" ou "Tentar Novamente"
-2. A funcao `baileys-instance` cria o registro no banco e delega a criacao da sessao para `baileys-create-session`
-3. Mas essa funcao nao existe no servidor - retorna 404
-4. A sessao nunca e criada no servidor Baileys (0 sessoes ativas)
-5. O polling tenta buscar QR Code para uma sessao inexistente - recebe 404 do Baileys
-6. Apos 5 tentativas, exibe erro
+**Correção:** Atualizar para a versao mais recente do Baileys e melhorar a logica de reconexao com backoff exponencial para evitar rate-limiting.
 
-### Solucao
+### 3. Reconexao sem backoff causa rate-limiting
+Atualmente o codigo reconecta apos um `setTimeout` fixo de 3 segundos. Em loop rapido, isso pode causar bloqueio temporario pelo WhatsApp.
 
-Fazer o deploy da funcao `baileys-create-session`. Nenhuma alteracao de codigo e necessaria - a funcao ja esta escrita corretamente e configurada no `config.toml`. Basta forcar o deploy.
+**Correção:** Implementar backoff exponencial no retry.
 
-### Passo 1 - Deplovar a funcao
-Forcar o deploy da Edge Function `baileys-create-session` que ja existe no codigo.
+---
 
-### Passo 2 - Recriar a sessao
-Apos o deploy, acionar o `recreate` na conexao existente para que a funcao delegada funcione e crie a sessao no servidor Baileys, gerando o QR Code.
+## Alterações no codigo
 
-### Passo 3 - Verificacao
-Confirmar que:
-- A funcao responde corretamente (nao mais 404)
-- O servidor Baileys mostra 1 sessao ativa
-- O QR Code aparece na tela de Conexoes
+### Arquivo 1: `deploy/baileys/docker-compose.yml`
+Adicionar a variavel `SUPABASE_ANON_KEY` na seção environment:
+
+```yaml
+environment:
+  - API_KEY=${API_KEY}
+  - WEBHOOK_URL=${WEBHOOK_URL}
+  - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+  - NODE_ENV=production
+  - LOG_LEVEL=${LOG_LEVEL:-info}
+```
+
+### Arquivo 2: `deploy/baileys/package.json`
+Atualizar a versao do Baileys para a mais recente disponivel:
+
+```json
+"@whiskeysockets/baileys": "^6.7.17"
+```
+
+(Sera verificada a versao mais recente no npm antes da implementação)
+
+### Arquivo 3: `deploy/baileys/src/baileys.ts`
+- Remover a opcao `printQRInTerminal` (depreciada, gera warnings)
+- Implementar backoff exponencial na reconexao (3s, 6s, 12s, ate 60s max)
+- Adicionar log mais detalhado do erro de conexao para diagnostico
+
+---
+
+## Apos o deploy das alteracoes
+
+O usuario precisara atualizar na VPS com os seguintes passos:
+
+1. Copiar os arquivos atualizados para `/opt/baileys/`
+2. Limpar as sessoes antigas (que estao em loop de erro)
+3. Rebuild com `--no-cache` para forçar nova instalação do npm (pegar versao atualizada do Baileys)
+4. Verificar nos logs se o QR Code e gerado com sucesso
 
 ## Detalhes tecnicos
 
-### Arquivo: supabase/functions/baileys-create-session/index.ts
-O arquivo ja esta completo e funcional. Sera deployado sem alteracoes de codigo. Apenas sera necessario um "touch" no arquivo (adicionar um comentario na primeira linha) para que o sistema de build reconheca uma alteracao e faca o deploy.
+### Causa raiz do Connection Failure
+O erro ocorre em `noise-handler.js:140` durante o `decodeFrame`. O protocolo Noise usado pelo WhatsApp (Noise_XX_25519_AESGCM_SHA256) exige que o cliente esteja atualizado com as chaves e formato de handshake mais recentes. Versoes antigas do Baileys podem ter um formato de handshake incompativel, causando rejeicao imediata.
 
-### Validacao pos-deploy
-Apos o deploy, sera feita uma chamada direta a funcao para confirmar que esta acessivel e funcionando.
-
+### Backoff exponencial
+O retry atual com intervalo fixo de 3s pode agravar o problema se o WhatsApp estiver bloqueando temporariamente a conexao. Com backoff: 3s -> 6s -> 12s -> 24s -> 48s -> 60s (maximo).
