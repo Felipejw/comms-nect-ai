@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, AlertTriangle } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, AlertTriangle, Users } from "lucide-react";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -115,7 +115,7 @@ const normalizePhone = (phone: string) => {
 };
 
 export default function Atendimento() {
-  const [activeTab, setActiveTab] = useState<'attending' | 'completed' | 'chatbot'>('attending');
+  const [activeTab, setActiveTab] = useState<'attending' | 'completed' | 'chatbot' | 'groups'>('attending');
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -303,14 +303,18 @@ export default function Atendimento() {
                            phone.toLowerCase().includes(query) ||
                            normalizedPhone.includes(normalizedQuery);
       
+      const isGroup = c.contact?.is_group === true;
+      
       // Tab filter
       let matchesTab = false;
-      if (activeTab === 'attending') {
-        matchesTab = !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress');
+      if (activeTab === 'groups') {
+        matchesTab = isGroup;
+      } else if (activeTab === 'attending') {
+        matchesTab = !isGroup && !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress');
       } else if (activeTab === 'completed') {
-        matchesTab = c.status === 'resolved';
+        matchesTab = !isGroup && c.status === 'resolved';
       } else if (activeTab === 'chatbot') {
-        matchesTab = c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived';
+        matchesTab = !isGroup && c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived';
       }
       
       // Status filter
@@ -328,11 +332,12 @@ export default function Atendimento() {
 
   // Tab counts
   const tabCounts = useMemo(() => {
-    if (!conversations) return { attending: 0, completed: 0, chatbot: 0 };
+    if (!conversations) return { attending: 0, completed: 0, chatbot: 0, groups: 0 };
     return {
-      attending: conversations.filter(c => !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress')).length,
-      completed: conversations.filter(c => c.status === 'resolved').length,
-      chatbot: conversations.filter(c => c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived').length,
+      attending: conversations.filter(c => c.contact?.is_group !== true && !c.is_bot_active && (c.status === 'new' || c.status === 'in_progress')).length,
+      completed: conversations.filter(c => c.contact?.is_group !== true && c.status === 'resolved').length,
+      chatbot: conversations.filter(c => c.contact?.is_group !== true && c.is_bot_active && c.status !== 'resolved' && c.status !== 'archived').length,
+      groups: conversations.filter(c => c.contact?.is_group === true).length,
     };
   }, [conversations]);
 
@@ -1274,27 +1279,34 @@ export default function Atendimento() {
           )}
           
           {/* Tabs - Moved below filter */}
-          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'attending' | 'completed' | 'chatbot')} className="w-full">
-            <TabsList className="grid w-full grid-cols-3 h-9">
-              <TabsTrigger value="attending" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+          <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'attending' | 'completed' | 'chatbot' | 'groups')} className="w-full">
+            <TabsList className="grid w-full grid-cols-4 h-9">
+              <TabsTrigger value="attending" className="text-xs gap-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-1">
                 <UserCheck className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Atendendo</span>
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
                   {tabCounts.attending}
                 </Badge>
               </TabsTrigger>
-              <TabsTrigger value="completed" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="completed" className="text-xs gap-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-1">
                 <CheckCircle className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Concluído</span>
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
                   {tabCounts.completed}
                 </Badge>
               </TabsTrigger>
-              <TabsTrigger value="chatbot" className="text-xs gap-1.5 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground">
+              <TabsTrigger value="chatbot" className="text-xs gap-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-1">
                 <Bot className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">Chatbot</span>
-                <Badge variant="secondary" className="ml-1 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
                   {tabCounts.chatbot}
+                </Badge>
+              </TabsTrigger>
+              <TabsTrigger value="groups" className="text-xs gap-1 data-[state=active]:bg-primary data-[state=active]:text-primary-foreground px-1">
+                <Users className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Grupos</span>
+                <Badge variant="secondary" className="ml-0.5 px-1.5 py-0 text-[10px] h-4 min-w-[18px]">
+                  {tabCounts.groups}
                 </Badge>
               </TabsTrigger>
             </TabsList>
@@ -1491,10 +1503,18 @@ export default function Atendimento() {
                   
                   <div className="relative shrink-0">
                     <Avatar className="w-10 h-10">
-                      <AvatarImage src={conversation.contact?.avatar_url || undefined} />
-                      <AvatarFallback className="bg-primary/10 text-primary font-medium text-sm">
-                        {getInitials(conversation.contact)}
-                      </AvatarFallback>
+                      {conversation.contact?.is_group ? (
+                        <AvatarFallback className="bg-secondary text-secondary-foreground font-medium text-sm">
+                          <Users className="w-5 h-5" />
+                        </AvatarFallback>
+                      ) : (
+                        <>
+                          <AvatarImage src={conversation.contact?.avatar_url || undefined} />
+                          <AvatarFallback className="bg-primary/10 text-primary font-medium text-sm">
+                            {getInitials(conversation.contact)}
+                          </AvatarFallback>
+                        </>
+                      )}
                     </Avatar>
                     {conversation.is_bot_active && (
                       <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-primary rounded-full flex items-center justify-center">
@@ -1502,7 +1522,7 @@ export default function Atendimento() {
                       </span>
                     )}
                     {/* LID Contact indicator */}
-                    {!conversation.is_bot_active && isLidOnlyContact(conversation.contact) && (
+                    {!conversation.is_bot_active && !conversation.contact?.is_group && isLidOnlyContact(conversation.contact) && (
                       <span className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-warning rounded-full flex items-center justify-center" title="Contato sem número identificado">
                         <AlertTriangle className="w-2.5 h-2.5 text-warning-foreground" />
                       </span>
@@ -1531,7 +1551,7 @@ export default function Atendimento() {
                     
                     <div className="flex items-center gap-1 flex-wrap">
                       {/* Queue/Sector Dropdown */}
-                      <DropdownMenu>
+                      <DropdownMenu modal={false}>
                         <DropdownMenuTrigger asChild>
                           <Badge 
                             style={{ backgroundColor: conversation.queue?.color || '#6366f1' }}
@@ -1544,7 +1564,7 @@ export default function Atendimento() {
                             <ChevronDown className="w-2.5 h-2.5 ml-0.5" />
                           </Badge>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="start" className="w-40 bg-popover z-[60]" onClick={(e) => e.stopPropagation()}>
+                        <DropdownMenuContent align="start" className="w-40 bg-popover border border-border shadow-lg z-[9999]" onClick={(e) => e.stopPropagation()} side="bottom" sideOffset={4}>
                           <DropdownMenuItem 
                             className="text-xs"
                             onClick={(e) => {
