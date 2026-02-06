@@ -1,183 +1,119 @@
 
 
-# Analise Completa do Sistema - Bugs, Conflitos e Codigo Legado
+# Tornar o Log de Atividades Totalmente Funcional
 
-## Resumo Executivo
+## Problema Atual
 
-Foram identificados **18 problemas** divididos em 3 categorias: referencias a engines legados (WPPConnect/Evolution API), bugs funcionais e codigo morto/conflitos.
+A tabela `activity_logs` existe no banco de dados com a estrutura correta e politicas RLS configuradas, porem esta **completamente vazia (0 registros)**. Apenas a edge function `send-meta-message` insere logs - todas as outras funcoes do sistema nao registram nenhuma atividade.
 
----
+## Solucao
 
-## CATEGORIA 1: Codigo Legado (WPPConnect / Evolution API)
+Implementar logging de atividades em dois niveis:
 
-Estes sao resquicios das versoes anteriores que deveriam ter sido removidos na v3.0.0.
+1. **Triggers no banco de dados** - Para capturar automaticamente operacoes CRUD em tabelas criticas (nao depende de codigo no frontend)
+2. **Logging nas edge functions** - Para capturar acoes que passam pelas funcoes de backend
 
-### 1.1 - `src/pages/Diagnostico.tsx` (CRITICO - Pagina inteira quebrada)
-
-A pagina de Diagnostico **inteira** ainda usa WPPConnect:
-
-- **Linha 84**: Query key `"wppconnect-health"`
-- **Linha 86**: Chama `supabase.functions.invoke("wppconnect-instance")` - funcao que NAO EXISTE mais
-- **Linhas 338-443**: Card "Instancias WPPConnect" exibindo texto e instrucoes sobre WPPConnect
-- **Linhas 412-516**: Secao detalhada de instancias WPPConnect com interfaces desatualizadas
-- **Linhas 436-442**: Instrucoes para configurar `WPPCONNECT_API_URL` e `WPPCONNECT_SECRET_KEY` (variaveis removidas)
-
-**Impacto**: A pagina gera erros no console ao tentar chamar uma edge function inexistente. O card "Status Geral" sempre mostra erro porque depende da resposta do WPPConnect.
-
-**Correcao**: Reescrever a pagina Diagnostico para usar a API Baileys (`baileys-instance` com action `serverHealth`), substituir labels e remover toda referencia a WPPConnect.
-
-### 1.2 - `src/pages/Conexoes.tsx` (MENOR - Apenas comentario)
-
-- **Linha 363**: Comentario `{/* WPPConnect Dialog */}` no dialog de criacao de conexao
-
-**Correcao**: Alterar comentario para `{/* WhatsApp Dialog */}` ou `{/* Baileys Dialog */}`.
-
-### 1.3 - `supabase/functions/execute-campaign/index.ts` (CRITICO - Campanhas quebradas)
-
-A edge function de execucao de campanhas usa **integralmente** a Evolution API:
-
-- **Linhas 46-47**: Le `EVOLUTION_API_URL` e `EVOLUTION_API_KEY` das variaveis de ambiente
-- **Linha 93**: Busca `instanceName` ao inves de `sessionName`
-- **Linhas 98-101**: Verifica status de conexao via Evolution API (`/instance/connectionState/`)
-- **Linhas 288-313**: Envia mensagens via Evolution API (`/message/sendText/`, `/message/sendMedia/`)
-- **Linha 317**: Referencia `evolutionResult` e `evolutionResponse`
-
-**Impacto**: Campanhas de disparo em massa NAO FUNCIONAM. Toda a logica de envio usa endpoints da Evolution API que nao existem no Baileys.
-
-**Correcao**: Reescrever `sendWhatsAppMessage` para usar a API Baileys (mesma logica do `send-whatsapp`), lendo `baileys_server_url` e `baileys_api_key` de `system_settings`.
-
-### 1.4 - `supabase/functions/execute-flow/index.ts` (CRITICO - Chatbot quebrado)
-
-O executor de fluxos do chatbot usa **integralmente** a Evolution API (154 referencias):
-
-- **Linhas 1064-1067**: Le `EVOLUTION_API_URL` e `EVOLUTION_API_KEY`
-- **Linhas 52-91**: Funcao `sendWhatsAppMessage()` usa endpoints Evolution API
-- **Linha 1151**: Busca `instanceName` ao inves de `sessionName` do Baileys
-- **Linhas 1157-1171**: Comentarios dizem "Evolution API does NOT accept LID" - incompativel com o fato de o Baileys aceitar LID
-- Mais de 20 chamadas a `sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, ...)` ao longo do arquivo
-
-**Impacto**: Chatbot visual (Flow Builder) NAO FUNCIONA para enviar mensagens. Respostas automaticas, menus interativos e IA nao enviam nada porque usam endpoints inexistentes.
-
-**Correcao**: Reescrever `sendWhatsAppMessage()` para usar Baileys, mudar de `instanceName` para `sessionName`, e ler configuracoes de `system_settings` ao inves de envvars.
-
-### 1.5 - `supabase/functions/fetch-whatsapp-profile/index.ts` (CRITICO - Perfil nao funciona)
-
-Inteiramente baseada na Evolution API:
-
-- **Linhas 18-19**: Le `EVOLUTION_API_URL` e `EVOLUTION_API_KEY`
-- **Linhas 21-27**: Retorna erro se Evolution API nao configurada
-- **Linhas 87-106**: Busca foto de perfil via Evolution API (`/chat/fetchProfilePictureUrl/`)
-- **Linhas 128-140**: Busca presenca via Evolution API (`/chat/fetchPresence/`)
-
-**Impacto**: Fotos de perfil e status online de contatos nao funcionam.
-
-**Correcao**: Reescrever para usar Baileys API ou desativar temporariamente se o Baileys nao suportar esses endpoints.
-
-### 1.6 - `deploy/nginx/wppconnect-lb.conf` (Arquivo morto)
-
-Arquivo inteiro de Load Balancer do WPPConnect (140 linhas). Nao e usado em lugar nenhum.
-
-**Correcao**: Deletar o arquivo.
-
-### 1.7 - `deploy/docs/INSTALACAO.md` (Documentacao desatualizada)
-
-- **Linhas 9-11**: Tabela lista WAHA e WPPConnect como engines suportadas
-- **Linha 153**: Referencia `WHATSAPP_ENGINE=baileys` (variavel removida na v3.0)
-- **Linhas 350-357**: Tabela "Multi-Engine" com capacidade estimada
-
-**Correcao**: Atualizar documentacao para refletir apenas Baileys como engine.
+Alem disso, melhorar a interface do `Diagnostico.tsx` com filtros e paginacao.
 
 ---
 
-## CATEGORIA 2: Bugs Funcionais
+## Fase 1 - Trigger automatico de logging no banco de dados
 
-### 2.1 - `execute-flow/index.ts` - instanceName vs sessionName (BUG)
+Criar uma funcao PostgreSQL `log_activity()` e triggers nas tabelas principais para registrar automaticamente:
 
-- **Linha 1151**: `(connection.session_data)?.instanceName` - O campo correto no Baileys e `sessionName`, nao `instanceName`. Isso faz com que o fallback `connection.name` seja usado, que nao corresponde ao nome real da sessao no servidor Baileys.
+| Tabela | Acoes Registradas |
+|--------|-------------------|
+| `contacts` | Criacao, atualizacao, exclusao de contatos |
+| `conversations` | Criacao e mudanca de status |
+| `connections` | Criacao, mudanca de status, exclusao |
+| `campaigns` | Criacao, atualizacao de status |
+| `tags` | Criacao, exclusao |
+| `quick_replies` | Criacao, atualizacao, exclusao |
+| `chatbot_rules` | Criacao, atualizacao, exclusao |
 
-**Impacto**: Mesmo se a funcao `sendWhatsAppMessage` fosse corrigida para usar Baileys, o nome da sessao estaria errado.
+A funcao `log_activity()` vai:
+- Capturar a acao (INSERT/UPDATE/DELETE)
+- Registrar o `entity_type` e `entity_id`
+- Associar o `user_id` via `auth.uid()` (quando disponivel)
+- Associar o `tenant_id` da linha afetada
+- Armazenar campos relevantes no `metadata` (ex: campo de status antes e depois)
 
-### 2.2 - `execute-campaign/index.ts` - instanceName vs sessionName (BUG)
+## Fase 2 - Logging nas Edge Functions criticas
 
-- **Linha 93**: `connection.session_data?.instanceName || connection.name` - Mesmo problema do item 2.1.
+Adicionar insercoes na tabela `activity_logs` nas seguintes edge functions:
 
-### 2.3 - `execute-flow/index.ts` - LID nao suportado para envio (BUG)
+| Edge Function | Acao Registrada |
+|---------------|-----------------|
+| `send-whatsapp` | `send_message` - envio de mensagem via Baileys |
+| `baileys-webhook` | `receive_message` - mensagem recebida de contato |
+| `create-user` | `create` usuario |
+| `execute-campaign` | `execute_campaign` - execucao de campanha |
+| `execute-flow` | `execute_flow` - execucao de chatbot |
+| `reset-user-password` | `reset_password` |
+| `baileys-create-session` | `create` conexao/sessao |
 
-- **Linhas 1168-1171**: O codigo assume que LIDs nao podem ser usados para envio, o que era verdade na Evolution API mas e FALSO no Baileys. O Baileys suporta envio via LID usando o sufixo `@lid`.
+## Fase 3 - Melhorias na interface do Diagnostico
 
-**Impacto**: Contatos que so possuem LID (sem telefone real) nao recebem mensagens do chatbot, mesmo que o Baileys suporte esse envio.
+Aprimorar a secao "Log de Atividades" do `Diagnostico.tsx`:
 
-### 2.4 - `Diagnostico.tsx` - Tabela `activity_logs` pode nao existir (POTENCIAL)
+1. **Filtros** - Permitir filtrar por:
+   - Tipo de acao (criar, atualizar, excluir, mensagem, login)
+   - Tipo de entidade (contato, conversa, campanha, etc.)
+   - Periodo (ultimas 24h, 7 dias, 30 dias)
 
-- **Linhas 144-157**: A pagina consulta `activity_logs` que esta definida nos types do Supabase, mas nao aparece na lista de tabelas com RLS configurado. Se a tabela nao tiver dados ou nao existir em producao, a secao de logs aparecera sempre vazia ou com erro.
+2. **Paginacao** - Carregar mais registros sob demanda (50 por pagina)
+
+3. **Contador total** - Exibir total de eventos recentes no card de resumo
+
+4. **Mapeamento completo de acoes** - Expandir os labels para cobrir todas as novas acoes
 
 ---
 
-## CATEGORIA 3: Codigo Morto e Inconsistencias
+## Detalhes Tecnicos
 
-### 3.1 - Secrets legados ainda configurados
-
-Os seguintes secrets ainda existem no projeto mas nao sao mais necessarios (a menos que `execute-campaign` e `execute-flow` sejam migrados):
-- `EVOLUTION_API_KEY`
-- `EVOLUTION_API_URL`
-
-Apos a migracao das edge functions, devem ser removidos.
-
-### 3.2 - `download-whatsapp-media/index.ts` - Import antigo
-
-- **Linha 1**: Usa `import { serve } from "https://deno.land/std@0.168.0/http/server.ts"` ao inves do `Deno.serve()` moderno. Funciona, mas e inconsistente com as outras edge functions.
-
-### 3.3 - `fetch-whatsapp-profile/index.ts` - Import antigo
-
-- **Linha 1**: Mesmo problema - usa `serve()` antigo.
-
----
-
-## Plano de Correcao (Priorizado)
-
-### Fase 1 - Correcoes Criticas (Edge Functions quebradas)
-
-1. **`execute-flow/index.ts`** - Migrar de Evolution API para Baileys
-   - Reescrever `sendWhatsAppMessage()` para usar Baileys
-   - Trocar `instanceName` por `sessionName`
-   - Ler configuracoes de `system_settings` ao inves de env vars
-   - Adicionar suporte a envio via LID
-
-2. **`execute-campaign/index.ts`** - Migrar de Evolution API para Baileys
-   - Reescrever logica de envio para Baileys
-   - Trocar verificacao de status de conexao
-   - Trocar `instanceName` por `sessionName`
-
-3. **`fetch-whatsapp-profile/index.ts`** - Migrar ou desativar
-   - Verificar se Baileys tem endpoints equivalentes
-   - Se sim, migrar. Se nao, retornar dados basicos sem erro
-
-### Fase 2 - Correcoes de Interface
-
-4. **`src/pages/Diagnostico.tsx`** - Reescrever para Baileys
-   - Usar `baileys-instance` com action `serverHealth`
-   - Renomear labels de "WPPConnect" para "Baileys"
-   - Remover interfaces e cards legados
-
-5. **`src/pages/Conexoes.tsx`** - Atualizar comentario
-
-### Fase 3 - Limpeza
-
-6. **Deletar** `deploy/nginx/wppconnect-lb.conf`
-7. **Atualizar** `deploy/docs/INSTALACAO.md`
-8. **Padronizar** imports antigos (`serve()` para `Deno.serve()`)
-9. **Remover** secrets `EVOLUTION_API_KEY` e `EVOLUTION_API_URL` apos migracao
-
-### Detalhes Tecnicos - Funcao sendWhatsAppMessage para Baileys
-
-A nova funcao seguira o padrao ja usado em `send-whatsapp/index.ts`:
+### Funcao de trigger `log_activity()`
 
 ```text
-1. Ler baileys_server_url e baileys_api_key de system_settings
-2. Obter sessionName de connection.session_data.sessionName
-3. Para texto: POST /sessions/{sessionName}/send/text com { to, text }
-4. Para media: POST /sessions/{sessionName}/send/media com { to, mediaUrl, caption, mediaType }
-5. Header: X-API-Key com a api key
-6. Para LID: enviar com sufixo @lid no campo "to"
+CREATE OR REPLACE FUNCTION log_activity()
+  RETURNS trigger
+  LANGUAGE plpgsql SECURITY DEFINER
+  SET search_path = 'public'
+AS $$
+  - Determina action: INSERT -> 'create', UPDATE -> 'update', DELETE -> 'delete'
+  - Extrai entity_type do TG_TABLE_NAME
+  - Extrai entity_id do NEW.id ou OLD.id
+  - Extrai tenant_id do NEW.tenant_id ou OLD.tenant_id
+  - Captura auth.uid() como user_id (NULL para operacoes de sistema/service_role)
+  - Salva metadata com campos relevantes (ex: status antigo e novo)
+  - Insere na activity_logs
+$$;
 ```
+
+### Triggers criados (um por tabela, AFTER INSERT OR UPDATE OR DELETE)
+
+Cada trigger chama a mesma funcao `log_activity()`, que detecta automaticamente a tabela e operacao via variaveis de trigger (`TG_OP`, `TG_TABLE_NAME`).
+
+### Insercao nas Edge Functions
+
+Padrao uniforme para todas as funcoes:
+
+```text
+await supabaseAdmin.from("activity_logs").insert({
+  tenant_id: <tenant_id da operacao>,
+  user_id: <user.id quando autenticado>,
+  action: "<acao>",
+  entity_type: "<tipo>",
+  entity_id: <id da entidade>,
+  metadata: { <detalhes relevantes> }
+});
+```
+
+### Filtros na interface
+
+Novos estados no componente:
+- `actionFilter`: string (todas, create, update, delete, send_message, etc.)
+- `entityFilter`: string (todas, contact, conversation, campaign, etc.)
+- `periodFilter`: string (24h, 7d, 30d)
+
+A query sera atualizada para aplicar `.eq()` e `.gte()` conforme os filtros selecionados.
 
