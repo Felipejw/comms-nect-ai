@@ -86,7 +86,8 @@ Deno.serve(async (req) => {
     const supabaseClient = createClient(supabaseUrl, supabaseKey);
 
     const payload = await req.json();
-    console.log("[Baileys Webhook] Received event:", JSON.stringify(payload));
+    console.log("[Baileys Webhook] ✅ Function called! Event:", payload?.event, "Session:", payload?.session);
+    console.log("[Baileys Webhook] Full payload:", JSON.stringify(payload).substring(0, 500));
 
     const { event, session, payload: eventPayload } = payload;
 
