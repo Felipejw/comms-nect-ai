@@ -6,11 +6,13 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { Menu } from "lucide-react";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
+import { usePresence } from "@/hooks/usePresence";
 
 export function AppLayout() {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { getSetting } = useSystemSettings();
+  usePresence();
   
   const platformName = getSetting("platform_name") || "TalkFlow";
 
