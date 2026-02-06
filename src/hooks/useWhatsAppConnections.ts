@@ -74,7 +74,11 @@ export function useWhatsAppConnections() {
       });
 
       if (error) throw error;
-      if (!data.success) throw new Error(data.error);
+      if (!data.success) {
+        const err = new Error(data.error);
+        (err as any).errorCode = data.errorCode;
+        throw err;
+      }
       return data;
     },
     onSuccess: () => {
@@ -89,7 +93,11 @@ export function useWhatsAppConnections() {
       });
 
       if (error) throw error;
-      if (!data.success) throw new Error(data.error);
+      if (!data.success) {
+        const err = new Error(data.error);
+        (err as any).errorCode = data.errorCode;
+        throw err;
+      }
       return data;
     },
     onSuccess: () => {
