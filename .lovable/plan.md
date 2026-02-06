@@ -1,127 +1,134 @@
 
-## Comprehensive Fix: Login Error, Domain Support, and Admin Credentials
 
-### Issue Analysis
+## Solucao Definitiva: Erro de Login (Auth SASL) + Reparo sem Reinstalar
 
-**Issue 1: JSON Parse Error on Login**
-The error "Unexpected non-whitespace character after JSON at position 4 (line 1 column 5)" happens because the GoTrue (Auth) service is still unhealthy. When the frontend calls `/auth/v1/token`, Nginx proxies to Kong, Kong proxies to GoTrue, but GoTrue is down. Kong returns an HTML error page (e.g., `<html>...`), which the Supabase JS client tries to parse as JSON, causing the error.
+### Diagnostico
 
-Root cause: The AUTH service keeps crashing with "failed SASL auth" for `supabase_auth_admin`. After extensive analysis across 5 install attempts, the issue is a **timing problem** -- the install script ALTERs role passwords WHILE the Supabase postgres image's internal init scripts are STILL running. A later init script then overwrites our password change. Evidence: ALTER ROLE succeeds, Docker network test passes (at that moment), but Auth fails minutes later (because the password was overwritten by a later init script).
+O erro "Unexpected non-whitespace character after JSON" acontece porque o servico de autenticacao (GoTrue) esta **parado/crashando**. Quando o frontend tenta fazer login, o Kong retorna uma pagina HTML de erro (porque GoTrue esta fora do ar), e o cliente tenta interpretar esse HTML como JSON, causando o erro.
 
-Fix: Instead of trying to ALTER ROLE proactively (which causes a race condition), wait for ALL init scripts to complete (by waiting for a second healthcheck cycle after init), then test the password. Only ALTER ROLE if the test fails.
+**Por que o Auth continua falhando?** Apos 5 tentativas, o padrao ficou claro:
 
-**Issue 2: No Domain Configuration**
-There is no mechanism to point a custom domain to the system after installation. Currently, only the server IP is used.
+A imagem `supabase/postgres:15.1.1.78` executa scripts internos em `/docker-entrypoint-initdb.d/` durante o primeiro boot. Esses scripts criam as roles (`supabase_auth_admin`, etc.) com senhas. O problema e que **todas as nossas tentativas de ALTER ROLE acontecem DEPOIS do init**, criando uma corrida (race condition) onde:
 
-Fix: Create a `change-domain.sh` script that updates DNS/SSL configuration, Nginx, and frontend config for a custom domain.
+1. PostgreSQL inicia e executa scripts de init (cria roles com senhas)
+2. Nosso script espera, testa, e faz ALTER ROLE
+3. Mas entre o teste e o inicio do Auth, **algo pode mudar** (ex: pg_hba.conf reload, cache de autenticacao, ou o DB reinicia por OOM e os scripts de init rodam novamente com senhas diferentes)
 
-**Issue 3: Admin Email is `admin@IP`**
-The install script auto-generates `admin@{server_ip}` which produces invalid emails like `admin@155.117.41.226.com`.
-
-Fix: Change the default admin email to `admin@admin.com`.
+**Solucao definitiva**: Em vez de tentar sincronizar senhas DEPOIS do init, vamos inserir nosso script de sincronizacao DENTRO da sequencia de init do PostgreSQL. Um arquivo `99-sync-passwords.sh` montado em `/docker-entrypoint-initdb.d/` roda automaticamente como o ULTIMO passo do init, garantindo que as senhas estejam corretas antes de qualquer servico conectar.
 
 ---
 
-### Technical Changes
+### O que sera feito
 
-#### File 1: `deploy/scripts/install-unified.sh`
+#### 1. Script de sincronizacao dentro do PostgreSQL init (fix definitivo)
 
-**Change A -- Admin email (line ~201):**
-Replace `ADMIN_EMAIL="admin@${DOMAIN}"` with `ADMIN_EMAIL="admin@admin.com"`.
+Um script `99-sync-passwords.sh` sera:
+- Criado durante a instalacao com a senha gerada
+- Montado em `/docker-entrypoint-initdb.d/` (nao em subdiretorio)
+- Executado automaticamente pelo PostgreSQL como ultimo script de init
+- Garante que as senhas das roles correspondem ao `POSTGRES_PASSWORD`
 
-**Change B -- Remove proactive ALTER ROLE, add init completion wait (lines ~694-817):**
-Replace the current "Etapa 1c" (sync passwords) with:
-1. Wait 15 seconds after roles are detected for ALL init scripts to finish
-2. Test the password from Docker network (as Auth would connect)
-3. Only if the test FAILS, run ALTER ROLE as fallback, then reload pg config and re-test
-4. This eliminates the race condition where our ALTER ROLE gets overwritten by a later init script
+#### 2. Script de reparo rapido (para a instalacao atual)
 
-**Change C -- Frontend build with runtime config (lines ~565-600):**
-1. Build with placeholder env vars: `VITE_SUPABASE_URL=https://placeholder.supabase.co` so the Supabase client's runtime config detection activates
-2. After build, use `sed` to inject `<script src="/config.js"></script>` into the built `index.html`
-3. Generate a `config.js` file with the actual DOMAIN and ANON_KEY values
-4. This means domain changes only require updating `config.js` -- no frontend rebuild needed
+Como voce ja tem tudo instalado e o dominio apontado, nao precisa reinstalar. Um script `repair-auth.sh` vai:
+- Sincronizar senhas das roles diretamente
+- Reiniciar o servico Auth
+- Verificar se ficou healthy
+- Criar o usuario admin se nao existir
 
-**Change D -- Add generate_frontend_config helper function:**
-A new function that creates the `config.js` file:
-```javascript
-window.__SUPABASE_CONFIG__ = {
-  url: "https://DOMAIN",
-  anonKey: "ANON_KEY_VALUE"
-};
-```
+#### 3. Correcoes no docker-compose.yml
 
-#### File 2: `deploy/scripts/change-domain.sh` (NEW)
+- Montar o `99-sync-passwords.sh` no init do PostgreSQL
+- Adicionar `ADDITIONAL_REDIRECT_URLS` para eliminar o aviso do Docker Compose
 
-A script to reconfigure the system for a custom domain:
-1. Accepts the domain as a parameter
-2. Updates the `.env` file (DOMAIN, API_EXTERNAL_URL, SITE_URL)
-3. Obtains SSL certificate via Let's Encrypt (or keeps self-signed for IPs)
-4. Regenerates `config.js` with the new domain
-5. Restarts Nginx and Kong
+#### 4. Melhorias no script de instalacao
 
-Usage:
-```bash
-sudo bash scripts/change-domain.sh meudominio.com
-```
-
-#### File 3: `deploy/nginx/nginx.conf`
-
-Add no-cache headers for `config.js` to ensure browsers always load the latest configuration after domain changes:
-```
-location = /config.js {
-    add_header Cache-Control "no-cache, no-store, must-revalidate";
-    add_header Pragma "no-cache";
-}
-```
+- Remover a logica complexa de "esperar 15s + testar + ALTER ROLE" (nao e mais necessaria)
+- Gerar o `99-sync-passwords.sh` durante `create_directories()`
+- Melhorar a mensagem final para indicar claramente se o Auth esta saudavel ou nao
 
 ---
 
-### How Runtime Config Works
+### Detalhes tecnicos
 
-The Supabase client (`client.ts`) already has built-in support for runtime configuration:
-1. It checks if `VITE_SUPABASE_URL` contains "placeholder"
-2. If so, it reads `window.__SUPABASE_CONFIG__` (set by `config.js`)
-3. This means the frontend can work with ANY domain without rebuilding
+#### Arquivo 1: `deploy/scripts/repair-auth.sh` (NOVO)
 
-By building with placeholder values, the system uses `config.js` for all domain/key configuration. Domain changes only need to update one file.
-
----
-
-### New Startup Flow
+Script que corrige o Auth sem reinstalar:
 
 ```text
-1. Start DB
-2. Wait for healthcheck (healthy)
-3. Wait for supabase_auth_admin role to exist
-4. Wait 15 extra seconds for ALL init scripts to complete
-5. Run init.sql (our tables/functions)
-6. Test password from Docker network (simulates GoTrue connection)
-   - If OK: proceed (no ALTER ROLE needed)
-   - If FAIL: ALTER ROLE as fallback, reload pg config, re-test
-7. Start Auth
-8. Wait for Auth healthy
-9. Start remaining services
+1. Le POSTGRES_PASSWORD do .env
+2. Executa ALTER ROLE para cada role de servico (comandos separados)
+3. Faz pg_reload_conf()
+4. Reinicia o container supabase-auth
+5. Aguarda ate 120s pelo healthcheck
+6. Se Auth ficar healthy, tenta criar admin se nao existir
+7. Mostra status final
 ```
+
+#### Arquivo 2: `deploy/docker-compose.yml`
+
+Adicionar novo volume mount no servico `db`:
+
+```yaml
+volumes:
+  - ./volumes/db/data:/var/lib/postgresql/data:Z
+  - ./volumes/db/init/init.sql:/docker-entrypoint-initdb.d/migrations/init.sql:ro
+  - ./volumes/db/init/99-sync-passwords.sh:/docker-entrypoint-initdb.d/99-sync-passwords.sh:ro
+```
+
+Adicionar `ADDITIONAL_REDIRECT_URLS` ao .env com valor padrao vazio.
+
+#### Arquivo 3: `deploy/scripts/install-unified.sh`
+
+**Mudanca A** - Em `create_directories()`, gerar o arquivo `99-sync-passwords.sh`:
+
+```bash
+cat > "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh" << PASSEOF
+#!/bin/bash
+set -e
+echo "=== Sincronizando senhas dos roles internos ==="
+psql -v ON_ERROR_STOP=0 -U postgres <<-EOSQL
+    ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
+EOSQL
+echo "=== Senhas sincronizadas ==="
+PASSEOF
+chmod +x "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh"
+```
+
+**Mudanca B** - Em `start_services()`, remover as etapas 1c (wait 15s), 1e (test + ALTER ROLE fallback). Manter apenas a verificacao simples apos o init.sql.
+
+**Mudanca C** - Adicionar `ADDITIONAL_REDIRECT_URLS=` ao `.env` gerado.
 
 ---
 
-### Expected Results
+### Como executar
 
-After this fix:
-- Auth service starts successfully (password race condition eliminated)
-- Login with `admin@admin.com` works
-- Frontend loads correctly with runtime config
-- Domain can be changed via `change-domain.sh` without rebuilding
-- Admin password is displayed at the end of installation
+**Para corrigir a instalacao atual (sem reinstalar):**
 
-### Execution After Approval
+```bash
+cd /opt/sistema && git pull origin main
+cd deploy
+sudo bash scripts/repair-auth.sh
+```
+
+**Para futuras instalacoes limpas:**
 
 ```bash
 cd /opt/sistema && git pull origin main
 cd deploy
 docker compose --profile baileys down -v 2>/dev/null || true
 sudo rm -rf volumes/db/data
-sudo rm -rf frontend/dist
 sudo bash scripts/install-unified.sh
 ```
+
+---
+
+### Resultado esperado
+
+1. `repair-auth.sh` sincroniza as senhas e reinicia o Auth
+2. Auth conecta ao banco com sucesso (sem SASL error)
+3. Login com `admin@admin.com` funciona
+4. Kong retorna JSON valido para todas as chamadas de autenticacao
+5. Futuras instalacoes usam `99-sync-passwords.sh` dentro do init do PostgreSQL, eliminando a race condition permanentemente
