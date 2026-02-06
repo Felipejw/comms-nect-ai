@@ -198,7 +198,7 @@ collect_user_info() {
     log_success "JWT Secret gerado"
     
     # Credenciais do admin
-    ADMIN_EMAIL="admin@${DOMAIN}"
+    ADMIN_EMAIL="admin@admin.com"
     ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
     ADMIN_NAME="Administrador"
     log_success "Credenciais do admin geradas"
@@ -562,7 +562,24 @@ configure_ssl() {
     fi
 }
 
-    # Compilar frontend se necessário
+# Gerar config.js para runtime configuration do frontend
+# Isso permite trocar de domínio sem recompilar o frontend
+generate_frontend_config() {
+    log_info "Gerando config.js para o frontend..."
+    
+    mkdir -p "$DEPLOY_DIR/frontend/dist"
+    
+    cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
+window.__SUPABASE_CONFIG__ = {
+  url: "https://${DOMAIN}",
+  anonKey: "${ANON_KEY}"
+};
+CONFIGEOF
+    
+    log_success "config.js gerado com domínio: $DOMAIN"
+}
+
+# Compilar frontend se necessário
 build_frontend() {
     log_step "Verificando Frontend"
     
@@ -572,23 +589,35 @@ build_frontend() {
         if [ -f "$PROJECT_DIR/package.json" ]; then
             cd "$PROJECT_DIR"
             
+            # Build with PLACEHOLDER env vars so the Supabase client
+            # uses runtime config (window.__SUPABASE_CONFIG__ from config.js)
             if command -v npm &> /dev/null; then
                 log_info "Compilando com npm local..."
-                npm install
-                npm run build
+                VITE_SUPABASE_URL="https://placeholder.supabase.co" \
+                VITE_SUPABASE_PUBLISHABLE_KEY="placeholder" \
+                VITE_SUPABASE_PROJECT_ID="self-hosted" \
+                npm install && npm run build
             else
                 log_info "npm não encontrado. Compilando via Docker..."
                 docker run --rm \
                     -v "$PROJECT_DIR:/app" \
                     -w /app \
-                    -e "VITE_SUPABASE_URL=https://$DOMAIN" \
-                    -e "VITE_SUPABASE_PUBLISHABLE_KEY=$ANON_KEY" \
+                    -e "VITE_SUPABASE_URL=https://placeholder.supabase.co" \
+                    -e "VITE_SUPABASE_PUBLISHABLE_KEY=placeholder" \
                     -e "VITE_SUPABASE_PROJECT_ID=self-hosted" \
                     node:20-alpine sh -c "npm install && npm run build" 2>&1
             fi
             
             if [ -d "$PROJECT_DIR/dist" ]; then
                 cp -r "$PROJECT_DIR/dist/"* "$DEPLOY_DIR/frontend/dist/"
+                
+                # Inject config.js script tag into index.html (before </head>)
+                if [ -f "$DEPLOY_DIR/frontend/dist/index.html" ]; then
+                    sed -i 's|</head>|<script src="/config.js"></script>\n</head>|' \
+                        "$DEPLOY_DIR/frontend/dist/index.html"
+                    log_success "config.js injetado no index.html"
+                fi
+                
                 log_success "Frontend compilado com sucesso"
             else
                 log_error "Falha na compilação do frontend - diretório dist não encontrado"
@@ -692,45 +721,15 @@ start_services() {
     fi
 
     # =============================================
-    # ETAPA 1c: Sincronizar senhas das roles com POSTGRES_PASSWORD
-    # O Supabase postgres image cria roles durante o init, mas
-    # se houve crash/restart, as senhas podem estar inconsistentes.
-    # Forçamos a senha correta para todas as roles de serviço.
+    # ETAPA 1c: Aguardar conclusão dos scripts de init do Supabase
+    # A imagem postgres do Supabase executa scripts internos que criam
+    # e configuram roles. Precisamos esperar que TODOS terminem antes
+    # de testar/alterar senhas, caso contrário nossas alterações serão
+    # sobrescritas por scripts que ainda estão rodando.
     # =============================================
-    log_info "Sincronizando senhas das roles de serviço (comandos individuais)..."
-    
-    # CRITICAL: Each ALTER ROLE must be a SEPARATE psql call.
-    # If combined in one -c, PostgreSQL runs them in a single transaction.
-    # The supabase_admin ALTER fails (superuser), which rolls back ALL changes.
-    
-    docker exec supabase-db psql -U postgres -c \
-        "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
-    if [ $? -eq 0 ]; then
-        log_success "Senha sincronizada: supabase_auth_admin"
-    else
-        log_error "Falha ao sincronizar senha: supabase_auth_admin"
-    fi
-    
-    docker exec supabase-db psql -U postgres -c \
-        "ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
-    if [ $? -eq 0 ]; then
-        log_success "Senha sincronizada: supabase_storage_admin"
-    else
-        log_error "Falha ao sincronizar senha: supabase_storage_admin"
-    fi
-    
-    docker exec supabase-db psql -U postgres -c \
-        "ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
-    if [ $? -eq 0 ]; then
-        log_success "Senha sincronizada: authenticator"
-    else
-        log_error "Falha ao sincronizar senha: authenticator"
-    fi
-    
-    # NOTE: supabase_admin is a superuser - skip it.
-    # The postgres user in this Docker image cannot alter superuser roles.
-    # supabase_admin is not needed for Auth or Storage connectivity.
-    log_info "Pulando supabase_admin (superuser - não alterável e não necessário)"
+    log_info "Aguardando 15s para scripts internos do Supabase completarem..."
+    sleep 15
+    log_success "Tempo de espera para scripts de init concluído"
 
     # =============================================
     # ETAPA 1d: Executar init.sql manualmente
@@ -749,68 +748,57 @@ start_services() {
     fi
 
     # =============================================
-    # ETAPA 1e: Verificar DB após init.sql
-    # Testa conectividade TCP COM SENHA (exatamente como Auth vai conectar)
+    # ETAPA 1e: Testar senha via rede Docker ANTES de alterar
+    # Se a senha já está correta (Supabase configurou internamente),
+    # NÃO fazemos ALTER ROLE (evita race condition onde nossa
+    # alteração é sobrescrita por scripts de init tardios).
     # =============================================
-    log_info "Verificando conectividade TCP com autenticação por senha..."
-    
-    # Verificar restart count do container
-    local restart_count=$(docker inspect --format='{{.RestartCount}}' supabase-db 2>/dev/null || echo "0")
-    if [ "$restart_count" -gt 0 ]; then
-        log_warn "Container DB reiniciou $restart_count vezes! Possível OOM ou crash."
-    fi
-    
-    # Test TCP auth FROM THE DOCKER NETWORK (not localhost which uses trust auth).
-    # This simulates exactly how GoTrue connects: via hostname "db" on the Docker network.
     log_info "Testando autenticação via rede Docker (como Auth vai conectar)..."
-    local tcp_ok=false
-    local tcp_wait=0
-    local tcp_max=30
     
-    # Determine the Docker network name (usually deploy_supabase-network or similar)
     local network_name
     network_name=$(docker inspect supabase-db --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null | head -1)
     
     if [ -z "$network_name" ]; then
-        log_warn "Não foi possível detectar a rede Docker do banco"
         network_name="deploy_supabase-network"
     fi
     log_info "Rede Docker detectada: $network_name"
     
-    while [ $tcp_wait -lt $tcp_max ]; do
-        # Use a temporary postgres container on the SAME Docker network
-        # to test password auth exactly like GoTrue will
-        if docker run --rm --network "$network_name" \
-            -e PGPASSWORD="${POSTGRES_PASSWORD}" \
-            postgres:15-alpine \
-            psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
-            tcp_ok=true
-            log_success "Autenticação por senha verificada via rede Docker!"
-            break
-        fi
-        
-        sleep 3
-        tcp_wait=$((tcp_wait + 3))
-        log_info "Aguardando auth TCP via rede Docker... ($tcp_wait/${tcp_max}s)"
-    done
+    local password_ok=false
     
-    if [ "$tcp_ok" = "false" ]; then
-        log_error "Autenticação por senha falhou via rede Docker!"
-        log_info "Tentando re-sincronizar senha de supabase_auth_admin..."
+    if docker run --rm --network "$network_name" \
+        -e PGPASSWORD="${POSTGRES_PASSWORD}" \
+        postgres:15-alpine \
+        psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
+        password_ok=true
+        log_success "Senha já está correta - nenhuma alteração necessária!"
+    fi
+    
+    if [ "$password_ok" = "false" ]; then
+        log_warn "Senha padrão do Supabase não corresponde. Aplicando ALTER ROLE como fallback..."
+        
+        # Each ALTER ROLE in separate transaction to avoid cascade failure
         docker exec supabase-db psql -U postgres -c \
-            "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1 || true
+            "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
+        docker exec supabase-db psql -U postgres -c \
+            "ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
+        docker exec supabase-db psql -U postgres -c \
+            "ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
+        # supabase_admin is superuser - skip
+        log_info "Pulando supabase_admin (superuser - não alterável)"
         
-        sleep 2
+        # Reload pg config to ensure changes take effect
+        docker exec supabase-db psql -U postgres -c "SELECT pg_reload_conf();" 2>/dev/null
+        sleep 3
         
-        # Retry once after re-sync
+        # Re-test after ALTER ROLE
         if docker run --rm --network "$network_name" \
             -e PGPASSWORD="${POSTGRES_PASSWORD}" \
             postgres:15-alpine \
             psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
-            log_success "Senha re-sincronizada e verificada com sucesso!"
+            log_success "Senha sincronizada e verificada com sucesso!"
         else
             log_error "Falha persistente de autenticação por senha."
-            log_error "GoTrue não conseguirá conectar ao banco."
+            log_error "GoTrue pode não conseguir conectar ao banco."
             docker logs supabase-db --tail 10 2>&1
             log_warn "Tentando continuar mesmo assim..."
         fi
@@ -1169,6 +1157,11 @@ show_summary() {
     echo ""
     echo -e "  ${GREEN}Arquivo completo: $DEPLOY_DIR/CREDENCIAIS.txt${NC}"
     echo ""
+    echo -e "${CYAN}=== DOMÍNIO PERSONALIZADO ===${NC}"
+    echo ""
+    echo -e "  Para apontar um domínio personalizado:"
+    echo -e "  ${YELLOW}sudo bash scripts/change-domain.sh meudominio.com.br${NC}"
+    echo ""
     echo -e "${CYAN}=== COMANDOS ÚTEIS ===${NC}"
     echo ""
     echo "  # Ver logs de todos os serviços"
@@ -1201,6 +1194,7 @@ main() {
     configure_kong
     configure_ssl
     build_frontend
+    generate_frontend_config
     start_services
     wait_for_services
     create_admin_and_tenant
