@@ -88,7 +88,31 @@ INSTALL_DIR="/opt/baileys"
 REPO_URL="https://github.com/Felipejw/comms-nect-ai.git"
 BRANCH="main"
 
-# Verificar instalação anterior
+# ==========================================
+# PASSO 1: Baixar arquivos PRIMEIRO (antes de tocar na instalação antiga)
+# ==========================================
+log_info "Baixando arquivos do repositório..."
+
+# Limpar clone residual anterior
+rm -rf /tmp/comms-nect-ai
+
+# Clonar repositório (|| true para não abortar com set -e)
+git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /tmp/comms-nect-ai 2>/dev/null || true
+
+# Verificar se o download funcionou
+if [ ! -d "/tmp/comms-nect-ai/deploy/baileys" ]; then
+    log_error "Falha ao baixar arquivos do GitHub."
+    log_error "Verifique se o repositório existe e está acessível: $REPO_URL"
+    log_error "A instalação atual NÃO foi modificada."
+    rm -rf /tmp/comms-nect-ai
+    exit 1
+fi
+
+log_success "Download concluído com sucesso!"
+
+# ==========================================
+# PASSO 2: SÓ AGORA fazer backup e remover instalação antiga
+# ==========================================
 if [ -d "$INSTALL_DIR" ]; then
     log_warning "Instalação anterior encontrada em $INSTALL_DIR"
     
@@ -105,21 +129,16 @@ if [ -d "$INSTALL_DIR" ]; then
         docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
     fi
     
+    # Mudar para diretório seguro antes de deletar
+    cd /tmp
+    
     rm -rf "$INSTALL_DIR"
     log_success "Instalação anterior removida"
 fi
 
-# Clonar repositório
-log_info "Baixando arquivos do repositório..."
-git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /tmp/comms-nect-ai 2>/dev/null
-
-if [ ! -d "/tmp/comms-nect-ai/deploy/baileys" ]; then
-    log_error "Falha ao baixar arquivos. Verifique sua conexão."
-    rm -rf /tmp/comms-nect-ai
-    exit 1
-fi
-
-# Criar diretório de instalação
+# ==========================================
+# PASSO 3: Copiar arquivos novos
+# ==========================================
 mkdir -p "$INSTALL_DIR"
 cp -r /tmp/comms-nect-ai/deploy/baileys/* "$INSTALL_DIR/"
 rm -rf /tmp/comms-nect-ai
@@ -138,7 +157,9 @@ chmod +x "$INSTALL_DIR/scripts/"*.sh
 
 log_success "Arquivos instalados em $INSTALL_DIR"
 
-# Executar instalador simplificado
+# ==========================================
+# PASSO 4: Executar instalador
+# ==========================================
 echo ""
 log_info "Iniciando instalação..."
 echo ""
