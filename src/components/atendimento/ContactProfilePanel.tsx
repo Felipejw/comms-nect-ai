@@ -67,6 +67,7 @@ export default function ContactProfilePanel({ contactId, conversationId, onClose
 
   const handleSaveName = async () => {
     if (!contact || !editedName.trim()) return;
+    // name_source: 'manual' é automaticamente setado pelo useUpdateContact quando name é alterado
     await updateContact.mutateAsync({ id: contact.id, name: editedName.trim() });
     setIsEditingName(false);
     setEditedName('');

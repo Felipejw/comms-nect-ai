@@ -115,9 +115,12 @@ export function useUpdateContact() {
 
   return useMutation({
     mutationFn: async ({ id, ...input }: UpdateContactInput & { id: string }) => {
+      // Se o nome está sendo atualizado, marcar como edição manual
+      const updateData = input.name ? { ...input, name_source: 'manual' } : input;
+      
       const { data, error } = await supabase
         .from('contacts')
-        .update(input)
+        .update(updateData)
         .eq('id', id)
         .select()
         .single();

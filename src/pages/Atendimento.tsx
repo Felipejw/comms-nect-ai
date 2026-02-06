@@ -68,7 +68,7 @@ import { ChatConnectionIndicator } from "@/components/atendimento/ChatConnection
 import LidContactIndicator, { isLidOnlyContact } from "@/components/atendimento/LidContactIndicator";
 import { useTypingIndicator } from "@/hooks/useTypingIndicator";
 import { useContactOnlineStatus } from "@/hooks/useContactOnlineStatus";
-import { useContactDisplayName, formatPhoneForDisplay as formatPhone } from "@/hooks/useContactDisplayName";
+import { useContactDisplayName, formatPhoneForDisplay as formatPhone, getContactSecondaryName } from "@/hooks/useContactDisplayName";
 import {
   Tooltip,
   TooltipContent,
@@ -1505,7 +1505,12 @@ export default function Atendimento() {
                   
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-2 mb-0.5">
-                      <p className="font-medium text-sm truncate">{getDisplayName(conversation.contact)}</p>
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">{getDisplayName(conversation.contact)}</p>
+                        {getContactSecondaryName(conversation.contact) && (
+                          <p className="text-[10px] text-muted-foreground truncate">{getContactSecondaryName(conversation.contact)}</p>
+                        )}
+                      </div>
                       <span className="text-[10px] text-muted-foreground shrink-0">
                         {conversation.last_message_at 
                           ? format(new Date(conversation.last_message_at), "HH:mm", { locale: ptBR })
@@ -1671,6 +1676,9 @@ export default function Atendimento() {
                       <span className="text-[10px] text-green-500 font-medium hidden sm:inline">• online</span>
                     )}
                   </div>
+                  {getContactSecondaryName(selectedConversation.contact) && (
+                    <p className="text-[11px] text-muted-foreground truncate">{getContactSecondaryName(selectedConversation.contact)}</p>
+                  )}
                   <div className="flex items-center gap-2">
                     <p className="text-xs text-muted-foreground truncate">
                       {formatPhoneDisplay(selectedConversation.contact?.phone)

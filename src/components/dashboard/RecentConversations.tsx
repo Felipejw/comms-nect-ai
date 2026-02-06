@@ -6,6 +6,7 @@ import { useRecentConversations } from "@/hooks/useDashboardStats";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useNavigate } from "react-router-dom";
+import { useContactDisplayName, getContactSecondaryName } from "@/hooks/useContactDisplayName";
 
 const statusConfig = {
   new: { label: "Novo", className: "bg-primary/10 text-primary" },
@@ -17,6 +18,7 @@ const statusConfig = {
 export function RecentConversations() {
   const { data: conversations, isLoading } = useRecentConversations(5);
   const navigate = useNavigate();
+  const { getDisplayName, getInitials } = useContactDisplayName();
 
   const formatTime = (date: string) => {
     return formatDistanceToNow(new Date(date), { addSuffix: false, locale: ptBR });
@@ -62,13 +64,18 @@ export function RecentConversations() {
               <Avatar className="w-10 h-10">
                 <AvatarImage src={conv.contact?.avatar_url} />
                 <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
-                  {conv.contact?.name?.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase() || "?"}
+                  {getInitials(conv.contact)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center justify-between mb-1">
-                  <p className="font-medium text-sm truncate">{conv.contact?.name || "Contato"}</p>
-                  <span className="text-xs text-muted-foreground">{formatTime(conv.last_message_at)}</span>
+                  <div className="min-w-0">
+                    <p className="font-medium text-sm truncate">{getDisplayName(conv.contact)}</p>
+                    {getContactSecondaryName(conv.contact) && (
+                      <p className="text-[10px] text-muted-foreground truncate">{getContactSecondaryName(conv.contact)}</p>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">{formatTime(conv.last_message_at)}</span>
                 </div>
                 <p className="text-sm text-muted-foreground truncate">{conv.subject || "Sem assunto"}</p>
               </div>

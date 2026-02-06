@@ -7,6 +7,7 @@ export interface ContactInfo {
   name?: string | null;
   phone?: string | null;
   whatsapp_lid?: string | null;
+  name_source?: string | null;
 }
 
 /**
@@ -77,27 +78,53 @@ export function formatPhoneForDisplay(phone: string): string {
 
 /**
  * Obtém o nome de exibição para um contato
- * Prioridade: nome válido > telefone formatado > LID parcial > "Contato"
+ * Prioridade:
+ * 1. Se name_source === 'manual' e nome válido -> nome
+ * 2. Se tem telefone -> telefone formatado
+ * 3. Se tem nome (pushName) -> nome
+ * 4. Se tem LID -> "Contato #XXXXXX"
+ * 5. Fallback -> "Contato"
  */
 export function getContactDisplayName(contact?: ContactInfo): string {
   if (!contact) return "Contato";
   
-  // 1. Usa nome se for válido (não placeholder)
-  if (contact.name && !isPlaceholderName(contact.name)) {
+  // 1. Nome salvo manualmente sempre tem prioridade
+  if (contact.name_source === 'manual' && contact.name && !isPlaceholderName(contact.name)) {
     return contact.name;
   }
   
-  // 2. Usa telefone formatado se disponível
+  // 2. Se tem telefone, mostra telefone formatado (contato não salvo)
   if (contact.phone) {
     return formatPhoneForDisplay(contact.phone);
   }
   
-  // 3. Usa parte do LID como fallback
+  // 3. Se tem nome (pushName) e não tem telefone, usa o nome
+  if (contact.name && !isPlaceholderName(contact.name)) {
+    return contact.name;
+  }
+  
+  // 4. Usa parte do LID como fallback
   if (contact.whatsapp_lid) {
     return `Contato #${contact.whatsapp_lid.slice(-6)}`;
   }
   
   return "Contato";
+}
+
+/**
+ * Obtém o nome secundário (pushName) quando o identificador principal é o telefone
+ * Retorna null se não houver nome secundário a exibir
+ */
+export function getContactSecondaryName(contact?: ContactInfo): string | null {
+  if (!contact) return null;
+  
+  // Só mostra nome secundário se o contato NÃO foi salvo manualmente
+  // e tem um pushName válido e um telefone (ou seja, o display principal é o telefone)
+  if (contact.name_source !== 'manual' && contact.phone && contact.name && !isPlaceholderName(contact.name)) {
+    return contact.name;
+  }
+  
+  return null;
 }
 
 /**
@@ -129,6 +156,7 @@ export function getContactInitials(contact?: ContactInfo): string {
 export function useContactDisplayName() {
   return {
     getDisplayName: getContactDisplayName,
+    getSecondaryName: getContactSecondaryName,
     getInitials: getContactInitials,
     isPlaceholderName,
     formatPhoneForDisplay,
