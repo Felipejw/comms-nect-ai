@@ -347,6 +347,12 @@ Deno.serve(async (req) => {
         mediaUrl = await storeMediaFromBase64(supabaseClient, session, messageId, msg.mediaUrl);
       }
 
+      // Detect if this is a WhatsApp group
+      const isGroup = msg.isGroup || rawFrom.includes("@g.us") || false;
+      if (isGroup) {
+        console.log(`[Baileys Webhook] Message is from a group: ${rawFrom}`);
+      }
+
       // Find or create contact - handle LID vs real phone differently
       let contact;
       
@@ -444,6 +450,7 @@ Deno.serve(async (req) => {
                 phone: from,
                 name: msg.pushName || from,
                 name_source: msg.pushName ? 'pushname' : 'auto',
+                is_group: isGroup,
                 tenant_id: connection.tenant_id,
               })
               .select()
@@ -459,6 +466,16 @@ Deno.serve(async (req) => {
             contact = newContact;
           }
         }
+      }
+
+      // Mark contact as group if detected and not already marked
+      if (isGroup && !contact.is_group) {
+        console.log(`[Baileys Webhook] Marking contact ${contact.id} as group`);
+        await supabaseClient
+          .from("contacts")
+          .update({ is_group: true, updated_at: new Date().toISOString() })
+          .eq("id", contact.id);
+        contact.is_group = true;
       }
 
       // Update contact name if pushName is better
@@ -479,12 +496,22 @@ Deno.serve(async (req) => {
         .eq("connection_id", connection.id)
         .maybeSingle();
 
+      // Generate subject preview from message content
+      let subjectPreview = body;
+      if (messageType === 'audio' || messageType === 'ptt') subjectPreview = '🎵 Áudio';
+      else if (messageType === 'image') subjectPreview = '📷 Imagem';
+      else if (messageType === 'video') subjectPreview = '🎬 Vídeo';
+      else if (messageType === 'document') subjectPreview = '📎 Documento';
+      else if (messageType === 'sticker') subjectPreview = '🏷️ Figurinha';
+      else subjectPreview = body ? body.substring(0, 100) : '';
+
       if (existingConversation) {
         conversation = existingConversation;
         const convUpdates: Record<string, unknown> = {
           last_message_at: timestamp.toISOString(),
           status: existingConversation.status === "closed" ? "new" : existingConversation.status,
           updated_at: new Date().toISOString(),
+          subject: subjectPreview || existingConversation.subject,
         };
         // Only increment unread_count for incoming messages (not fromMe)
         if (!isFromMe) {
@@ -503,6 +530,7 @@ Deno.serve(async (req) => {
             tenant_id: connection.tenant_id,
             status: "new",
             last_message_at: timestamp.toISOString(),
+            subject: subjectPreview,
           })
           .select()
           .single();
