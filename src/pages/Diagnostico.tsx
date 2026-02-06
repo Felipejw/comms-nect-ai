@@ -7,57 +7,25 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  RefreshCw,
-  Server,
-  Database,
-  Wifi,
-  WifiOff,
-  CheckCircle2,
-  XCircle,
-  AlertTriangle,
-  Activity,
-  Clock,
-  Zap,
-  Users,
-  FileText,
+  RefreshCw, Server, Database, Wifi, WifiOff, CheckCircle2, XCircle,
+  AlertTriangle, Activity, Clock, Users, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
-interface InstanceHealth {
-  url: string;
-  priority: number;
-  healthy: boolean;
-  responseTime: number;
-  version: string | null;
-  activeSessions: number;
-  assignedConnections: number;
-  error: string | null;
-}
-
-interface HealthCheckResponse {
+interface BaileysHealthResponse {
   success: boolean;
-  configured?: boolean;
-  message?: string;
-  summary: {
-    totalInstances: number;
-    healthyInstances: number;
-    unhealthyInstances: number;
-    overallStatus: "healthy" | "degraded" | "down" | "not_configured";
-    totalConnections: number;
+  data?: {
+    status: string;
+    version?: string;
+    sessions?: number;
+    uptime?: number;
   };
-  instances: InstanceHealth[];
-  connectionsByInstance: Record<string, number>;
-  timestamp: string;
+  error?: string;
 }
 
 interface ConnectionStatus {
@@ -65,29 +33,27 @@ interface ConnectionStatus {
   name: string;
   status: string;
   phone_number: string | null;
-  session_data: {
-    instanceUrl?: string;
-  } | null;
+  session_data: Record<string, unknown> | null;
 }
 
 export default function Diagnostico() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
 
-  // Fetch WPPConnect health
+  // Fetch Baileys server health
   const {
     data: healthData,
     isLoading: isLoadingHealth,
     refetch: refetchHealth,
     error: healthError,
   } = useQuery({
-    queryKey: ["wppconnect-health"],
+    queryKey: ["baileys-health"],
     queryFn: async () => {
-      const { data, error } = await supabase.functions.invoke("wppconnect-instance", {
-        body: { action: "health" },
+      const { data, error } = await supabase.functions.invoke("baileys-instance", {
+        body: { action: "serverHealth" },
       });
       if (error) throw error;
-      return data as HealthCheckResponse;
+      return data as BaileysHealthResponse;
     },
     refetchInterval: autoRefresh ? 30000 : false,
   });
@@ -101,15 +67,11 @@ export default function Diagnostico() {
     queryKey: ["db-health"],
     queryFn: async () => {
       const startTime = Date.now();
-      const { count, error } = await supabase
+      const { error } = await supabase
         .from("connections")
         .select("*", { count: "exact", head: true });
       const responseTime = Date.now() - startTime;
-      return {
-        healthy: !error,
-        responseTime,
-        error: error?.message || null,
-      };
+      return { healthy: !error, responseTime, error: error?.message || null };
     },
     refetchInterval: autoRefresh ? 30000 : false,
   });
@@ -125,7 +87,7 @@ export default function Diagnostico() {
       const { data, error } = await supabase
         .from("connections")
         .select("id, name, status, phone_number, session_data")
-        .eq("type", "whatsapp")
+        .in("type", ["whatsapp", "meta_api"])
         .order("name");
       if (error) throw error;
       return data as ConnectionStatus[];
@@ -143,22 +105,12 @@ export default function Diagnostico() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("activity_logs")
-        .select(`
-          id,
-          action,
-          entity_type,
-          entity_id,
-          metadata,
-          created_at,
-          user_id,
-          ip_address
-        `)
+        .select("id, action, entity_type, entity_id, metadata, created_at, user_id, ip_address")
         .order("created_at", { ascending: false })
         .limit(50);
       
       if (error) throw error;
       
-      // Fetch user names separately
       const userIds = [...new Set(data?.map(log => log.user_id).filter(Boolean))];
       let userNames: Record<string, string> = {};
       
@@ -168,9 +120,7 @@ export default function Diagnostico() {
           .select("user_id, name")
           .in("user_id", userIds);
         
-        profiles?.forEach(p => {
-          userNames[p.user_id] = p.name;
-        });
+        profiles?.forEach(p => { userNames[p.user_id] = p.name; });
       }
       
       return data?.map(log => ({
@@ -196,27 +146,18 @@ export default function Diagnostico() {
 
   const getActionLabel = (action: string) => {
     const actionMap: Record<string, string> = {
-      create: "Criou",
-      update: "Atualizou",
-      delete: "Excluiu",
-      login: "Login",
-      logout: "Logout",
-      send_message: "Enviou mensagem",
-      receive_message: "Recebeu mensagem",
+      create: "Criou", update: "Atualizou", delete: "Excluiu",
+      login: "Login", logout: "Logout",
+      send_message: "Enviou mensagem", receive_message: "Recebeu mensagem",
     };
     return actionMap[action] || action;
   };
 
   const getEntityLabel = (entityType: string) => {
     const entityMap: Record<string, string> = {
-      conversation: "Conversa",
-      contact: "Contato",
-      message: "Mensagem",
-      user: "Usuário",
-      campaign: "Campanha",
-      connection: "Conexão",
-      tag: "Tag",
-      queue: "Fila",
+      conversation: "Conversa", contact: "Contato", message: "Mensagem",
+      user: "Usuário", campaign: "Campanha", connection: "Conexão",
+      tag: "Tag", queue: "Fila",
     };
     return entityMap[entityType] || entityType;
   };
@@ -229,31 +170,12 @@ export default function Diagnostico() {
     return { hasError: false, errorMessage: null };
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "healthy":
-      case "connected":
-        return "text-green-500";
-      case "degraded":
-      case "connecting":
-        return "text-yellow-500";
-      case "down":
-      case "disconnected":
-        return "text-red-500";
-      default:
-        return "text-muted-foreground";
-    }
-  };
-
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case "healthy":
       case "connected":
         return <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Online</Badge>;
-      case "degraded":
       case "connecting":
-        return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">Degradado</Badge>;
-      case "down":
+        return <Badge className="bg-yellow-500/10 text-yellow-500 border-yellow-500/20">Conectando</Badge>;
       case "disconnected":
         return <Badge className="bg-red-500/10 text-red-500 border-red-500/20">Offline</Badge>;
       default:
@@ -261,22 +183,16 @@ export default function Diagnostico() {
     }
   };
 
-  const getOverallStatusIcon = () => {
-    if (!healthData) return <Activity className="w-8 h-8 text-muted-foreground" />;
-    switch (healthData.summary.overallStatus) {
-      case "healthy":
-        return <CheckCircle2 className="w-8 h-8 text-green-500" />;
-      case "degraded":
-        return <AlertTriangle className="w-8 h-8 text-yellow-500" />;
-      case "down":
-        return <XCircle className="w-8 h-8 text-red-500" />;
-      case "not_configured":
-        return <AlertTriangle className="w-8 h-8 text-muted-foreground" />;
-    }
-  };
-
+  const baileysOnline = healthData?.data?.status === "ok";
   const connectedCount = connections?.filter((c) => c.status === "connected").length || 0;
   const totalConnections = connections?.length || 0;
+
+  const overallStatus = (() => {
+    if (isLoadingHealth || isLoadingDb) return "loading";
+    if (!baileysOnline && !dbStatus?.healthy) return "down";
+    if (!baileysOnline || !dbStatus?.healthy) return "degraded";
+    return "healthy";
+  })();
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -285,7 +201,7 @@ export default function Diagnostico() {
         <div>
           <h1 className="text-3xl font-bold">Diagnóstico do Sistema</h1>
           <p className="text-muted-foreground mt-1">
-            Monitoramento em tempo real de todas as instâncias e conexões
+            Monitoramento em tempo real dos serviços e conexões
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -316,43 +232,56 @@ export default function Diagnostico() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">Status Geral</p>
-                <p className={cn("text-2xl font-bold capitalize", getStatusColor(healthData?.summary.overallStatus || ""))}>
-                  {isLoadingHealth ? (
+                <p className={cn("text-2xl font-bold capitalize",
+                  overallStatus === "healthy" ? "text-green-500" :
+                  overallStatus === "degraded" ? "text-yellow-500" :
+                  overallStatus === "down" ? "text-red-500" : "text-muted-foreground"
+                )}>
+                  {overallStatus === "loading" ? (
                     <Skeleton className="h-8 w-24" />
-                  ) : healthData?.summary.overallStatus === "healthy" ? (
-                    "Saudável"
-                  ) : healthData?.summary.overallStatus === "degraded" ? (
-                    "Degradado"
-                  ) : healthData?.summary.overallStatus === "not_configured" ? (
-                    "Não Configurado"
-                  ) : (
-                    "Offline"
-                  )}
+                  ) : overallStatus === "healthy" ? "Saudável" :
+                    overallStatus === "degraded" ? "Degradado" : "Offline"}
                 </p>
               </div>
-              {getOverallStatusIcon()}
+              {overallStatus === "healthy" ? (
+                <CheckCircle2 className="w-8 h-8 text-green-500" />
+              ) : overallStatus === "degraded" ? (
+                <AlertTriangle className="w-8 h-8 text-yellow-500" />
+              ) : overallStatus === "down" ? (
+                <XCircle className="w-8 h-8 text-red-500" />
+              ) : (
+                <Activity className="w-8 h-8 text-muted-foreground" />
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* WPPConnect Instances */}
+        {/* Baileys Server */}
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Instâncias WPPConnect</p>
+                <p className="text-sm font-medium text-muted-foreground">Servidor Baileys</p>
                 {isLoadingHealth ? (
                   <Skeleton className="h-8 w-16" />
                 ) : (
-                  <p className="text-2xl font-bold">
-                    <span className="text-green-500">{healthData?.summary.healthyInstances || 0}</span>
-                    <span className="text-muted-foreground mx-1">/</span>
-                    <span>{healthData?.summary.totalInstances || 0}</span>
+                  <p className={cn("text-2xl font-bold", baileysOnline ? "text-green-500" : "text-red-500")}>
+                    {baileysOnline ? "Online" : "Offline"}
                   </p>
                 )}
               </div>
-              <Server className="w-8 h-8 text-muted-foreground" />
+              <Server className={cn("w-8 h-8", baileysOnline ? "text-green-500" : "text-red-500")} />
             </div>
+            {healthData?.data && (
+              <div className="mt-2 space-y-1">
+                {healthData.data.version && (
+                  <p className="text-xs text-muted-foreground">Versão: {healthData.data.version}</p>
+                )}
+                {healthData.data.sessions !== undefined && (
+                  <p className="text-xs text-muted-foreground">Sessões: {healthData.data.sessions}</p>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -409,107 +338,64 @@ export default function Diagnostico() {
         </Card>
       </div>
 
-      {/* WPPConnect Instances Detail */}
+      {/* Baileys Server Detail */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Server className="w-5 h-5" />
-            Instâncias WPPConnect
+            Servidor Baileys
           </CardTitle>
         </CardHeader>
         <CardContent>
           {isLoadingHealth ? (
             <div className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <Skeleton key={i} className="h-20 w-full" />
-              ))}
+              <Skeleton className="h-20 w-full" />
             </div>
           ) : healthError ? (
             <div className="text-center py-8 text-muted-foreground">
               <XCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
-              <p>Erro ao carregar status das instâncias</p>
-              <p className="text-sm">{(healthError as Error).message}</p>
+              <p className="font-medium">Erro ao verificar servidor Baileys</p>
+              <p className="text-sm mt-1">{(healthError as Error).message}</p>
+              <p className="text-sm mt-3">
+                Verifique se a URL e API Key do servidor Baileys estão configuradas corretamente em{" "}
+                <span className="font-medium">Configurações &gt; Opções &gt; Servidor WhatsApp</span>.
+              </p>
             </div>
-          ) : healthData?.configured === false || healthData?.instances.length === 0 ? (
+          ) : !baileysOnline ? (
             <div className="text-center py-8">
               <Server className="w-12 h-12 mx-auto mb-4 text-muted-foreground" />
-              <p className="text-lg font-medium mb-2">Nenhuma instância WPPConnect configurada</p>
+              <p className="text-lg font-medium mb-2">Servidor Baileys não acessível</p>
               <p className="text-muted-foreground text-sm max-w-md mx-auto">
-                Para começar a usar o WPPConnect, configure a variável de ambiente{" "}
-                <code className="bg-muted px-1.5 py-0.5 rounded text-xs">WPPCONNECT_API_URL</code>{" "}
-                com a URL do seu servidor WPPConnect e{" "}
-                <code className="bg-muted px-1.5 py-0.5 rounded text-xs">WPPCONNECT_SECRET_KEY</code>{" "}
-                com a chave secreta.
+                O servidor Baileys não está respondendo. Verifique se ele está rodando e se a URL está correta em{" "}
+                <span className="font-medium">Configurações &gt; Opções &gt; Servidor WhatsApp</span>.
               </p>
             </div>
           ) : (
-            <div className="space-y-4">
-              {healthData?.instances.map((instance, index) => (
-                <div
-                  key={instance.url}
-                  className={cn(
-                    "p-4 rounded-lg border",
-                    instance.healthy ? "border-green-500/20 bg-green-500/5" : "border-red-500/20 bg-red-500/5"
-                  )}
-                >
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    <div className="flex items-center gap-4">
-                      <div
-                        className={cn(
-                          "w-3 h-3 rounded-full",
-                          instance.healthy ? "bg-green-500 animate-pulse" : "bg-red-500"
-                        )}
-                      />
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">Instância #{index + 1}</span>
-                          {instance.priority === 0 && (
-                            <Badge variant="outline" className="text-xs">Load Balancer</Badge>
-                          )}
-                          {instance.priority === 1 && (
-                            <Badge variant="outline" className="text-xs">Primária</Badge>
-                          )}
-                        </div>
-                        <p className="text-sm text-muted-foreground font-mono">{instance.url}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-4 lg:gap-6">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm">
-                          {instance.responseTime}ms
-                        </span>
-                      </div>
-
-                      {instance.version && (
-                        <div className="flex items-center gap-2">
-                          <Zap className="w-4 h-4 text-muted-foreground" />
-                          <span className="text-sm">{instance.version}</span>
-                        </div>
-                      )}
-
-                      <div className="flex items-center gap-2">
-                        <Activity className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm">{instance.activeSessions} sessões</span>
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-muted-foreground" />
-                        <span className="text-sm">{instance.assignedConnections} conexões</span>
-                      </div>
-
-                      {getStatusBadge(instance.healthy ? "healthy" : "down")}
-                    </div>
+            <div className={cn("p-4 rounded-lg border border-green-500/20 bg-green-500/5")}>
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
+                  <div>
+                    <span className="font-medium">Baileys WhatsApp Server</span>
+                    <p className="text-sm text-muted-foreground">Engine: Baileys</p>
                   </div>
-
-                  {instance.error && (
-                    <div className="mt-3 p-2 bg-red-500/10 rounded text-sm text-red-500">
-                      Erro: {instance.error}
+                </div>
+                <div className="flex flex-wrap items-center gap-4 lg:gap-6">
+                  {healthData?.data?.version && (
+                    <div className="flex items-center gap-2">
+                      <Clock className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm">{healthData.data.version}</span>
                     </div>
                   )}
+                  {healthData?.data?.sessions !== undefined && (
+                    <div className="flex items-center gap-2">
+                      <Users className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm">{healthData.data.sessions} sessões</span>
+                    </div>
+                  )}
+                  <Badge className="bg-green-500/10 text-green-500 border-green-500/20">Online</Badge>
                 </div>
-              ))}
+              </div>
             </div>
           )}
         </CardContent>
@@ -558,11 +444,6 @@ export default function Diagnostico() {
                     </div>
                     {getStatusBadge(conn.status)}
                   </div>
-                  {conn.session_data?.instanceUrl && (
-                    <p className="text-xs text-muted-foreground mt-2 font-mono truncate">
-                      {conn.session_data.instanceUrl}
-                    </p>
-                  )}
                 </div>
               ))}
             </div>

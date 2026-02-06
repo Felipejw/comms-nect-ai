@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -25,7 +24,6 @@ interface FlowState {
   menuOptions?: Array<{ id: string; text: string }>;
   menuTitle?: string;
   flowId: string;
-  // AI conversation mode
   awaitingAIResponse?: boolean;
   aiNodeData?: {
     systemPrompt: string;
@@ -36,7 +34,6 @@ interface FlowState {
     useOwnApiKey?: boolean;
     googleApiKey?: string;
   };
-  // Schedule mode
   awaitingScheduleResponse?: boolean;
   scheduleNodeData?: {
     integrationId: string;
@@ -49,50 +46,85 @@ interface FlowState {
   };
 }
 
-// Send WhatsApp message through Evolution API
+// Baileys server configuration (loaded once per execution)
+interface BaileysConfig {
+  serverUrl: string;
+  apiKey: string;
+  sessionName: string;
+}
+
+// Load Baileys config from system_settings
+async function loadBaileysConfig(supabase: any, connection: any): Promise<BaileysConfig | null> {
+  const { data: urlSetting } = await supabase
+    .from("system_settings")
+    .select("value")
+    .eq("key", "baileys_server_url")
+    .single();
+
+  const { data: keySetting } = await supabase
+    .from("system_settings")
+    .select("value")
+    .eq("key", "baileys_api_key")
+    .single();
+
+  const serverUrl = urlSetting?.value;
+  const apiKey = keySetting?.value;
+
+  if (!serverUrl) {
+    console.error("[FlowExecutor] Baileys server URL not configured in system_settings");
+    return null;
+  }
+
+  const sessionData = connection.session_data as Record<string, unknown> | null;
+  const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
+
+  return { serverUrl, apiKey, sessionName };
+}
+
+// Send WhatsApp message through Baileys API
 async function sendWhatsAppMessage(
-  evolutionUrl: string,
-  evolutionKey: string,
-  instanceName: string,
+  config: BaileysConfig,
   phone: string,
   content: string,
   mediaUrl?: string,
   mediaType?: string
 ): Promise<boolean> {
   try {
-    let endpoint = `${evolutionUrl}/message/sendText/${instanceName}`;
-    let body: Record<string, unknown> = {
-      number: phone,
-      text: content,
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
     };
-
-    if (mediaUrl && mediaType) {
-      if (mediaType === "image") {
-        endpoint = `${evolutionUrl}/message/sendMedia/${instanceName}`;
-        body = { number: phone, mediatype: "image", media: mediaUrl, caption: content };
-      } else if (mediaType === "video") {
-        endpoint = `${evolutionUrl}/message/sendMedia/${instanceName}`;
-        body = { number: phone, mediatype: "video", media: mediaUrl, caption: content };
-      } else if (mediaType === "document") {
-        endpoint = `${evolutionUrl}/message/sendMedia/${instanceName}`;
-        body = { number: phone, mediatype: "document", media: mediaUrl, fileName: "documento", caption: content };
-      } else if (mediaType === "audio") {
-        endpoint = `${evolutionUrl}/message/sendWhatsAppAudio/${instanceName}`;
-        body = { number: phone, audio: mediaUrl };
-      }
+    if (config.apiKey) {
+      headers["X-API-Key"] = config.apiKey;
     }
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "apikey": evolutionKey,
-      },
-      body: JSON.stringify(body),
-    });
+    let response;
 
-    if (!response.ok) {
-      console.error("[FlowExecutor] Failed to send message:", await response.text());
+    if (mediaUrl && mediaType && mediaType !== "text") {
+      response = await fetch(`${config.serverUrl}/sessions/${config.sessionName}/send/media`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          to: phone,
+          mediaUrl,
+          caption: content,
+          mediaType,
+        }),
+      });
+    } else {
+      response = await fetch(`${config.serverUrl}/sessions/${config.sessionName}/send/text`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          to: phone,
+          text: content,
+        }),
+      });
+    }
+
+    const result = await response.json();
+
+    if (!response.ok || !result.success) {
+      console.error("[FlowExecutor] Failed to send message:", JSON.stringify(result));
       return false;
     }
 
@@ -129,7 +161,6 @@ async function fetchConversationHistory(
       return [];
     }
 
-    // Convert to chat format and reverse to chronological order
     const history: ChatMessage[] = messages
       .reverse()
       .map((msg: any) => ({
@@ -163,7 +194,6 @@ async function callGoogleAI(
   try {
     console.log("[FlowExecutor] Calling Google AI Studio with model:", model);
     
-    // Build contents array with history
     const contents: Array<{ role: string; parts: Array<{ text: string }> }> = [];
     
     if (conversationHistory && conversationHistory.length > 0) {
@@ -175,7 +205,6 @@ async function callGoogleAI(
       }
     }
     
-    // Add current user message
     contents.push({ role: "user", parts: [{ text: userMessage }] });
     
     const response = await fetch(
@@ -231,7 +260,6 @@ async function callLovableAI(
   try {
     console.log("[FlowExecutor] Calling Lovable AI with model:", model);
     
-    // Build messages array with history
     const messages: Array<{ role: string; content: string }> = [
       { role: "system", content: fullSystemPrompt },
     ];
@@ -242,7 +270,6 @@ async function callLovableAI(
       }
     }
     
-    // Add current user message
     messages.push({ role: "user", content: userMessage });
     
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -294,7 +321,6 @@ async function callAI(
 function getNextNode(nodes: FlowNode[], edges: FlowEdge[], currentNodeId: string, optionId?: string): FlowNode | null {
   const edge = edges.find(e => {
     if (optionId) {
-      // For menu and condition nodes, match by label (option id)
       return e.source_id === currentNodeId && e.label === optionId;
     }
     return e.source_id === currentNodeId;
@@ -321,12 +347,8 @@ async function evaluateCondition(
   switch (conditionType) {
     case "tag": {
       const tagId = nodeData.tagId as string;
-      if (!tagId) {
-        console.log("[FlowExecutor] No tag ID configured for condition");
-        return false;
-      }
+      if (!tagId) return false;
       
-      // Check if contact has this tag
       const { data: contactTag, error } = await supabase
         .from("contact_tags")
         .select("id")
@@ -339,42 +361,29 @@ async function evaluateCondition(
         return false;
       }
       
-      const hasTag = !!contactTag;
-      console.log("[FlowExecutor] Contact has tag:", hasTag);
-      return hasTag;
+      return !!contactTag;
     }
     
     case "kanban": {
       const kanbanColumnId = nodeData.kanbanColumnId as string;
-      if (!kanbanColumnId) {
-        console.log("[FlowExecutor] No kanban column ID configured for condition");
-        return false;
-      }
+      if (!kanbanColumnId) return false;
       
-      // Check conversation's kanban column
       const { data: conversation, error } = await supabase
         .from("conversations")
         .select("kanban_column_id")
         .eq("id", conversationId)
         .single();
       
-      if (error) {
-        console.error("[FlowExecutor] Error checking kanban column:", error);
-        return false;
-      }
-      
-      const isInColumn = conversation?.kanban_column_id === kanbanColumnId;
-      console.log("[FlowExecutor] Conversation in column:", isInColumn, conversation?.kanban_column_id, "vs", kanbanColumnId);
-      return isInColumn;
+      if (error) return false;
+      return conversation?.kanban_column_id === kanbanColumnId;
     }
 
     case "business_hours": {
       const startTime = nodeData.startTime as string || "09:00";
       const endTime = nodeData.endTime as string || "18:00";
       
-      // Get current time in Brazil timezone (most common for this system)
       const now = new Date();
-      const brasilOffset = -3 * 60; // UTC-3
+      const brasilOffset = -3 * 60;
       const localTime = new Date(now.getTime() + (brasilOffset + now.getTimezoneOffset()) * 60000);
       
       const currentHours = localTime.getHours();
@@ -387,69 +396,42 @@ async function evaluateCondition(
       const startTimeMinutes = startHours * 60 + startMinutes;
       const endTimeMinutes = endHours * 60 + endMinutes;
       
-      const isWithinHours = currentTimeMinutes >= startTimeMinutes && currentTimeMinutes <= endTimeMinutes;
-      console.log("[FlowExecutor] Business hours check:", isWithinHours, `Current: ${currentHours}:${currentMinutes}, Range: ${startTime}-${endTime}`);
-      return isWithinHours;
+      return currentTimeMinutes >= startTimeMinutes && currentTimeMinutes <= endTimeMinutes;
     }
 
     case "day_of_week": {
       const daysOfWeek = nodeData.daysOfWeek as string[] || [];
-      if (daysOfWeek.length === 0) {
-        console.log("[FlowExecutor] No days configured for condition");
-        return false;
-      }
+      if (daysOfWeek.length === 0) return false;
       
-      // Get current day in Brazil timezone
       const now = new Date();
-      const brasilOffset = -3 * 60; // UTC-3
+      const brasilOffset = -3 * 60;
       const localTime = new Date(now.getTime() + (brasilOffset + now.getTimezoneOffset()) * 60000);
       
-      const currentDay = localTime.getDay().toString(); // 0 = Sunday, 6 = Saturday
-      const isSelectedDay = daysOfWeek.includes(currentDay);
-      console.log("[FlowExecutor] Day of week check:", isSelectedDay, `Current day: ${currentDay}, Selected: ${daysOfWeek.join(",")}`);
-      return isSelectedDay;
+      const currentDay = localTime.getDay().toString();
+      return daysOfWeek.includes(currentDay);
     }
 
     case "message_count": {
       const messageCount = nodeData.messageCount as number || 0;
       const messageOperator = nodeData.messageOperator as string || "greater";
       
-      // Count messages in the conversation
       const { count, error } = await supabase
         .from("messages")
         .select("id", { count: "exact", head: true })
         .eq("conversation_id", conversationId);
       
-      if (error) {
-        console.error("[FlowExecutor] Error counting messages:", error);
-        return false;
-      }
+      if (error) return false;
       
       const actualCount = count || 0;
-      let result = false;
       
       switch (messageOperator) {
-        case "greater":
-          result = actualCount > messageCount;
-          break;
-        case "less":
-          result = actualCount < messageCount;
-          break;
-        case "equals":
-          result = actualCount === messageCount;
-          break;
-        case "greater_equals":
-          result = actualCount >= messageCount;
-          break;
-        case "less_equals":
-          result = actualCount <= messageCount;
-          break;
-        default:
-          result = actualCount > messageCount;
+        case "greater": return actualCount > messageCount;
+        case "less": return actualCount < messageCount;
+        case "equals": return actualCount === messageCount;
+        case "greater_equals": return actualCount >= messageCount;
+        case "less_equals": return actualCount <= messageCount;
+        default: return actualCount > messageCount;
       }
-      
-      console.log("[FlowExecutor] Message count check:", result, `Actual: ${actualCount} ${messageOperator} ${messageCount}`);
-      return result;
     }
     
     case "message":
@@ -460,42 +442,20 @@ async function evaluateCondition(
       
       let fieldValue = "";
       switch (field) {
-        case "message":
-          fieldValue = messageContent.toLowerCase();
-          break;
-        case "contact_name":
-          fieldValue = (contactName || "").toLowerCase();
-          break;
-        case "contact_phone":
-          fieldValue = (contactPhone || "").toLowerCase();
-          break;
-        default:
-          fieldValue = messageContent.toLowerCase();
+        case "message": fieldValue = messageContent.toLowerCase(); break;
+        case "contact_name": fieldValue = (contactName || "").toLowerCase(); break;
+        case "contact_phone": fieldValue = (contactPhone || "").toLowerCase(); break;
+        default: fieldValue = messageContent.toLowerCase();
       }
       
-      let result = false;
       switch (operator) {
-        case "contains":
-          result = fieldValue.includes(value);
-          break;
-        case "equals":
-          result = fieldValue === value;
-          break;
-        case "not_equals":
-          result = fieldValue !== value;
-          break;
-        case "starts_with":
-          result = fieldValue.startsWith(value);
-          break;
-        case "ends_with":
-          result = fieldValue.endsWith(value);
-          break;
-        default:
-          result = fieldValue.includes(value);
+        case "contains": return fieldValue.includes(value);
+        case "equals": return fieldValue === value;
+        case "not_equals": return fieldValue !== value;
+        case "starts_with": return fieldValue.startsWith(value);
+        case "ends_with": return fieldValue.endsWith(value);
+        default: return fieldValue.includes(value);
       }
-      
-      console.log("[FlowExecutor] Message condition result:", result, `"${fieldValue}" ${operator} "${value}"`);
-      return result;
     }
   }
 }
@@ -511,17 +471,14 @@ function findMatchingTrigger(
   const triggers = nodes.filter(n => n.type === "trigger");
   
   for (const trigger of triggers) {
-    // Check if this trigger has a WhatsApp block connected to it (as input)
     const incomingEdge = edges.find(e => e.target_id === trigger.id);
     if (incomingEdge) {
       const sourceNode = nodes.find(n => n.id === incomingEdge.source_id);
       if (sourceNode && sourceNode.type === "whatsapp") {
         const whatsappConnectionId = sourceNode.data.connectionId as string;
         if (connectionId && whatsappConnectionId && whatsappConnectionId !== connectionId) {
-          console.log(`[FlowExecutor] Trigger ${trigger.id} skipped - WhatsApp connection mismatch`);
           continue;
         }
-        console.log(`[FlowExecutor] Trigger ${trigger.id} matched WhatsApp connection: ${connectionId}`);
       }
     }
     
@@ -529,20 +486,14 @@ function findMatchingTrigger(
     const triggerValue = (trigger.data.triggerValue as string || "").toLowerCase();
     const messageLower = message.toLowerCase();
 
-    if (triggerType === "new_conversation" && isNewConversation) {
-      return trigger;
-    }
+    if (triggerType === "new_conversation" && isNewConversation) return trigger;
     
     if (triggerType === "keyword") {
       const keywords = triggerValue.split(",").map(k => k.trim());
-      if (keywords.some(k => messageLower.includes(k))) {
-        return trigger;
-      }
+      if (keywords.some(k => messageLower.includes(k))) return trigger;
     }
     
-    if (triggerType === "phrase" && messageLower.includes(triggerValue)) {
-      return trigger;
-    }
+    if (triggerType === "phrase" && messageLower.includes(triggerValue)) return trigger;
   }
 
   return null;
@@ -555,20 +506,15 @@ function matchMenuOption(
 ): { id: string; text: string } | null {
   const inputLower = userInput.toLowerCase().trim();
   
-  // Try to match by number (1, 2, 3, etc.)
   const numericInput = parseInt(inputLower, 10);
   if (!isNaN(numericInput) && numericInput >= 1 && numericInput <= menuOptions.length) {
     return menuOptions[numericInput - 1];
   }
   
-  // Try to match by exact text
   for (const option of menuOptions) {
-    if (option.text.toLowerCase() === inputLower) {
-      return option;
-    }
+    if (option.text.toLowerCase() === inputLower) return option;
   }
   
-  // Try to match by partial text (contains)
   for (const option of menuOptions) {
     if (option.text.toLowerCase().includes(inputLower) || inputLower.includes(option.text.toLowerCase())) {
       return option;
@@ -576,6 +522,35 @@ function matchMenuOption(
   }
   
   return null;
+}
+
+// Format phone number for sending via Baileys
+function formatPhoneForBaileys(phone: string, whatsappLid?: string): { formattedPhone: string; isLid: boolean } {
+  // If we have a real phone number, use it
+  const cleanPhone = phone?.replace(/\D/g, "") || "";
+  const isRealPhone = cleanPhone.length >= 10 && cleanPhone.length <= 14;
+  
+  if (isRealPhone) {
+    let formatted = cleanPhone;
+    if (!formatted.startsWith("55") && formatted.length <= 11) {
+      formatted = "55" + formatted;
+    }
+    return { formattedPhone: formatted, isLid: false };
+  }
+  
+  // If we have a LID, send via LID protocol (Baileys supports this)
+  if (whatsappLid) {
+    const cleanLid = whatsappLid.replace(/\D/g, "");
+    return { formattedPhone: `${cleanLid}@lid`, isLid: true };
+  }
+  
+  // Phone might be a LID stored as phone (legacy)
+  if (cleanPhone.length > 14) {
+    return { formattedPhone: `${cleanPhone}@lid`, isLid: true };
+  }
+  
+  // Fallback
+  return { formattedPhone: cleanPhone, isLid: false };
 }
 
 // Execute flow from a specific node
@@ -588,15 +563,13 @@ async function executeFlowFromNode(
   contactId: string,
   phone: string,
   messageContent: string,
-  evolutionUrl: string,
-  evolutionKey: string,
-  instanceName: string,
+  baileysConfig: BaileysConfig,
   contactName: string,
   flowId: string
 ): Promise<void> {
   let currentNode = startNode;
   let iterationCount = 0;
-  const maxIterations = 50; // Safety limit
+  const maxIterations = 50;
 
   while (currentNode && iterationCount < maxIterations) {
     iterationCount++;
@@ -608,15 +581,12 @@ async function executeFlowFromNode(
         const messageType = currentNode.data.messageType as string || "text";
         const mediaUrl = currentNode.data.mediaUrl as string;
         
-        // Replace variables in content
         const processedContent = content
           .replace(/\{\{nome\}\}/gi, contactName || "")
           .replace(/\{\{telefone\}\}/gi, phone || "");
 
         await sendWhatsAppMessage(
-          evolutionUrl,
-          evolutionKey,
-          instanceName,
+          baileysConfig,
           phone,
           processedContent,
           mediaUrl,
@@ -643,7 +613,6 @@ async function executeFlowFromNode(
         if (unit === "minutes") delayMs = delay * 60 * 1000;
         if (unit === "hours") delayMs = delay * 60 * 60 * 1000;
         
-        // Cap delay at 30 seconds for this execution
         delayMs = Math.min(delayMs, 30000);
         
         await new Promise(resolve => setTimeout(resolve, delayMs));
@@ -660,7 +629,7 @@ async function executeFlowFromNode(
           menuText += `${idx + 1}. ${opt.text}\n`;
         });
 
-        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, menuText);
+        await sendWhatsAppMessage(baileysConfig, phone, menuText);
         
         await supabase.from("messages").insert({
           conversation_id: conversationId,
@@ -669,7 +638,6 @@ async function executeFlowFromNode(
           message_type: "text",
         });
 
-        // Save flow state to wait for menu response
         const flowState: FlowState = {
           currentNodeId: currentNode.id,
           awaitingMenuResponse: true,
@@ -683,8 +651,7 @@ async function executeFlowFromNode(
           .update({ flow_state: flowState })
           .eq("id", conversationId);
 
-        console.log("[FlowExecutor] Menu displayed, waiting for user response");
-        currentNode = null; // Stop execution, wait for user input
+        currentNode = null;
         break;
       }
 
@@ -700,22 +667,14 @@ async function executeFlowFromNode(
           const useOwnApiKey = currentNode.data.useOwnApiKey as boolean;
           const googleApiKey = currentNode.data.googleApiKey as string;
 
-          // Fetch conversation history for context
           const conversationHistory = await fetchConversationHistory(supabase, conversationId, 10);
 
           const aiResponse = await callAI(
-            systemPrompt, 
-            messageContent, 
-            model, 
-            temperature, 
-            maxTokens, 
-            knowledgeBase,
-            useOwnApiKey,
-            googleApiKey,
-            conversationHistory
+            systemPrompt, messageContent, model, temperature, maxTokens, 
+            knowledgeBase, useOwnApiKey, googleApiKey, conversationHistory
           );
 
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, aiResponse);
+          await sendWhatsAppMessage(baileysConfig, phone, aiResponse);
           
           await supabase.from("messages").insert({
             conversation_id: conversationId,
@@ -724,29 +683,16 @@ async function executeFlowFromNode(
             message_type: "text",
           });
 
-          // Check if there's a next node
           const nextNode = getNextNode(nodes, edges, currentNode.id);
           
           if (nextNode) {
-            // Continue to next node
             currentNode = nextNode;
           } else {
-            // No next node - enter continuous AI conversation mode
-            console.log("[FlowExecutor] AI conversation mode activated");
-            
             const aiState: FlowState = {
               currentNodeId: currentNode.id,
               awaitingMenuResponse: false,
               awaitingAIResponse: true,
-              aiNodeData: {
-                systemPrompt,
-                model,
-                temperature,
-                maxTokens,
-                knowledgeBase,
-                useOwnApiKey,
-                googleApiKey,
-              },
+              aiNodeData: { systemPrompt, model, temperature, maxTokens, knowledgeBase, useOwnApiKey, googleApiKey },
               flowId: flowId,
             };
             
@@ -755,7 +701,7 @@ async function executeFlowFromNode(
               .update({ flow_state: aiState })
               .eq("id", conversationId);
             
-            currentNode = null; // Stop execution, wait for next message
+            currentNode = null;
           }
         } else {
           currentNode = getNextNode(nodes, edges, currentNode.id);
@@ -771,8 +717,6 @@ async function executeFlowFromNode(
             .from("conversations")
             .update({ kanban_column_id: kanbanColumnId })
             .eq("id", conversationId);
-          
-          console.log("[FlowExecutor] Updated CRM stage to:", kanbanColumnId);
         }
 
         currentNode = getNextNode(nodes, edges, currentNode.id);
@@ -784,7 +728,7 @@ async function executeFlowFromNode(
         const message = currentNode.data.message as string;
         
         if (message) {
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, message);
+          await sendWhatsAppMessage(baileysConfig, phone, message);
           await supabase.from("messages").insert({
             conversation_id: conversationId,
             content: message,
@@ -803,7 +747,6 @@ async function executeFlowFromNode(
         if (transferType === "queue" && currentNode.data.queueId) {
           updateData.queue_id = currentNode.data.queueId;
         }
-        
         if (transferType === "agent" && currentNode.data.agentId) {
           updateData.assigned_to = currentNode.data.agentId;
         }
@@ -813,7 +756,6 @@ async function executeFlowFromNode(
           .update(updateData)
           .eq("id", conversationId);
 
-        console.log("[FlowExecutor] Transferred conversation:", transferType);
         currentNode = null;
         break;
       }
@@ -823,7 +765,7 @@ async function executeFlowFromNode(
         const markAsResolved = currentNode.data.markAsResolved !== false;
         
         if (message) {
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, message);
+          await sendWhatsAppMessage(baileysConfig, phone, message);
           await supabase.from("messages").insert({
             conversation_id: conversationId,
             content: message,
@@ -842,7 +784,6 @@ async function executeFlowFromNode(
           })
           .eq("id", conversationId);
 
-        console.log("[FlowExecutor] Flow ended, markAsResolved:", markAsResolved);
         currentNode = null;
         break;
       }
@@ -853,21 +794,12 @@ async function executeFlowFromNode(
       }
 
       case "condition": {
-        // Evaluate the condition
         const conditionResult = await evaluateCondition(
-          supabase,
-          currentNode.data,
-          conversationId,
-          contactId,
-          messageContent,
-          contactName,
-          phone
+          supabase, currentNode.data, conversationId, contactId,
+          messageContent, contactName, phone
         );
         
-        // Follow the appropriate path based on condition result
         const nextNodeId = conditionResult ? "yes" : "no";
-        console.log("[FlowExecutor] Condition result:", conditionResult, "-> following", nextNodeId);
-        
         currentNode = getNextNode(nodes, edges, currentNode.id, nextNodeId);
         break;
       }
@@ -875,7 +807,6 @@ async function executeFlowFromNode(
       case "schedule": {
         const actionType = currentNode.data.actionType as string || "check_availability";
         
-        // Get Google Calendar integration
         const { data: integration, error: intError } = await supabase
           .from("integrations")
           .select("*")
@@ -884,14 +815,10 @@ async function executeFlowFromNode(
           .maybeSingle();
 
         if (intError || !integration) {
-          console.log("[FlowExecutor] Google Calendar integration not found or not active");
           const errorMsg = "Desculpe, o sistema de agendamento não está disponível no momento.";
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, errorMsg);
+          await sendWhatsAppMessage(baileysConfig, phone, errorMsg);
           await supabase.from("messages").insert({
-            conversation_id: conversationId,
-            content: errorMsg,
-            sender_type: "bot",
-            message_type: "text",
+            conversation_id: conversationId, content: errorMsg, sender_type: "bot", message_type: "text",
           });
           currentNode = getNextNode(nodes, edges, currentNode.id);
           break;
@@ -907,36 +834,25 @@ async function executeFlowFromNode(
           const workingHoursEnd = currentNode.data.workingHoursEnd as string || "18:00";
           const maxOptions = (currentNode.data.maxOptions as number) || 5;
 
-          // Calculate dates based on period
           const dates: Date[] = [];
           const today = new Date();
           
           switch (period) {
-            case "today":
-              dates.push(today);
-              break;
-            case "tomorrow":
+            case "today": dates.push(today); break;
+            case "tomorrow": {
               const tomorrow = new Date(today);
               tomorrow.setDate(tomorrow.getDate() + 1);
               dates.push(tomorrow);
               break;
+            }
             case "next_3_days":
-              for (let i = 0; i < 3; i++) {
-                const date = new Date(today);
-                date.setDate(date.getDate() + i);
-                dates.push(date);
-              }
+              for (let i = 0; i < 3; i++) { const d = new Date(today); d.setDate(d.getDate() + i); dates.push(d); }
               break;
             case "next_7_days":
-              for (let i = 0; i < 7; i++) {
-                const date = new Date(today);
-                date.setDate(date.getDate() + i);
-                dates.push(date);
-              }
+              for (let i = 0; i < 7; i++) { const d = new Date(today); d.setDate(d.getDate() + i); dates.push(d); }
               break;
           }
 
-          // Fetch available slots for each date
           const allSlots: Array<{ start: string; end: string; displayDate: string; displayTime: string }> = [];
 
           for (const date of dates) {
@@ -961,12 +877,7 @@ async function executeFlowFromNode(
                   const displayDate = `${dayName}, ${startDate.getDate().toString().padStart(2, "0")}/${(startDate.getMonth() + 1).toString().padStart(2, "0")}`;
                   const displayTime = `${startDate.getHours().toString().padStart(2, "0")}:${startDate.getMinutes().toString().padStart(2, "0")}`;
                   
-                  allSlots.push({
-                    start: slot.start,
-                    end: slot.end,
-                    displayDate,
-                    displayTime,
-                  });
+                  allSlots.push({ start: slot.start, end: slot.end, displayDate, displayTime });
                 }
               }
             } catch (error) {
@@ -976,42 +887,34 @@ async function executeFlowFromNode(
 
           if (allSlots.length === 0) {
             const noSlotsMsg = "Desculpe, não há horários disponíveis no período selecionado. Por favor, tente novamente mais tarde ou entre em contato conosco.";
-            await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, noSlotsMsg);
+            await sendWhatsAppMessage(baileysConfig, phone, noSlotsMsg);
             await supabase.from("messages").insert({
-              conversation_id: conversationId,
-              content: noSlotsMsg,
-              sender_type: "bot",
-              message_type: "text",
+              conversation_id: conversationId, content: noSlotsMsg, sender_type: "bot", message_type: "text",
             });
             currentNode = getNextNode(nodes, edges, currentNode.id);
             break;
           }
 
-          // Limit slots and create message
           const displaySlots = allSlots.slice(0, maxOptions);
           
           let slotsMessage = "📅 *Horários Disponíveis*\n\nEscolha um horário digitando o número correspondente:\n\n";
           displaySlots.forEach((slot, idx) => {
-            slotsMessage += `*${idx + 1}.* ${slot.displayDate} às ${slot.displayTime}\n`;
+            slotsMessage += `${idx + 1}. ${slot.displayDate} às ${slot.displayTime}\n`;
           });
-          slotsMessage += "\nDigite *0* para cancelar.";
+          slotsMessage += `\n0. Cancelar`;
 
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, slotsMessage);
+          await sendWhatsAppMessage(baileysConfig, phone, slotsMessage);
+          
           await supabase.from("messages").insert({
-            conversation_id: conversationId,
-            content: slotsMessage,
-            sender_type: "bot",
-            message_type: "text",
+            conversation_id: conversationId, content: slotsMessage, sender_type: "bot", message_type: "text",
           });
 
-          // Get next node to check if it's a create_event node
           const nextNode = getNextNode(nodes, edges, currentNode.id);
           const eventTitle = nextNode?.data?.eventTitle as string || currentNode.data.eventTitle as string || "Agendamento";
           const eventDescription = nextNode?.data?.eventDescription as string || currentNode.data.eventDescription as string || "";
           const eventDuration = nextNode?.data?.eventDuration as number || serviceDuration;
           const sendConfirmation = nextNode?.data?.sendConfirmation !== false;
 
-          // Save flow state to wait for schedule response
           const scheduleState: FlowState = {
             currentNodeId: currentNode.id,
             awaitingMenuResponse: false,
@@ -1020,10 +923,7 @@ async function executeFlowFromNode(
               integrationId: integration.id,
               calendarId,
               availableSlots: displaySlots.map(s => ({ start: s.start, end: s.end })),
-              eventTitle,
-              eventDescription,
-              eventDuration,
-              sendConfirmation,
+              eventTitle, eventDescription, eventDuration, sendConfirmation,
             },
             flowId: flowId,
           };
@@ -1033,19 +933,14 @@ async function executeFlowFromNode(
             .update({ flow_state: scheduleState })
             .eq("id", conversationId);
 
-          console.log("[FlowExecutor] Schedule options displayed, waiting for user response");
-          currentNode = null; // Stop execution, wait for user input
+          currentNode = null;
         } else if (actionType === "create_event") {
-          // This case is typically handled after user selects a slot
-          // For direct create_event, we would need slot info in previous state
-          console.log("[FlowExecutor] create_event action requires slot selection first");
           currentNode = getNextNode(nodes, edges, currentNode.id);
         }
         break;
       }
 
       default:
-        console.log("[FlowExecutor] Unknown node type:", currentNode.type);
         currentNode = getNextNode(nodes, edges, currentNode.id);
     }
   }
@@ -1055,7 +950,7 @@ async function executeFlowFromNode(
   }
 }
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -1063,8 +958,6 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const evolutionUrl = Deno.env.get("EVOLUTION_API_URL") ?? "";
-    const evolutionKey = Deno.env.get("EVOLUTION_API_KEY") ?? "";
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
@@ -1087,18 +980,15 @@ serve(async (req) => {
       });
     }
 
-    // Check if bot is active for this conversation
     if (conversation.is_bot_active === false) {
-      console.log("[FlowExecutor] Bot is disabled for this conversation");
       return new Response(JSON.stringify({ success: true, message: "Bot disabled" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Get connection for this conversation - prioritize the one passed or linked
+    // Get connection for this conversation
     let connection = null;
 
-    // First, try the connection passed from webhook
     if (connectionId) {
       const { data: passedConnection } = await supabase
         .from("connections")
@@ -1113,7 +1003,6 @@ serve(async (req) => {
       }
     }
 
-    // If not found, try the connection linked to conversation
     if (!connection && conversation.connection_id) {
       const { data: linkedConnection } = await supabase
         .from("connections")
@@ -1124,11 +1013,9 @@ serve(async (req) => {
       
       if (linkedConnection) {
         connection = linkedConnection;
-        console.log("[FlowExecutor] Using connection from conversation:", conversation.connection_id);
       }
     }
 
-    // Fallback to any connected instance
     if (!connection) {
       const { data: anyConnection } = await supabase
         .from("connections")
@@ -1138,7 +1025,6 @@ serve(async (req) => {
         .single();
       
       connection = anyConnection;
-      console.log("[FlowExecutor] Using fallback connection");
     }
 
     if (!connection) {
@@ -1148,29 +1034,37 @@ serve(async (req) => {
       });
     }
 
-    const instanceName = (connection.session_data as Record<string, unknown>)?.instanceName as string || connection.name;
+    // Load Baileys config
+    const baileysConfig = await loadBaileysConfig(supabase, connection);
+    if (!baileysConfig) {
+      return new Response(JSON.stringify({ success: false, error: "Baileys not configured" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const contactId = conversation.contact_id;
     const contactName = conversation.contacts?.name || "";
     
     // Determine the correct phone number to use for sending messages
-    // ALWAYS prioritize the real phone number over LID for sending
-    // Evolution API does NOT accept LID for sending messages - only real phone numbers work
+    // Baileys supports both real phone numbers AND LID
     const whatsappLid = conversation.contacts?.whatsapp_lid;
     const contactRealPhone = conversation.contacts?.phone;
     
-    // Use the real phone number if available and it's different from the LID
-    // Otherwise fall back to contactPhone from webhook
-    let phone = contactRealPhone && contactRealPhone !== whatsappLid 
-      ? contactRealPhone 
-      : contactPhone;
+    const { formattedPhone, isLid } = formatPhoneForBaileys(
+      contactRealPhone || contactPhone,
+      whatsappLid
+    );
     
-    // If we still don't have a valid phone (only have LID), log an error
-    if (!phone || phone === whatsappLid) {
-      console.error(`[FlowExecutor] Cannot send message: Contact has no real phone number. LID: ${whatsappLid}`);
-      // Cannot use LID for sending - Evolution API will reject it
+    const phone = formattedPhone;
+    
+    if (!phone) {
+      console.error("[FlowExecutor] Cannot send message: No valid phone or LID");
+      return new Response(JSON.stringify({ success: false, error: "No valid phone" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
     
-    console.log(`[FlowExecutor] Contact: ${contactName}, Phone: ${phone}, LID: ${whatsappLid || 'N/A'}`);
+    console.log(`[FlowExecutor] Contact: ${contactName}, Phone: ${phone}, isLid: ${isLid}`);
 
     // Check if we're waiting for a menu response or AI response
     const flowState = conversation.flow_state as FlowState | null;
@@ -1181,64 +1075,42 @@ serve(async (req) => {
       
       const aiData = flowState.aiNodeData;
       
-      // Check for exit keywords to leave AI mode
       const exitKeywords = ["sair", "menu", "atendente", "humano", "voltar", "encerrar"];
       const messageLower = messageContent.toLowerCase().trim();
       
       if (exitKeywords.some(kw => messageLower === kw || messageLower.includes(kw))) {
-        console.log("[FlowExecutor] User requested to exit AI mode");
-        
-        // Clear flow state and transfer to human
         await supabase
           .from("conversations")
-          .update({ 
-            flow_state: null, 
-            is_bot_active: false,
-            status: "in_progress"
-          })
+          .update({ flow_state: null, is_bot_active: false, status: "in_progress" })
           .eq("id", conversationId);
         
         const exitMessage = "Entendido! Você será transferido para um atendente. Aguarde um momento.";
-        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, exitMessage);
+        await sendWhatsAppMessage(baileysConfig, phone, exitMessage);
         
         await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          content: exitMessage,
-          sender_type: "bot",
-          message_type: "text",
+          conversation_id: conversationId, content: exitMessage, sender_type: "bot", message_type: "text",
         });
         
-        return new Response(JSON.stringify({ success: true, message: "Exited AI mode, transferred to human" }), {
+        return new Response(JSON.stringify({ success: true, message: "Exited AI mode" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       
-      // Fetch conversation history for context
       const conversationHistory = await fetchConversationHistory(supabase, conversationId, 10);
       
-      // Continue AI conversation
       const aiResponse = await callAI(
-        aiData.systemPrompt,
-        messageContent,
-        aiData.model,
-        aiData.temperature || 0.7,
-        aiData.maxTokens || 1024,
-        aiData.knowledgeBase,
-        aiData.useOwnApiKey,
-        aiData.googleApiKey,
+        aiData.systemPrompt, messageContent, aiData.model,
+        aiData.temperature || 0.7, aiData.maxTokens || 1024,
+        aiData.knowledgeBase, aiData.useOwnApiKey, aiData.googleApiKey,
         conversationHistory
       );
       
-      await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, aiResponse);
+      await sendWhatsAppMessage(baileysConfig, phone, aiResponse);
       
       await supabase.from("messages").insert({
-        conversation_id: conversationId,
-        content: aiResponse,
-        sender_type: "bot",
-        message_type: "text",
+        conversation_id: conversationId, content: aiResponse, sender_type: "bot", message_type: "text",
       });
       
-      console.log("[FlowExecutor] AI response sent");
       return new Response(JSON.stringify({ success: true, message: "AI conversation continued" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -1251,23 +1123,17 @@ serve(async (req) => {
       const scheduleData = flowState.scheduleNodeData;
       const inputTrimmed = messageContent.trim();
       
-      // Check for cancel
       if (inputTrimmed === "0") {
-        console.log("[FlowExecutor] User cancelled scheduling");
-        
         await supabase
           .from("conversations")
           .update({ flow_state: null })
           .eq("id", conversationId);
         
         const cancelMsg = "Agendamento cancelado. Se precisar de algo mais, é só me chamar! 😊";
-        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, cancelMsg);
+        await sendWhatsAppMessage(baileysConfig, phone, cancelMsg);
         
         await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          content: cancelMsg,
-          sender_type: "bot",
-          message_type: "text",
+          conversation_id: conversationId, content: cancelMsg, sender_type: "bot", message_type: "text",
         });
         
         return new Response(JSON.stringify({ success: true, message: "Scheduling cancelled" }), {
@@ -1275,30 +1141,23 @@ serve(async (req) => {
         });
       }
       
-      // Try to parse selection number
       const selectedIndex = parseInt(inputTrimmed, 10) - 1;
       
       if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= scheduleData.availableSlots.length) {
-        // Invalid selection
         const invalidMsg = `Por favor, digite um número de 1 a ${scheduleData.availableSlots.length}, ou 0 para cancelar.`;
-        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, invalidMsg);
+        await sendWhatsAppMessage(baileysConfig, phone, invalidMsg);
         
         await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          content: invalidMsg,
-          sender_type: "bot",
-          message_type: "text",
+          conversation_id: conversationId, content: invalidMsg, sender_type: "bot", message_type: "text",
         });
         
-        return new Response(JSON.stringify({ success: true, message: "Invalid selection, asked again" }), {
+        return new Response(JSON.stringify({ success: true, message: "Invalid selection" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       
-      // Valid selection - create the event
       const selectedSlot = scheduleData.availableSlots[selectedIndex];
       
-      // Replace variables in event title
       const processedTitle = (scheduleData.eventTitle || "Agendamento")
         .replace(/\{\{nome\}\}/gi, contactName || "Cliente")
         .replace(/\{\{telefone\}\}/gi, phone || "");
@@ -1307,8 +1166,6 @@ serve(async (req) => {
         .replace(/\{\{nome\}\}/gi, contactName || "Cliente")
         .replace(/\{\{telefone\}\}/gi, phone || "")
         + `\n\nAgendado via WhatsApp\nContato: ${contactName || "N/A"}\nTelefone: ${phone || "N/A"}`;
-      
-      console.log("[FlowExecutor] Creating calendar event:", processedTitle, selectedSlot.start);
       
       try {
         const { data: eventResult, error: eventError } = await supabase.functions.invoke("google-calendar", {
@@ -1325,19 +1182,13 @@ serve(async (req) => {
           },
         });
         
-        if (eventError) {
-          throw eventError;
-        }
+        if (eventError) throw eventError;
         
-        console.log("[FlowExecutor] Event created successfully:", eventResult?.event_id);
-        
-        // Clear flow state
         await supabase
           .from("conversations")
           .update({ flow_state: null })
           .eq("id", conversationId);
         
-        // Format confirmation message
         const eventDate = new Date(selectedSlot.start);
         const dayNames = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
         const monthNames = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
@@ -1353,40 +1204,19 @@ serve(async (req) => {
         confirmationMsg += `Se precisar remarcar ou cancelar, entre em contato conosco!`;
         
         if (scheduleData.sendConfirmation !== false) {
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, confirmationMsg);
-          
+          await sendWhatsAppMessage(baileysConfig, phone, confirmationMsg);
           await supabase.from("messages").insert({
-            conversation_id: conversationId,
-            content: confirmationMsg,
-            sender_type: "bot",
-            message_type: "text",
+            conversation_id: conversationId, content: confirmationMsg, sender_type: "bot", message_type: "text",
           });
         }
         
         // Continue to next node in flow if exists
-        const { data: flowNodes } = await supabase
-          .from("flow_nodes")
-          .select("*")
-          .eq("flow_id", flowState.flowId);
-
-        const { data: flowEdges } = await supabase
-          .from("flow_edges")
-          .select("*")
-          .eq("flow_id", flowState.flowId);
+        const { data: flowNodes } = await supabase.from("flow_nodes").select("*").eq("flow_id", flowState.flowId);
+        const { data: flowEdges } = await supabase.from("flow_edges").select("*").eq("flow_id", flowState.flowId);
 
         if (flowNodes && flowEdges) {
-          const nodes: FlowNode[] = flowNodes.map(n => ({
-            id: n.id,
-            type: n.type,
-            data: (n.data as Record<string, unknown>) || {},
-          }));
-
-          const edges: FlowEdge[] = flowEdges.map(e => ({
-            id: e.id,
-            source_id: e.source_id,
-            target_id: e.target_id,
-            label: e.label || undefined,
-          }));
+          const nodes: FlowNode[] = flowNodes.map((n: any) => ({ id: n.id, type: n.type, data: n.data || {} }));
+          const edges: FlowEdge[] = flowEdges.map((e: any) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, label: e.label || undefined }));
 
           const nextNode = nodes.find(n => {
             const edge = edges.find(e => e.source_id === flowState.currentNodeId && !e.label);
@@ -1394,114 +1224,59 @@ serve(async (req) => {
           });
           
           if (nextNode) {
-            console.log("[FlowExecutor] Continuing flow after scheduling");
             await executeFlowFromNode(
-              supabase,
-              nodes,
-              edges,
-              nextNode,
-              conversationId,
-              contactId,
-              phone,
-              messageContent,
-              evolutionUrl,
-              evolutionKey,
-              instanceName,
-              contactName,
-              flowState.flowId
+              supabase, nodes, edges, nextNode, conversationId, contactId,
+              phone, messageContent, baileysConfig, contactName, flowState.flowId
             );
           }
         }
         
-        return new Response(JSON.stringify({ success: true, message: "Event created successfully" }), {
+        return new Response(JSON.stringify({ success: true, message: "Event created" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
         
       } catch (error) {
         console.error("[FlowExecutor] Error creating event:", error);
         
-        const errorMsg = "Desculpe, ocorreu um erro ao criar o agendamento. Por favor, tente novamente ou entre em contato conosco.";
-        await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, errorMsg);
-        
+        const errorMsg = "Desculpe, ocorreu um erro ao criar o agendamento. Por favor, tente novamente.";
+        await sendWhatsAppMessage(baileysConfig, phone, errorMsg);
         await supabase.from("messages").insert({
-          conversation_id: conversationId,
-          content: errorMsg,
-          sender_type: "bot",
-          message_type: "text",
+          conversation_id: conversationId, content: errorMsg, sender_type: "bot", message_type: "text",
         });
         
-        await supabase
-          .from("conversations")
-          .update({ flow_state: null })
-          .eq("id", conversationId);
+        await supabase.from("conversations").update({ flow_state: null }).eq("id", conversationId);
         
-        return new Response(JSON.stringify({ success: false, message: "Error creating event" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        return new Response(JSON.stringify({ success: false, error: "Failed to create event" }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
     }
     
-    if (flowState?.awaitingMenuResponse && flowState.menuOptions && flowState.currentNodeId) {
-      console.log("[FlowExecutor] Processing menu response for node:", flowState.currentNodeId);
+    // Handle menu response
+    if (flowState?.awaitingMenuResponse && flowState.menuOptions) {
+      console.log("[FlowExecutor] Processing menu response:", messageContent);
       
       const selectedOption = matchMenuOption(messageContent, flowState.menuOptions);
       
       if (selectedOption) {
-        console.log("[FlowExecutor] User selected option:", selectedOption.id, selectedOption.text);
+        console.log("[FlowExecutor] User selected option:", selectedOption.text);
         
-        // Get flow nodes and edges
-        const { data: flowNodes } = await supabase
-          .from("flow_nodes")
-          .select("*")
-          .eq("flow_id", flowState.flowId);
-
-        const { data: flowEdges } = await supabase
-          .from("flow_edges")
-          .select("*")
-          .eq("flow_id", flowState.flowId);
+        await supabase.from("conversations").update({ flow_state: null }).eq("id", conversationId);
+        
+        const { data: flowNodes } = await supabase.from("flow_nodes").select("*").eq("flow_id", flowState.flowId);
+        const { data: flowEdges } = await supabase.from("flow_edges").select("*").eq("flow_id", flowState.flowId);
 
         if (flowNodes && flowEdges) {
-          const nodes: FlowNode[] = flowNodes.map(n => ({
-            id: n.id,
-            type: n.type,
-            data: (n.data as Record<string, unknown>) || {},
-          }));
+          const nodes: FlowNode[] = flowNodes.map((n: any) => ({ id: n.id, type: n.type, data: n.data || {} }));
+          const edges: FlowEdge[] = flowEdges.map((e: any) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, label: e.label || undefined }));
 
-          const edges: FlowEdge[] = flowEdges.map(e => ({
-            id: e.id,
-            source_id: e.source_id,
-            target_id: e.target_id,
-            label: e.label || undefined,
-          }));
-
-          // Clear flow state before continuing
-          await supabase
-            .from("conversations")
-            .update({ flow_state: null })
-            .eq("id", conversationId);
-
-          // Find the next node based on selected option
           const nextNode = getNextNode(nodes, edges, flowState.currentNodeId, selectedOption.id);
           
           if (nextNode) {
-            console.log("[FlowExecutor] Continuing flow from node:", nextNode.id);
             await executeFlowFromNode(
-              supabase,
-              nodes,
-              edges,
-              nextNode,
-              conversationId,
-              contactId,
-              phone,
-              messageContent,
-              evolutionUrl,
-              evolutionKey,
-              instanceName,
-              contactName,
-              flowState.flowId
+              supabase, nodes, edges, nextNode, conversationId, contactId,
+              phone, messageContent, baileysConfig, contactName, flowState.flowId
             );
-          } else {
-            console.log("[FlowExecutor] No next node found for selected option");
           }
         }
         
@@ -1509,10 +1284,7 @@ serve(async (req) => {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       } else {
-        // Invalid option - first check if this is a trigger for a new flow
-        console.log("[FlowExecutor] Invalid menu option, checking for trigger match...");
-        
-        // Get all active flows to check for triggers
+        // Invalid option - check if this is a trigger for a new flow
         const { data: allFlows } = await supabase
           .from("chatbot_flows")
           .select("*")
@@ -1522,63 +1294,26 @@ serve(async (req) => {
         
         if (allFlows) {
           for (const flow of allFlows) {
-            const { data: nodeData } = await supabase
-              .from("flow_nodes")
-              .select("*")
-              .eq("flow_id", flow.id);
-
+            const { data: nodeData } = await supabase.from("flow_nodes").select("*").eq("flow_id", flow.id);
             if (!nodeData) continue;
 
-            const nodes: FlowNode[] = nodeData.map(n => ({
-              id: n.id,
-              type: n.type,
-              data: (n.data as Record<string, unknown>) || {},
-            }));
-
-            const { data: edgeData } = await supabase
-              .from("flow_edges")
-              .select("*")
-              .eq("flow_id", flow.id);
-
-            const edges: FlowEdge[] = (edgeData || []).map(e => ({
-              id: e.id,
-              source_id: e.source_id,
-              target_id: e.target_id,
-              label: e.label || undefined,
-            }));
+            const nodes: FlowNode[] = nodeData.map((n: any) => ({ id: n.id, type: n.type, data: n.data || {} }));
+            const { data: edgeData } = await supabase.from("flow_edges").select("*").eq("flow_id", flow.id);
+            const edges: FlowEdge[] = (edgeData || []).map((e: any) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, label: e.label || undefined }));
 
             const matchingTrigger = findMatchingTrigger(nodes, edges, messageContent, false, connectionId);
             
             if (matchingTrigger) {
-              console.log("[FlowExecutor] Found trigger match, restarting flow:", flow.id);
-              
-              // Clear flow state and set new active flow
               await supabase
                 .from("conversations")
-                .update({ 
-                  flow_state: null, 
-                  active_flow_id: flow.id,
-                  is_bot_active: true 
-                })
+                .update({ flow_state: null, active_flow_id: flow.id, is_bot_active: true })
                 .eq("id", conversationId);
 
-              // Execute the new flow
               const startNode = getNextNode(nodes, edges, matchingTrigger.id);
               if (startNode) {
                 await executeFlowFromNode(
-                  supabase,
-                  nodes,
-                  edges,
-                  startNode,
-                  conversationId,
-                  contactId,
-                  phone,
-                  messageContent,
-                  evolutionUrl,
-                  evolutionKey,
-                  instanceName,
-                  contactName,
-                  flow.id
+                  supabase, nodes, edges, startNode, conversationId, contactId,
+                  phone, messageContent, baileysConfig, contactName, flow.id
                 );
               }
 
@@ -1589,26 +1324,19 @@ serve(async (req) => {
         }
 
         if (!foundTrigger) {
-          // No trigger found, show invalid option message with menu title
-          console.log("[FlowExecutor] No trigger match, showing invalid option message");
-          
           const menuTitle = flowState.menuTitle || "Por favor, escolha uma das opções:";
           let menuText = `Opção inválida. ${menuTitle}\n\n`;
           flowState.menuOptions.forEach((opt, idx) => {
             menuText += `${idx + 1}. ${opt.text}\n`;
           });
 
-          await sendWhatsAppMessage(evolutionUrl, evolutionKey, instanceName, phone, menuText);
-          
+          await sendWhatsAppMessage(baileysConfig, phone, menuText);
           await supabase.from("messages").insert({
-            conversation_id: conversationId,
-            content: menuText,
-            sender_type: "bot",
-            message_type: "text",
+            conversation_id: conversationId, content: menuText, sender_type: "bot", message_type: "text",
           });
         }
 
-        return new Response(JSON.stringify({ success: true, message: foundTrigger ? "Trigger matched, flow restarted" : "Invalid option, asked again" }), {
+        return new Response(JSON.stringify({ success: true, message: foundTrigger ? "Trigger matched" : "Invalid option" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
@@ -1621,7 +1349,6 @@ serve(async (req) => {
       .eq("is_active", true);
 
     if (!flows || flows.length === 0) {
-      console.log("[FlowExecutor] No active flows found");
       return new Response(JSON.stringify({ success: true, message: "No active flows" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -1636,30 +1363,12 @@ serve(async (req) => {
     const isNewConversation = conversation.status === "new";
     
     for (const flow of flows) {
-      const { data: nodeData } = await supabase
-        .from("flow_nodes")
-        .select("*")
-        .eq("flow_id", flow.id);
-
+      const { data: nodeData } = await supabase.from("flow_nodes").select("*").eq("flow_id", flow.id);
       if (!nodeData) continue;
 
-      const nodes: FlowNode[] = nodeData.map(n => ({
-        id: n.id,
-        type: n.type,
-        data: (n.data as Record<string, unknown>) || {},
-      }));
-
-      const { data: edgeData } = await supabase
-        .from("flow_edges")
-        .select("*")
-        .eq("flow_id", flow.id);
-
-      const edges: FlowEdge[] = (edgeData || []).map(e => ({
-        id: e.id,
-        source_id: e.source_id,
-        target_id: e.target_id,
-        label: e.label || undefined,
-      }));
+      const nodes: FlowNode[] = nodeData.map((n: any) => ({ id: n.id, type: n.type, data: n.data || {} }));
+      const { data: edgeData } = await supabase.from("flow_edges").select("*").eq("flow_id", flow.id);
+      const edges: FlowEdge[] = (edgeData || []).map((e: any) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, label: e.label || undefined }));
 
       const matchingTrigger = findMatchingTrigger(nodes, edges, messageContent, isNewConversation, connectionId);
       
@@ -1669,44 +1378,27 @@ serve(async (req) => {
         flowNodes = nodes;
         flowEdges = edges;
         
-        // Update conversation with active flow
         await supabase
           .from("conversations")
           .update({ active_flow_id: flow.id, is_bot_active: true })
           .eq("id", conversationId);
 
-        console.log("[FlowExecutor] Found matching trigger in flow:", flow.id);
         break;
       }
     }
 
     if (!activeFlowId || !triggerNode) {
-      console.log("[FlowExecutor] No matching trigger found");
       return new Response(JSON.stringify({ success: true, message: "No matching trigger" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Execute flow starting from the trigger
     const startNode = getNextNode(flowNodes, flowEdges, triggerNode.id);
     
     await executeFlowFromNode(
-      supabase,
-      flowNodes,
-      flowEdges,
-      startNode,
-      conversationId,
-      contactId,
-      phone,
-      messageContent,
-      evolutionUrl,
-      evolutionKey,
-      instanceName,
-      contactName,
-      activeFlowId
+      supabase, flowNodes, flowEdges, startNode, conversationId, contactId,
+      phone, messageContent, baileysConfig, contactName, activeFlowId
     );
-
-    console.log("[FlowExecutor] Flow execution completed");
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },

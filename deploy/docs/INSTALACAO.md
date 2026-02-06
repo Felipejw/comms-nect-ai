@@ -6,9 +6,7 @@ Sistema de atendimento WhatsApp self-hosted com Supabase + Baileys WhatsApp Engi
 
 | Engine | Tipo | Descrição |
 |--------|------|-----------|
-| **Baileys** (Recomendado) | QR Code | Biblioteca JavaScript leve e rápida |
-| WAHA | QR Code | WhatsApp HTTP API |
-| WPPConnect | QR Code | Multi-instância com failover |
+| **Baileys** | QR Code | Biblioteca JavaScript leve e rápida |
 
 ---
 
@@ -150,12 +148,10 @@ SUA VPS (Tudo em uma única máquina)
 No arquivo `.env`:
 
 ```env
-# Engine WhatsApp (baileys, waha, ou wppconnect)
-WHATSAPP_ENGINE=baileys
-
 # Baileys Config (integrado)
 BAILEYS_API_KEY=sua-api-key-gerada
 BAILEYS_INTERNAL_URL=http://baileys:3000
+BAILEYS_EXTERNAL_URL=https://seu-dominio.com/baileys
 BAILEYS_EXTERNAL_URL=https://seu-dominio.com/baileys
 
 # Webhook (interno via Kong)
@@ -352,7 +348,6 @@ x-api-key: sua-api-key
 | Modo | Conexões WhatsApp | Mensagens/dia |
 |------|-------------------|---------------|
 | Baileys (único) | 5-10 | ~20.000 |
-| Multi-Engine | 10-20 | ~50.000 |
 
 *Valores aproximados, dependem do hardware e uso.*
 

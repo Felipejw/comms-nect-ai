@@ -15,10 +15,8 @@ interface CampaignResult {
   completed: boolean;
 }
 
-// Helper function to sleep
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-// Helper function to substitute variables in message
 function substituteVariables(message: string, contact: { name?: string; phone?: string }): string {
   let result = message;
   result = result.replace(/\{\{nome\}\}/gi, contact.name || 'Cliente');
@@ -26,9 +24,7 @@ function substituteVariables(message: string, contact: { name?: string; phone?: 
   return result;
 }
 
-// Calculate next retry time with exponential backoff
 function getNextRetryTime(retryCount: number): Date {
-  // 5 min, 15 min, 45 min
   const delayMinutes = Math.pow(3, retryCount) * 5;
   const nextRetry = new Date();
   nextRetry.setMinutes(nextRetry.getMinutes() + delayMinutes);
@@ -43,14 +39,36 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL")!;
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY")!;
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
     console.log("Starting campaign execution...");
 
-    // Get active campaigns that are scheduled to run (or have no schedule)
+    // Load Baileys config from system_settings
+    const { data: urlSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: keySetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = urlSetting?.value;
+    const baileysApiKey = keySetting?.value;
+
+    if (!baileysUrl) {
+      console.error("Baileys server URL not configured");
+      return new Response(
+        JSON.stringify({ success: false, error: "Baileys server URL not configured" }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Get active campaigns
     const { data: campaigns, error: campaignsError } = await supabase
       .from("campaigns")
       .select("*")
@@ -90,19 +108,22 @@ Deno.serve(async (req) => {
       );
     }
 
-    const instanceName = connection.session_data?.instanceName || connection.name;
-    console.log(`Using WhatsApp instance: ${instanceName}`);
+    const sessionData = connection.session_data as Record<string, unknown> | null;
+    const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
+    console.log(`Using WhatsApp session: ${sessionName}`);
 
-    // Verify connection is actually connected
+    // Verify connection is actually connected via Baileys
     try {
-      const statusCheck = await fetch(`${evolutionApiUrl}/instance/connectionState/${instanceName}`, {
-        headers: { "apikey": evolutionApiKey }
+      const healthHeaders: Record<string, string> = {};
+      if (baileysApiKey) healthHeaders["X-API-Key"] = baileysApiKey;
+      
+      const statusCheck = await fetch(`${baileysUrl}/sessions/${sessionName}/status`, {
+        headers: healthHeaders,
       });
       const statusResult = await statusCheck.json();
-      const connectionState = statusResult?.instance?.state || statusResult?.state;
       
-      if (connectionState !== 'open') {
-        console.log(`Instance ${instanceName} is not connected (state: ${connectionState})`);
+      if (!statusResult.success || statusResult.data?.status !== 'connected') {
+        console.log(`Session ${sessionName} is not connected:`, statusResult);
         await supabase.from("connections").update({ status: 'disconnected' }).eq("id", connection.id);
         
         return new Response(
@@ -114,24 +135,25 @@ Deno.serve(async (req) => {
       console.error("Error checking connection status:", statusError);
     }
 
+    const baileysHeaders: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (baileysApiKey) baileysHeaders["X-API-Key"] = baileysApiKey;
+
     const results: CampaignResult[] = [];
 
     for (const campaign of campaigns) {
       console.log(`Processing campaign: ${campaign.name} (${campaign.id})`);
 
-      // Get campaign settings
       const minInterval = campaign.min_interval || 30;
       const maxInterval = campaign.max_interval || 60;
       const useVariations = campaign.use_variations || false;
       const messageVariations = campaign.message_variations || [];
 
-      // Get pending contacts for this campaign (limit to 10 per execution to avoid timeout)
+      // Get pending contacts (limit to 10 per execution to avoid timeout)
       const { data: pendingContacts, error: contactsError } = await supabase
         .from("campaign_contacts")
-        .select(`
-          *,
-          contact:contacts (id, name, phone, whatsapp_lid)
-        `)
+        .select(`*, contact:contacts (id, name, phone, whatsapp_lid)`)
         .eq("campaign_id", campaign.id)
         .eq("status", "pending")
         .limit(10);
@@ -141,13 +163,10 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      // Get contacts for retry (failed with retry_count < 3 and next_retry_at in the past or null)
+      // Get contacts for retry
       const { data: retryContacts, error: retryError } = await supabase
         .from("campaign_contacts")
-        .select(`
-          *,
-          contact:contacts (id, name, phone, whatsapp_lid)
-        `)
+        .select(`*, contact:contacts (id, name, phone, whatsapp_lid)`)
         .eq("campaign_id", campaign.id)
         .eq("status", "failed")
         .lt("retry_count", 3)
@@ -158,15 +177,11 @@ Deno.serve(async (req) => {
         console.error(`Error fetching retry contacts for campaign ${campaign.id}:`, retryError);
       }
 
-      const allContacts = [
-        ...(pendingContacts || []),
-        ...(retryContacts || [])
-      ];
+      const allContacts = [...(pendingContacts || []), ...(retryContacts || [])];
 
       if (allContacts.length === 0) {
         console.log(`No pending or retry contacts for campaign ${campaign.id}`);
         
-        // Check if all contacts have been processed
         const { count: remainingCount } = await supabase
           .from("campaign_contacts")
           .select("id", { count: "exact", head: true })
@@ -174,21 +189,11 @@ Deno.serve(async (req) => {
           .or("status.eq.pending,and(status.eq.failed,retry_count.lt.3)");
 
         if (remainingCount === 0) {
-          // Mark campaign as completed
-          await supabase
-            .from("campaigns")
-            .update({ status: "completed" })
-            .eq("id", campaign.id);
-          
+          await supabase.from("campaigns").update({ status: "completed" }).eq("id", campaign.id);
           console.log(`Campaign ${campaign.id} marked as completed`);
           results.push({
-            campaign_id: campaign.id,
-            campaign_name: campaign.name,
-            processed: 0,
-            sent: 0,
-            failed: 0,
-            retried: 0,
-            completed: true
+            campaign_id: campaign.id, campaign_name: campaign.name,
+            processed: 0, sent: 0, failed: 0, retried: 0, completed: true
           });
         }
         continue;
@@ -202,26 +207,17 @@ Deno.serve(async (req) => {
         const contact = campaignContact.contact;
         const isRetry = campaignContact.status === "failed";
         
-        if (isRetry) {
-          retriedCount++;
-          console.log(`Retrying contact ${contact?.id} (attempt ${(campaignContact.retry_count || 0) + 1})`);
-        }
+        if (isRetry) retriedCount++;
         
         if (!contact) {
-          console.log(`Contact not found for campaign_contact ${campaignContact.id}`);
-          await supabase
-            .from("campaign_contacts")
-            .update({ 
-              status: "failed",
-              last_error: "Contact not found",
-              retry_count: 3 // Don't retry
-            })
-            .eq("id", campaignContact.id);
+          await supabase.from("campaign_contacts").update({ 
+            status: "failed", last_error: "Contact not found", retry_count: 3
+          }).eq("id", campaignContact.id);
           failedCount++;
           continue;
         }
 
-        // Determine phone number to use
+        // Determine phone number to use (supports LID via Baileys)
         const phone = contact.phone;
         const whatsappLid = contact.whatsapp_lid;
         
@@ -240,15 +236,9 @@ Deno.serve(async (req) => {
         }
 
         if (!phoneToSend) {
-          console.log(`No valid phone for contact ${contact.id}`);
-          await supabase
-            .from("campaign_contacts")
-            .update({ 
-              status: "failed",
-              last_error: "No valid phone number",
-              retry_count: 3 // Don't retry
-            })
-            .eq("id", campaignContact.id);
+          await supabase.from("campaign_contacts").update({ 
+            status: "failed", last_error: "No valid phone number", retry_count: 3
+          }).eq("id", campaignContact.id);
           failedCount++;
           continue;
         }
@@ -261,109 +251,81 @@ Deno.serve(async (req) => {
           formattedNumber = "55" + formattedNumber;
         }
 
-        // Select message content (use variation if enabled)
+        // Select message content
         let baseMessage = campaign.message;
         if (useVariations && messageVariations.length > 0) {
           const allMessages = [campaign.message, ...messageVariations.filter(Boolean)];
           baseMessage = allMessages[Math.floor(Math.random() * allMessages.length)];
         }
 
-        // Substitute variables in message
         const messageContent = substituteVariables(baseMessage, {
-          name: contact.name,
-          phone: contact.phone
+          name: contact.name, phone: contact.phone
         });
 
         console.log(`Sending to ${formattedNumber}: ${messageContent.substring(0, 50)}...`);
 
         try {
-          // Send text message
-          let evolutionResponse;
+          let baileysResponse;
           
           if (campaign.media_url) {
-            // Determine media type
             const mediaType = campaign.media_type || "image";
             
-            // Send with media
-            evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendMedia/${instanceName}`, {
+            baileysResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/send/media`, {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "apikey": evolutionApiKey,
-              },
+              headers: baileysHeaders,
               body: JSON.stringify({
-                number: formattedNumber,
-                mediatype: mediaType,
-                media: campaign.media_url,
+                to: formattedNumber,
+                mediaUrl: campaign.media_url,
                 caption: messageContent,
+                mediaType,
               }),
             });
           } else {
-            // Send text only
-            evolutionResponse = await fetch(`${evolutionApiUrl}/message/sendText/${instanceName}`, {
+            baileysResponse = await fetch(`${baileysUrl}/sessions/${sessionName}/send/text`, {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "apikey": evolutionApiKey,
-              },
+              headers: baileysHeaders,
               body: JSON.stringify({
-                number: formattedNumber,
+                to: formattedNumber,
                 text: messageContent,
               }),
             });
           }
 
-          const evolutionResult = await evolutionResponse.json();
-          console.log(`Evolution response for ${formattedNumber}:`, JSON.stringify(evolutionResult).substring(0, 200));
+          const baileysResult = await baileysResponse.json();
+          console.log(`Baileys response for ${formattedNumber}:`, JSON.stringify(baileysResult).substring(0, 200));
 
-          if (evolutionResponse.ok) {
-            // Update campaign_contact as sent
-            await supabase
-              .from("campaign_contacts")
-              .update({ 
-                status: "sent",
-                sent_at: new Date().toISOString(),
-                last_error: null,
-                next_retry_at: null
-              })
-              .eq("id", campaignContact.id);
+          if (baileysResponse.ok && baileysResult.success) {
+            await supabase.from("campaign_contacts").update({ 
+              status: "sent", sent_at: new Date().toISOString(),
+              last_error: null, next_retry_at: null
+            }).eq("id", campaignContact.id);
             sentCount++;
-            console.log(`Message sent to ${formattedNumber}`);
           } else {
-            // Mark as failed with error details
-            const errorMessage = evolutionResult?.message || evolutionResult?.error || "Unknown error";
+            const errorMessage = baileysResult?.error || baileysResult?.message || "Unknown error";
             const currentRetryCount = (campaignContact.retry_count || 0) + 1;
             
-            await supabase
-              .from("campaign_contacts")
-              .update({ 
-                status: "failed",
-                last_error: errorMessage.substring(0, 500),
-                retry_count: currentRetryCount,
-                next_retry_at: currentRetryCount < 3 ? getNextRetryTime(currentRetryCount).toISOString() : null
-              })
-              .eq("id", campaignContact.id);
+            await supabase.from("campaign_contacts").update({ 
+              status: "failed",
+              last_error: String(errorMessage).substring(0, 500),
+              retry_count: currentRetryCount,
+              next_retry_at: currentRetryCount < 3 ? getNextRetryTime(currentRetryCount).toISOString() : null
+            }).eq("id", campaignContact.id);
             failedCount++;
-            console.log(`Failed to send to ${formattedNumber}: ${errorMessage}`);
           }
         } catch (sendError) {
           console.error(`Error sending to ${formattedNumber}:`, sendError);
           const errorMessage = sendError instanceof Error ? sendError.message : "Network error";
           const currentRetryCount = (campaignContact.retry_count || 0) + 1;
           
-          await supabase
-            .from("campaign_contacts")
-            .update({ 
-              status: "failed",
-              last_error: errorMessage.substring(0, 500),
-              retry_count: currentRetryCount,
-              next_retry_at: currentRetryCount < 3 ? getNextRetryTime(currentRetryCount).toISOString() : null
-            })
-            .eq("id", campaignContact.id);
+          await supabase.from("campaign_contacts").update({ 
+            status: "failed",
+            last_error: errorMessage.substring(0, 500),
+            retry_count: currentRetryCount,
+            next_retry_at: currentRetryCount < 3 ? getNextRetryTime(currentRetryCount).toISOString() : null
+          }).eq("id", campaignContact.id);
           failedCount++;
         }
 
-        // Use configurable delay between messages
         const delay = (minInterval + Math.random() * (maxInterval - minInterval)) * 1000;
         console.log(`Waiting ${Math.round(delay)}ms before next message...`);
         await sleep(delay);
@@ -376,13 +338,10 @@ Deno.serve(async (req) => {
         .eq("id", campaign.id)
         .single();
 
-      await supabase
-        .from("campaigns")
-        .update({ 
-          sent_count: (currentCampaign?.sent_count || 0) + sentCount,
-          failed_count: (currentCampaign?.failed_count || 0) + failedCount
-        })
-        .eq("id", campaign.id);
+      await supabase.from("campaigns").update({ 
+        sent_count: (currentCampaign?.sent_count || 0) + sentCount,
+        failed_count: (currentCampaign?.failed_count || 0) + failedCount
+      }).eq("id", campaign.id);
 
       // Check if campaign is now complete
       const { count: remainingPending } = await supabase
@@ -394,21 +353,14 @@ Deno.serve(async (req) => {
       const isCompleted = remainingPending === 0;
       
       if (isCompleted) {
-        await supabase
-          .from("campaigns")
-          .update({ status: "completed" })
-          .eq("id", campaign.id);
+        await supabase.from("campaigns").update({ status: "completed" }).eq("id", campaign.id);
         console.log(`Campaign ${campaign.id} completed!`);
       }
 
       results.push({
-        campaign_id: campaign.id,
-        campaign_name: campaign.name,
-        processed: allContacts.length,
-        sent: sentCount,
-        failed: failedCount,
-        retried: retriedCount,
-        completed: isCompleted
+        campaign_id: campaign.id, campaign_name: campaign.name,
+        processed: allContacts.length, sent: sentCount, failed: failedCount,
+        retried: retriedCount, completed: isCompleted
       });
     }
 
