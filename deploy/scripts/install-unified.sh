@@ -202,33 +202,89 @@ collect_user_info() {
     log_success "Credenciais do admin geradas"
 }
 
-# Gerar chaves JWT
+# Gerar chaves JWT válidas usando Python3 (disponível em toda VPS Ubuntu)
 generate_jwt_keys() {
     log_step "Gerando Chaves JWT"
     
-    ANON_KEY=$(node -e "
-        const jwt = require('jsonwebtoken');
-        const payload = {
-            role: 'anon',
-            iss: 'supabase',
-            iat: Math.floor(Date.now() / 1000),
-            exp: Math.floor(Date.now() / 1000) + (10 * 365 * 24 * 60 * 60)
-        };
-        console.log(jwt.sign(payload, '$JWT_SECRET'));
-    " 2>/dev/null) || ANON_KEY=$(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | head -c 64)
+    # Função Python para gerar JWT HS256 válido
+    generate_jwt_python() {
+        local role="$1"
+        local secret="$2"
+        python3 -c "
+import hmac, hashlib, base64, json, time
+
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b'=').decode()
+
+now = int(time.time())
+exp = now + (10 * 365 * 24 * 60 * 60)  # 10 anos
+
+header = b64url(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode())
+payload = b64url(json.dumps({
+    'role': '${role}',
+    'iss': 'supabase',
+    'iat': now,
+    'exp': exp
+}).encode())
+
+signing_input = (header + '.' + payload).encode()
+signature = b64url(hmac.new('${secret}'.encode(), signing_input, hashlib.sha256).digest())
+
+print(header + '.' + payload + '.' + signature)
+" 2>/dev/null
+    }
     
-    SERVICE_ROLE_KEY=$(node -e "
-        const jwt = require('jsonwebtoken');
-        const payload = {
-            role: 'service_role',
-            iss: 'supabase',
-            iat: Math.floor(Date.now() / 1000),
-            exp: Math.floor(Date.now() / 1000) + (10 * 365 * 24 * 60 * 60)
-        };
-        console.log(jwt.sign(payload, '$JWT_SECRET'));
-    " 2>/dev/null) || SERVICE_ROLE_KEY=$(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | head -c 64)
+    # Fallback: gerar JWT usando Docker com Node.js
+    generate_jwt_docker() {
+        local role="$1"
+        local secret="$2"
+        docker run --rm node:18-alpine node -e "
+const crypto = require('crypto');
+function b64url(str) { return Buffer.from(str).toString('base64url'); }
+const now = Math.floor(Date.now() / 1000);
+const header = b64url(JSON.stringify({alg:'HS256',typ:'JWT'}));
+const payload = b64url(JSON.stringify({role:'${role}',iss:'supabase',iat:now,exp:now+(10*365*24*60*60)}));
+const sig = crypto.createHmac('sha256','${secret}').update(header+'.'+payload).digest('base64url');
+console.log(header+'.'+payload+'.'+sig);
+" 2>/dev/null
+    }
     
-    log_success "Chaves JWT geradas"
+    # Tentar Python3 primeiro, depois Docker como fallback
+    if command -v python3 &> /dev/null; then
+        log_info "Gerando JWTs com Python3..."
+        ANON_KEY=$(generate_jwt_python "anon" "$JWT_SECRET")
+        SERVICE_ROLE_KEY=$(generate_jwt_python "service_role" "$JWT_SECRET")
+    else
+        log_info "Python3 não encontrado. Usando Docker para gerar JWTs..."
+        ANON_KEY=$(generate_jwt_docker "anon" "$JWT_SECRET")
+        SERVICE_ROLE_KEY=$(generate_jwt_docker "service_role" "$JWT_SECRET")
+    fi
+    
+    # Validar que as chaves são JWTs válidos (formato: xxx.yyy.zzz)
+    validate_jwt() {
+        local key="$1"
+        local name="$2"
+        if [ -z "$key" ]; then
+            log_error "Falha ao gerar $name - chave vazia"
+            return 1
+        fi
+        local dot_count=$(echo "$key" | tr -cd '.' | wc -c)
+        if [ "$dot_count" -ne 2 ]; then
+            log_error "Falha ao gerar $name - formato inválido (esperado JWT com 2 pontos, obteve $dot_count)"
+            return 1
+        fi
+        return 0
+    }
+    
+    if ! validate_jwt "$ANON_KEY" "ANON_KEY" || ! validate_jwt "$SERVICE_ROLE_KEY" "SERVICE_ROLE_KEY"; then
+        log_error "Não foi possível gerar chaves JWT válidas."
+        log_error "Certifique-se de que Python3 ou Docker estão instalados."
+        exit 1
+    fi
+    
+    log_success "ANON_KEY gerada: ${ANON_KEY:0:20}..."
+    log_success "SERVICE_ROLE_KEY gerada: ${SERVICE_ROLE_KEY:0:20}..."
+    log_success "Chaves JWT válidas geradas com sucesso"
 }
 
 # Criar arquivo .env
@@ -523,15 +579,30 @@ start_services() {
     log_info "Iniciando containers Docker..."
     docker compose --profile baileys up -d
     
-    log_info "Aguardando serviços iniciarem..."
-    sleep 30
+    log_info "Aguardando containers iniciarem..."
     
-    services=("supabase-db" "supabase-auth" "supabase-rest" "supabase-kong" "baileys-server" "app-nginx")
+    # Verificação ativa em vez de sleep fixo
+    local max_wait=60
+    local waited=0
+    while [ $waited -lt $max_wait ]; do
+        local running=$(docker compose --profile baileys ps --format '{{.State}}' 2>/dev/null | grep -c "running" || echo "0")
+        if [ "$running" -ge 5 ]; then
+            break
+        fi
+        sleep 5
+        waited=$((waited + 5))
+        log_info "Aguardando containers... ($waited/${max_wait}s, $running rodando)"
+    done
+    
+    echo ""
+    log_info "Status dos containers:"
+    services=("supabase-db" "supabase-auth" "supabase-rest" "supabase-kong" "supabase-functions" "supabase-storage" "baileys-server" "app-nginx")
     for service in "${services[@]}"; do
-        if docker ps --format '{{.Names}}' | grep -q "^${service}$"; then
-            log_success "$service: Rodando"
+        local status=$(docker inspect --format='{{.State.Status}}' "$service" 2>/dev/null || echo "not found")
+        if [ "$status" = "running" ]; then
+            log_success "$service: $status"
         else
-            log_warn "$service: Não encontrado ou não iniciou"
+            log_warn "$service: $status"
         fi
     done
 }
@@ -559,30 +630,66 @@ wait_for_database() {
     return 1
 }
 
-# Aguardar GoTrue (Auth) ficar pronto
+# Aguardar GoTrue (Auth) ficar pronto - verifica diretamente na porta 9999
 wait_for_auth() {
-    log_step "Aguardando Serviço de Autenticação"
+    log_step "Aguardando Serviço de Autenticação (GoTrue)"
     
-    local max_attempts=20
+    local max_attempts=30
     local attempt=0
     
     while [ $attempt -lt $max_attempts ]; do
         attempt=$((attempt + 1))
         
-        # Tentar via Kong (porta 8000)
+        # Verificar GoTrue diretamente na porta 9999 (não via Kong)
         local health_code
-        health_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+        health_code=$(docker exec supabase-auth wget -q -O /dev/null --spider "http://localhost:9999/health" 2>&1 && echo "200" || echo "000")
         
         if [ "$health_code" = "200" ]; then
-            log_success "Serviço de autenticação está pronto (tentativa $attempt/$max_attempts)"
-            return 0
+            log_success "GoTrue (Auth) está pronto (tentativa $attempt/$max_attempts)"
+            break
         fi
         
-        log_info "Aguardando autenticação... ($attempt/$max_attempts) [HTTP $health_code]"
+        log_info "Aguardando GoTrue... ($attempt/$max_attempts)"
         sleep 5
     done
     
-    log_warn "Serviço de autenticação pode não estar pronto. Continuando..."
+    if [ "$health_code" != "200" ]; then
+        log_error "GoTrue não ficou pronto após $max_attempts tentativas"
+        log_error "=== Logs do GoTrue (últimas 30 linhas) ==="
+        docker logs supabase-auth --tail 30 2>&1 || true
+        echo ""
+        log_error "=== Status dos containers ==="
+        docker ps -a --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+        return 1
+    fi
+    
+    # Agora verificar se Kong está acessível na porta 8000
+    log_info "Verificando Kong API Gateway (porta 8000)..."
+    local kong_attempts=0
+    local kong_max=15
+    
+    while [ $kong_attempts -lt $kong_max ]; do
+        kong_attempts=$((kong_attempts + 1))
+        
+        local kong_code
+        kong_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+        
+        if [ "$kong_code" = "200" ]; then
+            log_success "Kong API Gateway está pronto (tentativa $kong_attempts/$kong_max)"
+            return 0
+        fi
+        
+        log_info "Aguardando Kong... ($kong_attempts/$kong_max) [HTTP $kong_code]"
+        sleep 3
+    done
+    
+    log_error "Kong não ficou pronto na porta 8000"
+    log_error "=== Logs do Kong (últimas 20 linhas) ==="
+    docker logs supabase-kong --tail 20 2>&1 || true
+    echo ""
+    log_error "=== Logs do Functions (últimas 10 linhas) ==="
+    docker logs supabase-functions --tail 10 2>&1 || true
+    log_warn "Continuando instalação apesar do Kong não estar pronto..."
     return 1
 }
 
