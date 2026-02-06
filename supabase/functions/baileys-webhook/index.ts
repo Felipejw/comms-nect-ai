@@ -527,6 +527,22 @@ Deno.serve(async (req) => {
       } else {
         console.log(`[Baileys Webhook] ✅ Message saved for conversation: ${conversation.id}`);
 
+        // Log received message activity
+        await supabaseClient.from("activity_logs").insert({
+          tenant_id: connection.tenant_id,
+          action: "receive_message",
+          entity_type: "message",
+          entity_id: conversation.id,
+          metadata: {
+            contact_name: contact.name,
+            contact_id: contact.id,
+            message_type: messageType,
+            is_lid: isLid,
+          },
+        }).then(({ error: logErr }: { error: { message: string } | null }) => {
+          if (logErr) console.error("[ActivityLog] Error:", logErr.message);
+        });
+
         // Trigger background LID resolution if this is a LID contact without a phone
         if (isLid && contact.id && !contact.phone) {
           EdgeRuntime.waitUntil(

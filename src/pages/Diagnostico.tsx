@@ -10,11 +10,15 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   RefreshCw, Server, Database, Wifi, WifiOff, CheckCircle2, XCircle,
-  AlertTriangle, Activity, Clock, Users, FileText,
+  AlertTriangle, Activity, Clock, Users, FileText, ChevronLeft, ChevronRight,
+  Filter,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { format } from "date-fns";
+import { format, subDays, subHours } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 interface BaileysHealthResponse {
@@ -36,9 +40,54 @@ interface ConnectionStatus {
   session_data: Record<string, unknown> | null;
 }
 
+const ACTION_LABELS: Record<string, string> = {
+  create: "Criou",
+  update: "Atualizou",
+  delete: "Excluiu",
+  login: "Login",
+  logout: "Logout",
+  send_message: "Enviou mensagem",
+  receive_message: "Recebeu mensagem",
+  execute_campaign: "Executou campanha",
+  execute_flow: "Executou fluxo",
+  reset_password: "Redefiniu senha",
+};
+
+const ENTITY_LABELS: Record<string, string> = {
+  contact: "Contato",
+  conversation: "Conversa",
+  message: "Mensagem",
+  user: "Usuário",
+  campaign: "Campanha",
+  connection: "Conexão",
+  tag: "Tag",
+  queue: "Fila",
+  quick_reply: "Resposta rápida",
+  chatbot_rule: "Regra chatbot",
+  chatbot_flow: "Fluxo chatbot",
+  session: "Sessão",
+};
+
+const PERIOD_OPTIONS = [
+  { value: "24h", label: "Últimas 24h" },
+  { value: "7d", label: "Últimos 7 dias" },
+  { value: "30d", label: "Últimos 30 dias" },
+];
+
+const PAGE_SIZE = 50;
+
 export default function Diagnostico() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+
+  // Activity log filters
+  const [actionFilter, setActionFilter] = useState("all");
+  const [entityFilter, setEntityFilter] = useState("all");
+  const [periodFilter, setPeriodFilter] = useState("7d");
+  const [currentPage, setCurrentPage] = useState(0);
+
+  // Reset page when filters change
+  useEffect(() => { setCurrentPage(0); }, [actionFilter, entityFilter, periodFilter]);
 
   // Fetch Baileys server health
   const {
@@ -95,71 +144,78 @@ export default function Diagnostico() {
     refetchInterval: autoRefresh ? 30000 : false,
   });
 
-  // Fetch activity logs
+  // Compute period date
+  const getPeriodDate = () => {
+    const now = new Date();
+    switch (periodFilter) {
+      case "24h": return subHours(now, 24);
+      case "7d": return subDays(now, 7);
+      case "30d": return subDays(now, 30);
+      default: return subDays(now, 7);
+    }
+  };
+
+  // Fetch activity logs with filters and pagination
   const {
-    data: activityLogs,
+    data: activityLogsData,
     isLoading: isLoadingLogs,
     refetch: refetchLogs,
   } = useQuery({
-    queryKey: ["activity-logs-diagnostic"],
+    queryKey: ["activity-logs-diagnostic", actionFilter, entityFilter, periodFilter, currentPage],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("activity_logs")
-        .select("id, action, entity_type, entity_id, metadata, created_at, user_id, ip_address")
+        .select("id, action, entity_type, entity_id, metadata, created_at, user_id, ip_address", { count: "exact" })
+        .gte("created_at", getPeriodDate().toISOString())
         .order("created_at", { ascending: false })
-        .limit(50);
-      
+        .range(currentPage * PAGE_SIZE, (currentPage + 1) * PAGE_SIZE - 1);
+
+      if (actionFilter !== "all") {
+        query = query.eq("action", actionFilter);
+      }
+      if (entityFilter !== "all") {
+        query = query.eq("entity_type", entityFilter);
+      }
+
+      const { data, error, count } = await query;
       if (error) throw error;
-      
+
       const userIds = [...new Set(data?.map(log => log.user_id).filter(Boolean))];
       let userNames: Record<string, string> = {};
-      
+
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
           .from("profiles")
           .select("user_id, name")
           .in("user_id", userIds);
-        
         profiles?.forEach(p => { userNames[p.user_id] = p.name; });
       }
-      
-      return data?.map(log => ({
+
+      const logs = data?.map(log => ({
         ...log,
         userName: log.user_id ? (userNames[log.user_id] || "Usuário desconhecido") : "Sistema",
       })) || [];
+
+      return { logs, totalCount: count || 0 };
     },
     refetchInterval: autoRefresh ? 30000 : false,
   });
 
+  const activityLogs = activityLogsData?.logs || [];
+  const totalCount = activityLogsData?.totalCount || 0;
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+
   useEffect(() => {
-    if (healthData || dbStatus || connections || activityLogs) {
+    if (healthData || dbStatus || connections || activityLogsData) {
       setLastRefresh(new Date());
     }
-  }, [healthData, dbStatus, connections, activityLogs]);
+  }, [healthData, dbStatus, connections, activityLogsData]);
 
   const handleRefresh = () => {
     refetchHealth();
     refetchDb();
     refetchConnections();
     refetchLogs();
-  };
-
-  const getActionLabel = (action: string) => {
-    const actionMap: Record<string, string> = {
-      create: "Criou", update: "Atualizou", delete: "Excluiu",
-      login: "Login", logout: "Logout",
-      send_message: "Enviou mensagem", receive_message: "Recebeu mensagem",
-    };
-    return actionMap[action] || action;
-  };
-
-  const getEntityLabel = (entityType: string) => {
-    const entityMap: Record<string, string> = {
-      conversation: "Conversa", contact: "Contato", message: "Mensagem",
-      user: "Usuário", campaign: "Campanha", connection: "Conexão",
-      tag: "Tag", queue: "Fila",
-    };
-    return entityMap[entityType] || entityType;
   };
 
   const hasError = (metadata: unknown): { hasError: boolean; errorMessage: string | null } => {
@@ -183,6 +239,20 @@ export default function Diagnostico() {
     }
   };
 
+  const getMetadataSummary = (metadata: unknown): string => {
+    if (!metadata || typeof metadata !== 'object') return '';
+    const meta = metadata as Record<string, unknown>;
+    const parts: string[] = [];
+    if (meta.name) parts.push(String(meta.name));
+    if (meta.contact_name) parts.push(String(meta.contact_name));
+    if (meta.email) parts.push(String(meta.email));
+    if (meta.campaign_name) parts.push(String(meta.campaign_name));
+    if (meta.old_status && meta.new_status) parts.push(`${meta.old_status} → ${meta.new_status}`);
+    if (meta.sent !== undefined) parts.push(`${meta.sent} enviadas`);
+    if (meta.failed !== undefined && Number(meta.failed) > 0) parts.push(`${meta.failed} falhas`);
+    return parts.join(' · ');
+  };
+
   const baileysOnline = healthData?.data?.status === "ok";
   const connectedCount = connections?.filter((c) => c.status === "connected").length || 0;
   const totalConnections = connections?.length || 0;
@@ -193,6 +263,10 @@ export default function Diagnostico() {
     if (!baileysOnline || !dbStatus?.healthy) return "degraded";
     return "healthy";
   })();
+
+  // Collect unique action and entity values for filter dropdowns
+  const actionOptions = Object.keys(ACTION_LABELS);
+  const entityOptions = Object.keys(ENTITY_LABELS);
 
   return (
     <div className="container mx-auto p-6 space-y-6">
@@ -309,31 +383,23 @@ export default function Diagnostico() {
           </CardContent>
         </Card>
 
-        {/* WhatsApp Connections */}
+        {/* Activity Count */}
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Conexões WhatsApp</p>
-                {isLoadingConnections ? (
+                <p className="text-sm font-medium text-muted-foreground">Atividades Recentes</p>
+                {isLoadingLogs ? (
                   <Skeleton className="h-8 w-16" />
                 ) : (
-                  <p className="text-2xl font-bold">
-                    <span className="text-green-500">{connectedCount}</span>
-                    <span className="text-muted-foreground mx-1">/</span>
-                    <span>{totalConnections}</span>
-                  </p>
+                  <p className="text-2xl font-bold">{totalCount}</p>
                 )}
               </div>
-              {connectedCount === totalConnections && totalConnections > 0 ? (
-                <Wifi className="w-8 h-8 text-green-500" />
-              ) : (
-                <WifiOff className="w-8 h-8 text-yellow-500" />
-              )}
+              <FileText className="w-8 h-8 text-muted-foreground" />
             </div>
-            {totalConnections > 0 && (
-              <Progress value={(connectedCount / totalConnections) * 100} className="mt-3 h-2" />
-            )}
+            <p className="text-xs text-muted-foreground mt-2">
+              {PERIOD_OPTIONS.find(p => p.value === periodFilter)?.label || "Últimos 7 dias"}
+            </p>
           </CardContent>
         </Card>
       </div>
@@ -348,9 +414,7 @@ export default function Diagnostico() {
         </CardHeader>
         <CardContent>
           {isLoadingHealth ? (
-            <div className="space-y-4">
-              <Skeleton className="h-20 w-full" />
-            </div>
+            <Skeleton className="h-20 w-full" />
           ) : healthError ? (
             <div className="text-center py-8 text-muted-foreground">
               <XCircle className="w-12 h-12 mx-auto mb-4 text-red-500" />
@@ -371,7 +435,7 @@ export default function Diagnostico() {
               </p>
             </div>
           ) : (
-            <div className={cn("p-4 rounded-lg border border-green-500/20 bg-green-500/5")}>
+            <div className="p-4 rounded-lg border border-green-500/20 bg-green-500/5">
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
                   <div className="w-3 h-3 rounded-full bg-green-500 animate-pulse" />
@@ -454,10 +518,50 @@ export default function Diagnostico() {
       {/* Activity Logs */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="w-5 h-5" />
-            Log de Atividades
-          </CardTitle>
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+            <CardTitle className="flex items-center gap-2">
+              <FileText className="w-5 h-5" />
+              Log de Atividades
+              {totalCount > 0 && (
+                <Badge variant="secondary" className="ml-2">{totalCount}</Badge>
+              )}
+            </CardTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <Filter className="w-4 h-4 text-muted-foreground" />
+              <Select value={actionFilter} onValueChange={setActionFilter}>
+                <SelectTrigger className="w-[160px] h-8 text-xs">
+                  <SelectValue placeholder="Ação" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as ações</SelectItem>
+                  {actionOptions.map(key => (
+                    <SelectItem key={key} value={key}>{ACTION_LABELS[key]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={entityFilter} onValueChange={setEntityFilter}>
+                <SelectTrigger className="w-[160px] h-8 text-xs">
+                  <SelectValue placeholder="Entidade" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todas as entidades</SelectItem>
+                  {entityOptions.map(key => (
+                    <SelectItem key={key} value={key}>{ENTITY_LABELS[key]}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={periodFilter} onValueChange={setPeriodFilter}>
+                <SelectTrigger className="w-[140px] h-8 text-xs">
+                  <SelectValue placeholder="Período" />
+                </SelectTrigger>
+                <SelectContent>
+                  {PERIOD_OPTIONS.map(opt => (
+                    <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoadingLogs ? (
@@ -466,77 +570,91 @@ export default function Diagnostico() {
                 <Skeleton key={i} className="h-12 w-full" />
               ))}
             </div>
-          ) : !activityLogs || activityLogs.length === 0 ? (
+          ) : activityLogs.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <FileText className="w-12 h-12 mx-auto mb-4" />
-              <p>Nenhuma atividade registrada</p>
+              <p>Nenhuma atividade registrada{actionFilter !== "all" || entityFilter !== "all" ? " com os filtros selecionados" : ""}</p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[180px]">Data/Hora</TableHead>
-                    <TableHead>Usuário</TableHead>
-                    <TableHead>Ação</TableHead>
-                    <TableHead>Entidade</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Detalhes</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {activityLogs.map((log) => {
-                    const errorInfo = hasError(log.metadata);
-                    return (
-                      <TableRow key={log.id}>
-                        <TableCell className="font-mono text-sm">
-                          {format(new Date(log.created_at), "dd/MM/yyyy HH:mm:ss", { locale: ptBR })}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{log.userName}</span>
-                            {log.ip_address && (
-                              <span className="text-xs text-muted-foreground">{log.ip_address}</span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>{getActionLabel(log.action)}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-col">
-                            <span>{getEntityLabel(log.entity_type)}</span>
-                            {log.entity_id && (
-                              <span className="text-xs text-muted-foreground font-mono truncate max-w-[120px]">
-                                {log.entity_id}
-                              </span>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          {errorInfo.hasError ? (
-                            <Badge className="bg-red-500/10 text-red-500 border-red-500/20">
-                              <XCircle className="w-3 h-3 mr-1" />
-                              Erro
+            <>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-[160px]">Data/Hora</TableHead>
+                      <TableHead>Usuário</TableHead>
+                      <TableHead>Ação</TableHead>
+                      <TableHead>Entidade</TableHead>
+                      <TableHead>Detalhes</TableHead>
+                      <TableHead className="w-[80px]">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {activityLogs.map((log) => {
+                      const errorInfo = hasError(log.metadata);
+                      const summary = getMetadataSummary(log.metadata);
+                      return (
+                        <TableRow key={log.id}>
+                          <TableCell className="font-mono text-xs">
+                            {format(new Date(log.created_at), "dd/MM/yy HH:mm:ss", { locale: ptBR })}
+                          </TableCell>
+                          <TableCell>
+                            <span className="font-medium text-sm">{log.userName}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="outline" className="text-xs">
+                              {ACTION_LABELS[log.action] || log.action}
                             </Badge>
-                          ) : (
-                            <Badge className="bg-green-500/10 text-green-500 border-green-500/20">
-                              <CheckCircle2 className="w-3 h-3 mr-1" />
-                              OK
-                            </Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {errorInfo.hasError && errorInfo.errorMessage && (
-                            <span className="text-sm text-red-500 max-w-[200px] truncate block">
-                              {errorInfo.errorMessage}
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm">{ENTITY_LABELS[log.entity_type] || log.entity_type}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="text-sm text-muted-foreground max-w-[250px] truncate block">
+                              {errorInfo.hasError ? errorInfo.errorMessage : summary}
                             </span>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                          </TableCell>
+                          <TableCell>
+                            {errorInfo.hasError ? (
+                              <XCircle className="w-4 h-4 text-red-500" />
+                            ) : (
+                              <CheckCircle2 className="w-4 h-4 text-green-500" />
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                  <p className="text-sm text-muted-foreground">
+                    Página {currentPage + 1} de {totalPages} · {totalCount} registros
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                      disabled={currentPage === 0}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages - 1, p + 1))}
+                      disabled={currentPage >= totalPages - 1}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

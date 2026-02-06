@@ -120,6 +120,24 @@ serve(async (req) => {
       }
     }
 
+    // Log activity
+    if (data.user) {
+      const { data: callerProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('tenant_id')
+        .eq('user_id', callerUser.id)
+        .single();
+
+      await supabaseAdmin.from('activity_logs').insert({
+        tenant_id: callerProfile?.tenant_id,
+        user_id: callerUser.id,
+        action: 'create',
+        entity_type: 'user',
+        entity_id: data.user.id,
+        metadata: { email, name: name || email.split('@')[0], role },
+      });
+    }
+
     return new Response(
       JSON.stringify({ 
         success: true, 

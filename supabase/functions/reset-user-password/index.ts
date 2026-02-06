@@ -81,6 +81,22 @@ serve(async (req) => {
 
     console.log('Password reset successful')
 
+    // Log activity
+    const { data: callerProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('tenant_id')
+      .eq('user_id', requestingUser.id)
+      .single()
+
+    await supabaseAdmin.from('activity_logs').insert({
+      tenant_id: callerProfile?.tenant_id,
+      user_id: requestingUser.id,
+      action: 'reset_password',
+      entity_type: 'user',
+      entity_id: userId,
+      metadata: { generated_random: !!generateRandom },
+    })
+
     return new Response(
       JSON.stringify({ 
         success: true, 

@@ -58,7 +58,21 @@ Deno.serve(async (req) => {
           .eq("id", connectionId);
       } else {
         console.log(`[Baileys Session] Session created successfully`);
-        // O webhook irá atualizar o status e QR code quando disponível
+        
+        // Log activity - get tenant_id from connection
+        const { data: conn } = await supabaseClient
+          .from("connections")
+          .select("tenant_id")
+          .eq("id", connectionId)
+          .single();
+
+        await supabaseClient.from("activity_logs").insert({
+          tenant_id: conn?.tenant_id,
+          action: "create",
+          entity_type: "session",
+          entity_id: connectionId,
+          metadata: { session_name: sessionName },
+        });
       }
 
       return new Response(
