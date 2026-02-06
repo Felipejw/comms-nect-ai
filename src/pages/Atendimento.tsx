@@ -1041,6 +1041,12 @@ export default function Atendimento() {
           {message.message_type === "audio" && message.media_url && (
             <AudioPlayer src={message.media_url} className="mb-2" />
           )}
+          {message.message_type === "audio" && !message.media_url && (
+            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
+              <Mic className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Mensagem de áudio</span>
+            </div>
+          )}
           {message.message_type === "video" && message.media_url && (
             <video 
               controls 

@@ -41,10 +41,13 @@ async function storeMediaFromBase64(
   base64Data: string
 ): Promise<string | null> {
   try {
-    const matches = base64Data.match(/^data:([^;]+);base64,(.+)$/);
+    // Regex that handles mimetypes with parameters like "audio/ogg; codecs=opus"
+    const matches = base64Data.match(/^data:([\w\/\-\+\.]+(?:;\s*[\w\-]+=[\w\-]+)*);base64,(.+)$/);
     if (!matches) return null;
 
-    const mimetype = matches[1];
+    const fullMimetype = matches[1];
+    // Extract only the base mimetype (before parameters) for storage
+    const mimetype = fullMimetype.split(';')[0].trim();
     const base64 = matches[2];
     const buffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
 
@@ -317,12 +320,10 @@ Deno.serve(async (req) => {
         });
       }
 
-      // Skip outgoing messages
-      if (msg.fromMe) {
-        console.log("[Baileys Webhook] Skipping outgoing message");
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      // Track if message is from the connected WhatsApp user (sent via phone)
+      const isFromMe = msg.fromMe || false;
+      if (isFromMe) {
+        console.log("[Baileys Webhook] Processing outgoing (fromMe) message as agent");
       }
 
       // Parse the "from" address - detect LID vs real phone
@@ -480,13 +481,18 @@ Deno.serve(async (req) => {
 
       if (existingConversation) {
         conversation = existingConversation;
+        const convUpdates: Record<string, unknown> = {
+          last_message_at: timestamp.toISOString(),
+          status: existingConversation.status === "closed" ? "new" : existingConversation.status,
+          updated_at: new Date().toISOString(),
+        };
+        // Only increment unread_count for incoming messages (not fromMe)
+        if (!isFromMe) {
+          convUpdates.unread_count = (existingConversation.unread_count || 0) + 1;
+        }
         await supabaseClient
           .from("conversations")
-          .update({
-            last_message_at: timestamp.toISOString(),
-            status: existingConversation.status === "closed" ? "new" : existingConversation.status,
-            updated_at: new Date().toISOString(),
-          })
+          .update(convUpdates)
           .eq("id", conversation.id);
       } else {
         const { data: newConversation, error: convError } = await supabaseClient
@@ -511,14 +517,14 @@ Deno.serve(async (req) => {
         conversation = newConversation;
       }
 
-      // Save message - NO external_id (column doesn't exist)
+      // Save message - fromMe messages are saved as "agent" type
       const { error: msgError } = await supabaseClient.from("messages").insert({
         conversation_id: conversation.id,
         content: body,
         message_type: messageType,
         media_url: mediaUrl,
-        sender_type: "contact",
-        is_read: false,
+        sender_type: isFromMe ? "agent" : "contact",
+        is_read: isFromMe ? true : false,
         tenant_id: connection.tenant_id,
       });
 
@@ -543,8 +549,8 @@ Deno.serve(async (req) => {
           if (logErr) console.error("[ActivityLog] Error:", logErr.message);
         });
 
-        // Trigger background LID resolution if this is a LID contact without a phone
-        if (isLid && contact.id && !contact.phone) {
+        // Trigger background LID resolution if this is a LID contact without a phone (only for incoming messages)
+        if (!isFromMe && isLid && contact.id && !contact.phone) {
           EdgeRuntime.waitUntil(
             resolveLidInBackground(supabaseClient, contact.id, from, connection)
           );
