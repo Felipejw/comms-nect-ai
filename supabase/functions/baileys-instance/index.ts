@@ -185,8 +185,11 @@ Deno.serve(async (req) => {
         if (!response.ok) {
           const errorText = await response.text();
           console.error(`[Baileys Instance] QR fetch error ${response.status}:`, errorText.substring(0, 200));
+          const errorMsg = response.status === 401 
+            ? "API Key inválida. A chave configurada no sistema não corresponde à do servidor Baileys. Atualize em Configurações > Servidor WhatsApp."
+            : `Servidor retornou erro ${response.status}. Verifique a configuração do nginx/proxy.`;
           return new Response(
-            JSON.stringify({ success: false, error: `Servidor retornou erro ${response.status}. Verifique a configuração do nginx/proxy.` }),
+            JSON.stringify({ success: false, error: errorMsg, errorCode: response.status }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
@@ -276,8 +279,11 @@ Deno.serve(async (req) => {
             .from("connections")
             .update({ status: "error", updated_at: new Date().toISOString() })
             .eq("id", connectionId);
+          const errorMsg = response.status === 401 
+            ? "API Key inválida. A chave configurada no sistema não corresponde à do servidor Baileys. Atualize em Configurações > Servidor WhatsApp."
+            : `Servidor retornou erro ${response.status}. Verifique a configuração do nginx/proxy.`;
           return new Response(
-            JSON.stringify({ success: false, error: `Servidor retornou erro ${response.status}. Verifique a configuração do nginx/proxy.` }),
+            JSON.stringify({ success: false, error: errorMsg, errorCode: response.status }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
@@ -493,11 +499,15 @@ Deno.serve(async (req) => {
           // Verificar se a resposta foi bem sucedida
           if (!response.ok) {
             const text = await response.text();
-            console.log(`[Baileys Health] Error response: ${text}`);
+            console.log(`[Baileys Health] Error response (${response.status}): ${text}`);
+            const errorMsg = response.status === 401 
+              ? "API Key inválida. A chave configurada no sistema não corresponde à do servidor Baileys. Atualize em Configurações > Servidor WhatsApp."
+              : `Server returned ${response.status}: ${text.substring(0, 200)}`;
             return new Response(
               JSON.stringify({ 
                 success: false, 
-                error: `Server returned ${response.status}: ${text.substring(0, 200)}` 
+                error: errorMsg,
+                errorCode: response.status 
               }),
               { headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
