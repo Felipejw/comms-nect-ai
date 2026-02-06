@@ -1,46 +1,29 @@
 
 
-## Fix: PostgreSQL Crashing After init.sql Execution
+## Fix: Self-Hosted Installation - 3 Critical Issues
 
-### Status: Attempt 3
+### Status: Attempt 4 - Definitive Fix
 
-### Root Cause (Updated)
+### Issues Identified & Fixed
 
-Previous fixes resolved the init.sql auto-execution problem (roles now exist, init.sql runs successfully). However, **PostgreSQL becomes unavailable via TCP immediately after init.sql completes**.
+#### Issue 1: Auth SASL Password Mismatch (CRITICAL)
+**Symptom:** `failed SASL auth (FATAL: password authentication failed for user "supabase_auth_admin")`
+**Root Cause:** The install script tested TCP connectivity using `psql -U supabase_auth_admin -h 127.0.0.1` which used `trust` auth from pg_hba.conf (localhost exemption). This masked the real problem: the role passwords didn't match `POSTGRES_PASSWORD`. When GoTrue connects from another container via Docker network, it uses SCRAM-SHA-256 auth which requires the correct password.
+**Fix:** Added explicit `ALTER ROLE ... WITH PASSWORD` for all service roles (supabase_auth_admin, supabase_storage_admin, authenticator, supabase_admin) after roles are confirmed. Also changed the TCP test to use `PGPASSWORD` env var to test real password auth.
 
-Evidence:
-- `[OK] init.sql executado com sucesso - tabelas criadas` ✓
-- `ROLES NO BANCO: 9 rows` ✓ (all roles present)
-- Auth immediately gets `connection refused` on TCP port 5432 ✗
-- Server has only **3GB RAM** (minimum recommended: 4GB)
+#### Issue 2: Frontend Not Building
+**Symptom:** `npm não encontrado. Instale Node.js ou copie o frontend compilado manualmente`
+**Root Cause:** Server doesn't have Node.js/npm installed.
+**Fix:** Instead of requiring Node.js on the host, the script now uses Docker to build the frontend: `docker run --rm node:20-alpine sh -c "npm install && npm run build"` with the correct Vite env vars passed.
 
-Most likely cause: **PostgreSQL OOM-killed or crashes** under memory pressure from creating ~50 policies + ~20 triggers + 3 publications with `wal_level=logical` and `max_connections=200` on a 3GB server.
+#### Issue 3: Kong/Nginx Cascade Failure
+**Symptom:** Kong never starts, Nginx can't proxy, site shows ERR_CONNECTION_REFUSED
+**Root Cause:** In docker-compose.yml, Kong has `depends_on: auth: condition: service_healthy`. If Auth is unhealthy, Kong never starts, which blocks everything.
+**Fix:** Changed Kong's dependency on Auth from `service_healthy` to `service_started`. Kong can start immediately and will route to Auth once it's ready.
 
-### Changes Made (Attempt 3)
-
-#### 1. `deploy/docker-compose.yml` - PostgreSQL Memory Tuning
-- Reduced `max_connections` from 200 → 100 (saves ~200MB RAM)
-- Added `shared_buffers=128MB` (default was 128MB but explicit is safer)
-- Added `effective_cache_size=256MB`
-- Added `work_mem=4MB` (prevents per-query memory spikes)
-- Added `maintenance_work_mem=64MB`
-- Added explicit `listen_addresses=*` (ensures TCP listening on all interfaces)
-
-#### 2. `deploy/scripts/install-unified.sh` - Post-init.sql Verification
-Added **ETAPA 1d** after init.sql:
-- Checks `dmesg` for OOM-kill events targeting PostgreSQL
-- Checks container restart count
-- Tests TCP connectivity as `supabase_auth_admin` (simulates exactly what Auth does)
-- Waits up to 60s for DB to recover if TCP fails
-- Shows detailed logs and diagnostics if DB is down
-
-### Expected Behavior
-
-With these changes:
-- PostgreSQL uses significantly less memory (suitable for 3GB servers)
-- If PostgreSQL crashes after init.sql, the script detects it and waits for recovery
-- Detailed diagnostics help identify the exact failure cause
-- Auth only starts after TCP connectivity is confirmed
+### Changed Files
+1. `deploy/docker-compose.yml` - Kong depends_on auth changed to service_started
+2. `deploy/scripts/install-unified.sh` - Password sync, Docker-based frontend build, password-verified TCP test
 
 ### Run Command
 ```bash
