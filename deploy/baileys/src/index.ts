@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
-import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode } from './baileys';
-import { logger } from './logger';
+import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode } from './baileys.js';
+import { logger } from './logger.js';
 
 dotenv.config();
 
