@@ -38,7 +38,10 @@ interface SessionInfo {
 // ==========================================
 
 const sessions = new Map<string, SessionData>();
+const reconnectAttempts = new Map<string, number>();
 const SESSIONS_DIR = process.env.SESSIONS_DIR || './sessions';
+const MAX_RECONNECT_DELAY_MS = 60000;
+const BASE_RECONNECT_DELAY_MS = 3000;
 
 // Garantir que o diretorio de sessoes existe
 if (!fs.existsSync(SESSIONS_DIR)) {
@@ -66,7 +69,6 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
 
   const sock = makeWASocket({
     auth: state,
-    printQRInTerminal: true,
     logger: logger as any,
     browser: ['CommsNect', 'Chrome', '120.0.0'],
     connectTimeoutMs: 60000,
@@ -116,6 +118,9 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
       sessionData.qrCode = null;
       sessionData.qrCodeBase64 = null;
 
+      // Reset reconnect counter on successful connection
+      reconnectAttempts.delete(name);
+
       // Obter numero de telefone
       const me = sock.user;
       if (me?.id) {
@@ -136,17 +141,35 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
     }
 
     if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+      const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
       
-      logger.info({ session: name, shouldReconnect }, 'Connection closed');
+      logger.info({ 
+        session: name, 
+        shouldReconnect, 
+        statusCode,
+        error: (lastDisconnect?.error as Boom)?.message || 'unknown'
+      }, 'Connection closed');
 
       if (shouldReconnect) {
         sessionData.status = 'connecting';
-        // Reconectar
-        setTimeout(() => createSession(name, webhookUrl), 3000);
+        
+        // Exponential backoff: 3s, 6s, 12s, 24s, 48s, 60s (max)
+        const attempts = reconnectAttempts.get(name) || 0;
+        const delay = Math.min(BASE_RECONNECT_DELAY_MS * Math.pow(2, attempts), MAX_RECONNECT_DELAY_MS);
+        reconnectAttempts.set(name, attempts + 1);
+        
+        logger.info({ session: name, attempt: attempts + 1, delayMs: delay }, 'Scheduling reconnect with backoff');
+        
+        setTimeout(() => {
+          // Remove existing session entry so createSession starts fresh
+          sessions.delete(name);
+          createSession(name, webhookUrl);
+        }, delay);
       } else {
         sessionData.status = 'disconnected';
         sessions.delete(name);
+        reconnectAttempts.delete(name);
         
         // Webhook de desconexao
         await sendWebhook(webhookUrl, {

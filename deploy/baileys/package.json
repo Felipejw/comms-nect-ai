@@ -9,7 +9,7 @@
     "dev": "ts-node-dev --respawn src/index.ts"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.16",
+    "@whiskeysockets/baileys": "6.7.21",
     "@hapi/boom": "^10.0.1",
     "express": "^4.21.2",
     "pino": "^9.6.0",

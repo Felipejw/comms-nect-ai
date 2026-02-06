@@ -17,6 +17,7 @@ services:
     environment:
       - API_KEY=${API_KEY}
       - WEBHOOK_URL=${WEBHOOK_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - NODE_ENV=production
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
