@@ -22,23 +22,20 @@ export function useDashboardStats() {
       today.setHours(0, 0, 0, 0);
       const todayISO = today.toISOString();
 
-      // Get conversation counts
-      const { data: conversations } = await supabase
-        .from('conversations')
-        .select('status');
+      // Get conversation counts using individual count queries (avoids 1000-row limit)
+      const [newRes, inProgressRes, resolvedRes, archivedRes] = await Promise.all([
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'new'),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'in_progress'),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'resolved'),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'archived'),
+      ]);
 
       const conversationsByStatus = {
-        new: 0,
-        in_progress: 0,
-        resolved: 0,
-        archived: 0,
+        new: newRes.count || 0,
+        in_progress: inProgressRes.count || 0,
+        resolved: resolvedRes.count || 0,
+        archived: archivedRes.count || 0,
       };
-
-      conversations?.forEach(c => {
-        if (c.status in conversationsByStatus) {
-          conversationsByStatus[c.status as keyof typeof conversationsByStatus]++;
-        }
-      });
 
       const activeConversations = conversationsByStatus.new + conversationsByStatus.in_progress;
 

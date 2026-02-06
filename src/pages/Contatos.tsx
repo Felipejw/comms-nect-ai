@@ -147,12 +147,14 @@ export default function Contatos() {
     hasLidIssue(c) || hasPlaceholderName(c)
   ).length || 0;
 
-  const filteredContacts = contacts?.filter(
-    (c) =>
-      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  const filteredContacts = contacts?.filter((c) => {
+    if (searchQuery.startsWith("status:")) {
+      return c.status === searchQuery.replace("status:", "");
+    }
+    return c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       c.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.phone?.includes(searchQuery)
-  ) || [];
+      c.phone?.includes(searchQuery);
+  }) || [];
 
   const handleCreateContact = async () => {
     if (!newContact.name.trim()) {
@@ -492,10 +494,25 @@ export default function Contatos() {
             className="pl-9"
           />
         </div>
-        <Button variant="outline" className="gap-2">
-          <Filter className="w-4 h-4" />
-          Filtrar
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              <Filter className="w-4 h-4" />
+              Filtrar
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setSearchQuery("")}>
+              Todos
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSearchQuery("status:active")}>
+              Ativos
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSearchQuery("status:inactive")}>
+              Inativos
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
         {selectedContactIds.length > 0 && (
           <Button 
             variant="destructive" 

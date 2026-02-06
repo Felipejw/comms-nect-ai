@@ -65,6 +65,7 @@ export default function Campanhas() {
   const canEdit = isAdmin || hasPermission('campanhas', 'edit');
   
   const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isContactsDialogOpen, setIsContactsDialogOpen] = useState(false);
@@ -83,7 +84,8 @@ export default function Campanhas() {
   const addContacts = useAddContactsToCampaign();
 
   const filteredCampaigns = campaigns.filter((c) =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase())
+    c.name.toLowerCase().includes(searchQuery.toLowerCase()) &&
+    (statusFilter === "all" || c.status === statusFilter)
   );
 
   // Filter contacts by selected tags
@@ -199,10 +201,31 @@ export default function Campanhas() {
                   className="pl-9 w-[300px]"
                 />
               </div>
-              <Button variant="outline" className="gap-2">
-                <Filter className="w-4 h-4" />
-                Filtrar
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="gap-2">
+                    <Filter className="w-4 h-4" />
+                    Filtrar
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setStatusFilter("all")}>
+                    Todas
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setStatusFilter("draft")}>
+                    Rascunho
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setStatusFilter("active")}>
+                    Ativas
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setStatusFilter("paused")}>
+                    Pausadas
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setStatusFilter("completed")}>
+                    Concluídas
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           )}
         </div>
@@ -255,7 +278,10 @@ export default function Campanhas() {
                                 <Users className="w-4 h-4 mr-2" />
                                 Adicionar contatos
                               </DropdownMenuItem>
-                              <DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => {
+                                setSelectedCampaign(campaign);
+                                setActiveTab("metrics");
+                              }}>
                                 <BarChart3 className="w-4 h-4 mr-2" />
                                 Ver estatísticas
                               </DropdownMenuItem>

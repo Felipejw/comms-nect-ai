@@ -66,9 +66,32 @@ export function useActivityLog() {
         .order("created_at", { ascending: false })
         .limit(20);
 
-      return data || [];
+      if (!data || data.length === 0) return [];
+
+      // Fetch user names for activity logs
+      const userIds = [...new Set(data.map(log => log.user_id).filter(Boolean))] as string[];
+      let profilesMap: Record<string, string> = {};
+
+      if (userIds.length > 0) {
+        const { data: profiles } = await supabase
+          .from("profiles")
+          .select("user_id, name")
+          .in("user_id", userIds);
+
+        if (profiles) {
+          profilesMap = profiles.reduce((acc, p) => {
+            acc[p.user_id] = p.name;
+            return acc;
+          }, {} as Record<string, string>);
+        }
+      }
+
+      return data.map(log => ({
+        ...log,
+        userName: log.user_id ? profilesMap[log.user_id] || null : null,
+      }));
     },
-    refetchInterval: 15000, // Refresh every 15 seconds
+    refetchInterval: 15000,
   });
 
   return {

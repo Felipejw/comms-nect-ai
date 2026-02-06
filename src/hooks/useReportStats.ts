@@ -164,14 +164,14 @@ export function useReportStats(period: Period) {
       return Object.entries(agentStats).map(([userId, stats]) => {
         const profile = profiles.find((p) => p.user_id === userId);
         const avgTime = stats.count > 0 ? Math.round(stats.totalTime / stats.count / 60000) : 0;
-        const satisfaction = Math.round(70 + Math.random() * 25); // Placeholder - would need real NPS data
+        const resolutionRate = stats.total > 0 ? Math.round((stats.resolved / stats.total) * 100) : 0;
 
         return {
           name: profile?.name || "Desconhecido",
           atendimentos: stats.total,
           resolvidos: stats.resolved,
           tempoMedio: `${avgTime}min`,
-          satisfacao: `${satisfaction}%`,
+          taxaResolucao: `${resolutionRate}%`,
         };
       });
     },

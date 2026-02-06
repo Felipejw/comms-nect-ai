@@ -26,13 +26,18 @@ export default function Painel() {
     }
   };
 
-  const getActivityMessage = (activity: { action: string; entity_type: string; metadata?: unknown }) => {
+  const getActivityMessage = (activity: { action: string; entity_type: string; metadata?: unknown; userName?: string | null }) => {
     const actionMap: Record<string, string> = {
       "create": "criou",
       "update": "atualizou",
       "delete": "excluiu",
       "login": "entrou no sistema",
       "logout": "saiu do sistema",
+      "send_message": "enviou mensagem",
+      "receive_message": "recebeu mensagem",
+      "execute_campaign": "executou campanha",
+      "execute_flow": "executou fluxo",
+      "reset_password": "redefiniu senha",
     };
     const entityMap: Record<string, string> = {
       "conversation": "conversa",
@@ -40,16 +45,21 @@ export default function Painel() {
       "message": "mensagem",
       "user": "usuário",
       "campaign": "campanha",
+      "connection": "conexão",
+      "tag": "tag",
+      "quick_reply": "resposta rápida",
+      "chatbot_rule": "regra do chatbot",
     };
 
+    const userName = activity.userName || null;
     const action = actionMap[activity.action] || activity.action;
     const entity = entityMap[activity.entity_type] || activity.entity_type;
 
     if (activity.action === "login" || activity.action === "logout") {
-      return action;
+      return userName ? `${userName} ${action}` : action;
     }
 
-    return `${action} ${entity}`;
+    return userName ? `${userName} ${action} ${entity}` : `${action} ${entity}`;
   };
 
   return (
