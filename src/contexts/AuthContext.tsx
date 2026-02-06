@@ -43,6 +43,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name?: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
+  refreshUserData: () => Promise<void>;
   isSuperAdmin: boolean;
   isAdmin: boolean;
   hasPermission: (module: string, action: 'view' | 'edit') => boolean;
@@ -202,6 +203,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setPermissions([]);
   };
 
+  const refreshUserData = async () => {
+    if (user) {
+      setLoading(true);
+      await fetchUserData(user.id);
+    }
+  };
+
   const isSuperAdmin = role === 'super_admin';
   const isAdmin = role === 'admin' || role === 'super_admin';
 
@@ -232,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signIn,
         signUp,
         signOut,
+        refreshUserData,
         isSuperAdmin,
         isAdmin,
         hasPermission,

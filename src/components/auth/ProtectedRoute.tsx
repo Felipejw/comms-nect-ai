@@ -15,7 +15,7 @@ export function ProtectedRoute({
   module, 
   requiredAction = "view" 
 }: ProtectedRouteProps) {
-  const { user, loading, hasPermission, isAdmin, role } = useAuth();
+  const { user, loading, hasPermission, isAdmin, isSuperAdmin, role, profile } = useAuth();
 
   // Show loading while auth state is being determined
   if (loading) {
@@ -38,6 +38,11 @@ export function ProtectedRoute({
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  // If user has no tenant and is not super admin, redirect to onboarding
+  if (!isSuperAdmin && !profile?.tenant_id) {
+    return <Navigate to="/onboarding" replace />;
   }
 
   // Admins have full access

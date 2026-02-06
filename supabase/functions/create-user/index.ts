@@ -82,10 +82,36 @@ serve(async (req) => {
 
     console.log('User created successfully:', data.user?.id);
 
+    // Get caller's tenant_id to assign to new user
+    const { data: callerProfile } = await supabaseAdmin
+      .from('profiles')
+      .select('tenant_id')
+      .eq('user_id', callerUser.id)
+      .single();
+
+    const callerTenantId = callerProfile?.tenant_id;
+
+    // Wait for the trigger to create the profile
+    if (data.user) {
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Update tenant_id on new user's profile
+      if (callerTenantId) {
+        const { error: tenantError } = await supabaseAdmin
+          .from('profiles')
+          .update({ tenant_id: callerTenantId })
+          .eq('user_id', data.user.id);
+
+        if (tenantError) {
+          console.error('Error setting tenant_id:', tenantError.message);
+        } else {
+          console.log('Tenant ID set to:', callerTenantId);
+        }
+      }
+    }
+
     // If the user was created and role is admin, update it
     if (data.user && role === 'admin') {
-      await new Promise(resolve => setTimeout(resolve, 500));
-      
       const { error: roleError } = await supabaseAdmin
         .from('user_roles')
         .update({ role: 'admin' })
@@ -122,14 +148,8 @@ serve(async (req) => {
 
     // Log activity
     if (data.user) {
-      const { data: callerProfile } = await supabaseAdmin
-        .from('profiles')
-        .select('tenant_id')
-        .eq('user_id', callerUser.id)
-        .single();
-
       await supabaseAdmin.from('activity_logs').insert({
-        tenant_id: callerProfile?.tenant_id,
+        tenant_id: callerTenantId,
         user_id: callerUser.id,
         action: 'create',
         entity_type: 'user',

@@ -31,7 +31,7 @@ type SignupFormData = z.infer<typeof signupSchema>;
 
 export default function Login() {
   const navigate = useNavigate();
-  const { user, loading: authLoading, signIn, signUp } = useAuth();
+  const { user, loading: authLoading, signIn, signUp, profile, isSuperAdmin } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [activeTab, setActiveTab] = useState("login");
@@ -56,9 +56,14 @@ export default function Login() {
 
   useEffect(() => {
     if (!authLoading && user) {
-      navigate("/dashboard");
+      // If user has no tenant and is not super admin, go to onboarding
+      if (!isSuperAdmin && !profile?.tenant_id) {
+        navigate("/onboarding");
+      } else {
+        navigate("/dashboard");
+      }
     }
-  }, [user, authLoading, navigate]);
+  }, [user, authLoading, profile, isSuperAdmin, navigate]);
 
   const handleLogin = async (data: LoginFormData) => {
     setIsLoading(true);
@@ -72,7 +77,7 @@ export default function Login() {
         }
       } else {
         toast.success("Login realizado com sucesso!");
-        navigate("/dashboard");
+        // Redirect happens via useEffect after profile loads
       }
     } catch (error: any) {
       toast.error("Erro ao fazer login: " + error.message);
