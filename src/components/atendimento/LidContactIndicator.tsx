@@ -135,7 +135,7 @@ export default function LidContactIndicator({ contact, conversationId, className
           {searchResult === 'success' ? (
             <div className="flex items-center gap-2 text-success">
               <CheckCircle className="w-4 h-4" />
-              <span className="text-sm font-medium">Número encontrado! Recarregue a página.</span>
+              <span className="text-sm font-medium">Número encontrado!</span>
             </div>
           ) : searchResult === 'not_found' ? (
             <div className="flex items-center gap-2">
