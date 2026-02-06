@@ -956,10 +956,15 @@ CREATE INDEX IF NOT EXISTS idx_queues_tenant_id ON public.queues USING btree (te
 -- ============================================================
 
 -- Trigger para criar perfil quando usuário é criado
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+-- Wrapped in safe block: auth.users may not exist during DB init (created by GoTrue)
+DO $$ BEGIN
+  DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+  CREATE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+EXCEPTION WHEN undefined_table THEN
+  RAISE NOTICE 'auth.users not available yet - trigger will be created by GoTrue migrations';
+END $$;
 
 -- Triggers para atualização de timestamp
 DO $$ BEGIN
@@ -1230,88 +1235,92 @@ CREATE POLICY "Admins and managers can delete settings" ON public.system_setting
 
 -- ============================================================
 -- PARTE 8: STORAGE BUCKETS
+-- Wrapped in safe block: storage schema is created by the storage container,
+-- NOT during DB init. These will be skipped on first boot and created by storage service.
 -- ============================================================
 
-INSERT INTO storage.buckets (id, name, public)
-VALUES ('chat-attachments', 'chat-attachments', true)
-ON CONFLICT (id) DO NOTHING;
-
 DO $$ BEGIN
+  -- chat-attachments bucket
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('chat-attachments', 'chat-attachments', true)
+  ON CONFLICT (id) DO NOTHING;
+
   DROP POLICY IF EXISTS "Authenticated users can upload chat attachments" ON storage.objects;
   DROP POLICY IF EXISTS "Anyone can view chat attachments" ON storage.objects;
   DROP POLICY IF EXISTS "Authenticated users can delete chat attachments" ON storage.objects;
-END $$;
 
-CREATE POLICY "Authenticated users can upload chat attachments"
-ON storage.objects FOR INSERT TO authenticated
-WITH CHECK (bucket_id = 'chat-attachments');
+  CREATE POLICY "Authenticated users can upload chat attachments"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'chat-attachments');
 
-CREATE POLICY "Anyone can view chat attachments"
-ON storage.objects FOR SELECT
-USING (bucket_id = 'chat-attachments');
+  CREATE POLICY "Anyone can view chat attachments"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'chat-attachments');
 
-CREATE POLICY "Authenticated users can delete chat attachments"
-ON storage.objects FOR DELETE TO authenticated
-USING (bucket_id = 'chat-attachments');
+  CREATE POLICY "Authenticated users can delete chat attachments"
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'chat-attachments');
 
-INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-VALUES (
-  'whatsapp-media',
-  'whatsapp-media',
-  true,
-  52428800,
-  ARRAY['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/opus', 'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/3gpp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-) ON CONFLICT (id) DO NOTHING;
+  -- whatsapp-media bucket
+  INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  VALUES (
+    'whatsapp-media',
+    'whatsapp-media',
+    true,
+    52428800,
+    ARRAY['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/opus', 'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/3gpp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+  ) ON CONFLICT (id) DO NOTHING;
 
-DO $$ BEGIN
   DROP POLICY IF EXISTS "WhatsApp media is publicly accessible" ON storage.objects;
   DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
   DROP POLICY IF EXISTS "Service role can update WhatsApp media" ON storage.objects;
   DROP POLICY IF EXISTS "Service role can delete WhatsApp media" ON storage.objects;
-END $$;
 
-CREATE POLICY "WhatsApp media is publicly accessible"
-ON storage.objects FOR SELECT
-USING (bucket_id = 'whatsapp-media');
+  CREATE POLICY "WhatsApp media is publicly accessible"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'whatsapp-media');
 
-CREATE POLICY "Service role can upload WhatsApp media"
-ON storage.objects FOR INSERT
-WITH CHECK (bucket_id = 'whatsapp-media');
+  CREATE POLICY "Service role can upload WhatsApp media"
+  ON storage.objects FOR INSERT
+  WITH CHECK (bucket_id = 'whatsapp-media');
 
-CREATE POLICY "Service role can update WhatsApp media"
-ON storage.objects FOR UPDATE
-USING (bucket_id = 'whatsapp-media');
+  CREATE POLICY "Service role can update WhatsApp media"
+  ON storage.objects FOR UPDATE
+  USING (bucket_id = 'whatsapp-media');
 
-CREATE POLICY "Service role can delete WhatsApp media"
-ON storage.objects FOR DELETE
-USING (bucket_id = 'whatsapp-media');
+  CREATE POLICY "Service role can delete WhatsApp media"
+  ON storage.objects FOR DELETE
+  USING (bucket_id = 'whatsapp-media');
 
-INSERT INTO storage.buckets (id, name, public) 
-VALUES ('platform-assets', 'platform-assets', true)
-ON CONFLICT (id) DO NOTHING;
+  -- platform-assets bucket
+  INSERT INTO storage.buckets (id, name, public) 
+  VALUES ('platform-assets', 'platform-assets', true)
+  ON CONFLICT (id) DO NOTHING;
 
-DO $$ BEGIN
   DROP POLICY IF EXISTS "Platform assets are publicly accessible" ON storage.objects;
   DROP POLICY IF EXISTS "Authenticated users can upload platform assets" ON storage.objects;
   DROP POLICY IF EXISTS "Authenticated users can update platform assets" ON storage.objects;
   DROP POLICY IF EXISTS "Authenticated users can delete platform assets" ON storage.objects;
+
+  CREATE POLICY "Platform assets are publicly accessible"
+  ON storage.objects FOR SELECT
+  USING (bucket_id = 'platform-assets');
+
+  CREATE POLICY "Authenticated users can upload platform assets"
+  ON storage.objects FOR INSERT
+  WITH CHECK (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
+
+  CREATE POLICY "Authenticated users can update platform assets"
+  ON storage.objects FOR UPDATE
+  USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
+
+  CREATE POLICY "Authenticated users can delete platform assets"
+  ON storage.objects FOR DELETE
+  USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
+
+EXCEPTION WHEN undefined_table THEN
+  RAISE NOTICE 'storage schema not available yet - buckets will be created by storage service';
 END $$;
-
-CREATE POLICY "Platform assets are publicly accessible"
-ON storage.objects FOR SELECT
-USING (bucket_id = 'platform-assets');
-
-CREATE POLICY "Authenticated users can upload platform assets"
-ON storage.objects FOR INSERT
-WITH CHECK (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated users can update platform assets"
-ON storage.objects FOR UPDATE
-USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
-
-CREATE POLICY "Authenticated users can delete platform assets"
-ON storage.objects FOR DELETE
-USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
 
 -- ============================================================
 -- PARTE 9: REALTIME
@@ -1320,16 +1329,22 @@ USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
 EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN undefined_object THEN
+  RAISE NOTICE 'supabase_realtime publication not available yet - skipped messages';
 END $$;
 
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.conversations;
 EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN undefined_object THEN
+  RAISE NOTICE 'supabase_realtime publication not available yet - skipped conversations';
 END $$;
 
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.conversation_tags;
 EXCEPTION WHEN duplicate_object THEN NULL;
+WHEN undefined_object THEN
+  RAISE NOTICE 'supabase_realtime publication not available yet - skipped conversation_tags';
 END $$;
 
 ALTER TABLE public.messages REPLICA IDENTITY FULL;
