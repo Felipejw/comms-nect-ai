@@ -1682,9 +1682,6 @@ export default function Atendimento() {
                   <div className="flex items-center gap-2">
                     <p className="text-xs text-muted-foreground truncate">
                       {formatPhoneDisplay(selectedConversation.contact?.phone)
-                        || (selectedConversation.contact?.whatsapp_lid
-                          ? `LID: ...${selectedConversation.contact.whatsapp_lid.slice(-6)}`
-                          : null)
                         || selectedConversation.contact?.email
                         || "-"}
                     </p>
