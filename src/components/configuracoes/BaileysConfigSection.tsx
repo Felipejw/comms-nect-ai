@@ -13,7 +13,8 @@ import {
   CheckCircle2, 
   XCircle, 
   RefreshCw,
-  Save
+  Save,
+  AlertTriangle
 } from "lucide-react";
 
 // Normaliza a URL removendo sufixos indesejados
@@ -41,7 +42,8 @@ export function BaileysConfigSection() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "unknown">("unknown");
+  const [connectionStatus, setConnectionStatus] = useState<"online" | "offline" | "auth_error" | "unknown">("unknown");
+  const [connectionErrorMsg, setConnectionErrorMsg] = useState<string>("");
   const [initialLoadDone, setInitialLoadDone] = useState(false);
 
   // Load initial values from settings ONLY on first load
@@ -110,6 +112,7 @@ export function BaileysConfigSection() {
 
     setIsTesting(true);
     setConnectionStatus("unknown");
+    setConnectionErrorMsg("");
     
     try {
       console.log("Testing Baileys connection...");
@@ -122,22 +125,30 @@ export function BaileysConfigSection() {
       if (error) {
         console.error("Baileys test error:", error);
         setConnectionStatus("offline");
+        setConnectionErrorMsg(error.message);
         toast.error(`Servidor Baileys não está respondendo: ${error.message}`);
         return;
       }
 
       if (data?.success) {
         setConnectionStatus("online");
+        setConnectionErrorMsg("");
         toast.success("Servidor Baileys está online!");
       } else {
-        setConnectionStatus("offline");
+        const isAuthError = data?.errorCode === 401;
+        setConnectionStatus(isAuthError ? "auth_error" : "offline");
         const errorMsg = data?.error || "Erro desconhecido";
+        setConnectionErrorMsg(errorMsg);
         console.error("Baileys server error:", errorMsg);
-        toast.error(`Servidor Baileys não está respondendo: ${errorMsg}`);
+        toast.error(isAuthError 
+          ? "API Key inválida! A chave não corresponde à do servidor." 
+          : `Servidor Baileys não está respondendo: ${errorMsg}`
+        );
       }
     } catch (error: any) {
       console.error("Error testing Baileys connection:", error);
       setConnectionStatus("offline");
+      setConnectionErrorMsg(error?.message || "Conexão recusada");
       toast.error(`Erro ao conectar: ${error?.message || "Conexão recusada"}`);
     } finally {
       setIsTesting(false);
@@ -148,6 +159,8 @@ export function BaileysConfigSection() {
     switch (connectionStatus) {
       case "online":
         return <CheckCircle2 className="w-5 h-5 text-emerald-500 dark:text-emerald-400" />;
+      case "auth_error":
+        return <AlertTriangle className="w-5 h-5 text-amber-500" />;
       case "offline":
         return <XCircle className="w-5 h-5 text-destructive" />;
       default:
@@ -159,6 +172,8 @@ export function BaileysConfigSection() {
     switch (connectionStatus) {
       case "online":
         return "Online";
+      case "auth_error":
+        return "API Key Inválida";
       case "offline":
         return "Offline";
       default:
@@ -189,9 +204,11 @@ export function BaileysConfigSection() {
           <span className={
             connectionStatus === "online" 
               ? "text-emerald-500 dark:text-emerald-400" 
-              : connectionStatus === "offline" 
-                ? "text-destructive" 
-                : "text-muted-foreground"
+              : connectionStatus === "auth_error"
+                ? "text-amber-500"
+                : connectionStatus === "offline" 
+                  ? "text-destructive" 
+                  : "text-muted-foreground"
           }>
             {getStatusText()}
           </span>
@@ -256,6 +273,25 @@ export function BaileysConfigSection() {
             Testar Conexão
           </Button>
         </div>
+
+        {/* Auth error diagnostic banner */}
+        {connectionStatus === "auth_error" && (
+          <div className="mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div className="text-sm">
+                <p className="font-medium text-amber-600 dark:text-amber-400">
+                  API Key não corresponde ao servidor
+                </p>
+                <p className="text-muted-foreground mt-1">
+                  A API Key configurada aqui é diferente da que o servidor Baileys está usando. 
+                  Verifique a chave no servidor (variável <code className="bg-muted px-1 rounded">API_KEY</code> no container) 
+                  e atualize o campo acima com o valor correto.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
