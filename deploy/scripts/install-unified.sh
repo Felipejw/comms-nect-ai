@@ -696,6 +696,58 @@ start_services() {
     fi
 
     # =============================================
+    # ETAPA 1d: Verificar DB após init.sql (pode ter crashado por OOM)
+    # Testa conectividade TCP real (não apenas Unix socket local)
+    # =============================================
+    log_info "Verificando saúde do banco após init.sql..."
+    
+    # Checar se DB foi OOM-killed
+    if dmesg 2>/dev/null | tail -50 | grep -qi "oom.*postgres\|postgres.*killed"; then
+        log_warn "DETECTADO: PostgreSQL pode ter sido OOM-killed! RAM do servidor é insuficiente."
+        log_info "Aguardando banco se recuperar..."
+    fi
+    
+    # Verificar restart count do container
+    local restart_count=$(docker inspect --format='{{.RestartCount}}' supabase-db 2>/dev/null || echo "0")
+    if [ "$restart_count" -gt 0 ]; then
+        log_warn "Container DB reiniciou $restart_count vezes! Possível OOM ou crash."
+    fi
+    
+    # Testar conectividade TCP (como Auth vai conectar)
+    local tcp_ok=false
+    local tcp_wait=0
+    local tcp_max=60
+    while [ $tcp_wait -lt $tcp_max ]; do
+        # Testar conexão TCP real como supabase_auth_admin (simula o que Auth faz)
+        if docker exec supabase-db psql -U supabase_auth_admin -h 127.0.0.1 -p 5432 -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
+            tcp_ok=true
+            log_success "Banco aceitando conexões TCP como supabase_auth_admin"
+            break
+        fi
+        
+        # Se falhou, checar se container ainda está rodando
+        local db_status=$(docker inspect --format='{{.State.Status}}' supabase-db 2>/dev/null || echo "unknown")
+        local db_health=$(docker inspect --format='{{.State.Health.Status}}' supabase-db 2>/dev/null || echo "unknown")
+        
+        if [ "$db_status" != "running" ]; then
+            log_error "Container DB não está rodando! Status: $db_status"
+            log_info "Logs do PostgreSQL:"
+            docker logs supabase-db --tail 10 2>&1
+        fi
+        
+        sleep 3
+        tcp_wait=$((tcp_wait + 3))
+        log_info "Aguardando DB aceitar TCP... ($tcp_wait/${tcp_max}s) [container: $db_status, health: $db_health]"
+    done
+    
+    if [ "$tcp_ok" = "false" ]; then
+        log_error "DB não aceita conexões TCP após ${tcp_max}s!"
+        log_error "=== Últimas linhas do log do PostgreSQL ==="
+        docker logs supabase-db --tail 30 2>&1
+        log_warn "Tentando continuar mesmo assim..."
+    fi
+
+    # =============================================
     # ETAPA 2: Auth (GoTrue) - agora com roles + schemas prontos
     # =============================================
     log_info "Etapa 2/3: Iniciando serviço de autenticação..."
