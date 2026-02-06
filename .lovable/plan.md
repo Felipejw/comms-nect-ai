@@ -1,119 +1,50 @@
 
-
-# Fix: Mensagens nao aparecem e numero incorreto
+# Fix: Exibir identificador do contato e permitir envio para LID
 
 ## Problemas Identificados
 
-Foram encontrados **3 problemas** que precisam ser corrigidos:
-
-### 1. Mensagem nao e salva no banco de dados
-O log da Edge Function mostra o erro:
-```text
-Could not find the 'external_id' column of 'messages' in the schema cache
+### 1. Numero nao aparece no header da conversa
+Na linha 1676 do `Atendimento.tsx`, o codigo exibe:
 ```
-O webhook tenta inserir um campo `external_id` na tabela `messages`, mas essa coluna nao existe. Por isso a mensagem "Ola" nunca foi gravada, e a conversa aparece vazia.
+formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"
+```
+Como o contato agora tem `phone: null` (corrigido corretamente para `whatsapp_lid`), o display mostra apenas "-". Nao ha fallback para mostrar o LID como identificador.
 
-### 2. Numero de telefone e na verdade um LID (identificador interno do WhatsApp)
-O numero `249687990878288` nao e um telefone real -- e um LID (Linked ID) do WhatsApp. O webhook recebe `from: "249687990878288@lid"` e remove apenas o `@lid`, armazenando o LID como se fosse um telefone. O sistema deveria:
-- Detectar o sufixo `@lid` no campo `from`
-- Armazenar o valor no campo `whatsapp_lid` do contato (em vez do campo `phone`)
-- Marcar o contato como "LID-only" para que o alerta apareca na tela
+### 2. Botao de enviar desabilitado para contatos LID
+Na linha 2125, o botao de enviar e desabilitado quando `isLidOnlyContact()` retorna true. Porem, o backend (`send-whatsapp`) **ja suporta** envio para enderecos LID via Baileys. O frontend esta bloqueando desnecessariamente.
 
-Atualmente, o detector `isLidOnlyContact` so identifica numeros com mais de 15 digitos, mas este LID tem exatamente 15, passando despercebido.
+## Correcoes
 
-### 3. Nao consegue enviar mensagens
-A chamada ao `send-whatsapp` falha com "Failed to fetch" (timeout). Alem disso, o LID armazenado como telefone passa pela validacao de tamanho (10-15 chars), mas nao e um numero real de telefone, entao o Baileys nao conseguiria enviar a mensagem para ele.
+### Arquivo: `src/pages/Atendimento.tsx`
 
-## Plano de Correcao
-
-### Etapa 1: Adicionar coluna delivery_status na tabela messages (migracao)
-Remover a referencia ao campo `external_id` no webhook e garantir que a mensagem seja salva com os campos corretos.
-
-### Etapa 2: Corrigir o webhook para tratar LID corretamente
-**Arquivo:** `supabase/functions/baileys-webhook/index.ts`
-
-- Remover `external_id` do insert na tabela messages (campo nao existe)
-- Detectar se o `from` termina em `@lid` no payload original
-- Se for LID: armazenar no campo `whatsapp_lid` do contato e deixar `phone` como `null`
-- Se for numero real: armazenar no campo `phone` normalmente
-
-### Etapa 3: Corrigir a deteccao de LID no frontend
-**Arquivo:** `src/components/atendimento/LidContactIndicator.tsx`
-
-- Ajustar a funcao `isLidOnlyContact` para tambem detectar o contato atual que tem um LID armazenado como phone (numero `249687990878288`)
-- Contatos sem phone E sem whatsapp_lid tambem devem ser tratados
-
-### Etapa 4: Corrigir o send-whatsapp para LID
-**Arquivo:** `supabase/functions/send-whatsapp/index.ts`
-
-- Quando o contato so tem LID, tentar enviar usando o LID diretamente via Baileys (o protocolo suporta envio para LID com sufixo `@lid`)
-- Melhorar os logs para diagnostico
-
-### Etapa 5: Corrigir o contato existente no banco
-Atualizar o contato `249687990878288` para mover o LID para o campo correto:
-- Mover `phone` para `whatsapp_lid`
-- Limpar `phone` (sera preenchido quando o numero real for descoberto)
-
-## Detalhes Tecnicos
-
-### Alteracoes no banco de dados:
-```text
-UPDATE contacts 
-SET whatsapp_lid = phone, phone = NULL 
-WHERE phone = '249687990878288';
+**Correcao 1 - Exibir identificador do contato (linha 1674-1677):**
+Alterar o fallback para mostrar o LID quando nao ha telefone:
+```
+{formatPhoneDisplay(selectedConversation.contact?.phone)
+  || (selectedConversation.contact?.whatsapp_lid
+    ? `LID: ...${selectedConversation.contact.whatsapp_lid.slice(-6)}`
+    : null)
+  || selectedConversation.contact?.email
+  || "-"}
 ```
 
-### Alteracoes no webhook (baileys-webhook):
-```text
-// Antes:
-const from = msg.from?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+**Correcao 2 - Permitir envio para contatos LID (linhas 2121-2126):**
+Remover `isLidOnlyContact(selectedConversation?.contact)` da condicao `disabled` do botao de enviar. O backend ja trata envio para LID corretamente.
 
-// Depois:
-const rawFrom = msg.from || "";
-const isLid = rawFrom.endsWith("@lid");
-const from = rawFrom.replace("@s.whatsapp.net", "").replace("@g.us", "").replace("@lid", "");
+**Correcao 3 - Icone do botao enviar (linhas 2128-2133):**
+Remover a condicao que mostra icone de alerta no botao de enviar para contatos LID. Mostrar o icone normal de enviar.
 
-// Na criacao do contato:
-if (isLid) {
-  // Armazenar como whatsapp_lid, nao como phone
-  contact = await createContact({ whatsapp_lid: from, phone: null, ... });
-} else {
-  contact = await createContact({ phone: from, ... });
-}
-```
+**Correcao 4 - Estilo do botao (linhas 2114-2119):**
+Remover a condicao de estilo que aplica `bg-muted cursor-not-allowed` para contatos LID.
 
-### Alteracoes no insert de mensagens:
-```text
-// Remover external_id que nao existe na tabela
-const { error } = await supabaseClient.from("messages").insert({
-  conversation_id: conversation.id,
-  content: body,
-  message_type: messageType,
-  media_url: mediaUrl,
-  sender_type: "contact",
-  // external_id: messageId,  <-- REMOVER
-  is_read: false,
-});
-```
+**Correcao 5 - Tooltip bloqueante (linhas 2138-2142):**
+Remover o tooltip que diz "Nao e possivel enviar mensagens" para contatos LID.
 
-### Alteracoes no send-whatsapp:
-```text
-// Para contatos LID, enviar com sufixo @lid
-if (whatsappLid && (!phone || phone.length > 15)) {
-  phoneToSend = whatsappLid;
-  // Enviar para LID@lid no Baileys
-}
-```
+### Arquivo: `src/components/atendimento/LidContactIndicator.tsx`
 
-## Arquivos a modificar:
-- `supabase/functions/baileys-webhook/index.ts` -- corrigir insert e tratamento de LID
-- `supabase/functions/send-whatsapp/index.ts` -- suportar envio para LID
-- `src/components/atendimento/LidContactIndicator.tsx` -- melhorar deteccao de LID
-- Migracao SQL para corrigir o contato existente
+Atualizar o texto do alerta para informar que o envio e possivel, mas que o numero real ainda nao foi identificado. Mudar de "Nao e possivel enviar mensagens" para algo como "O numero real deste contato ainda nao foi identificado, mas voce pode enviar mensagens normalmente."
 
-## Resultado esperado:
-Apos as correcoes:
-1. Mensagens recebidas serao salvas corretamente no banco
-2. Contatos LID serao identificados e marcados com o alerta
-3. O sistema tentara resolver o numero real automaticamente
-4. Envio de mensagens funcionara tanto para numeros reais quanto para LIDs
+## Resultado esperado
+1. O header da conversa mostrara "LID: ...878288" como identificador ao inves de "-"
+2. O botao de enviar estara habilitado, permitindo enviar mensagens para contatos LID
+3. O alerta LID continuara visivel mas com texto informativo (nao bloqueante)
