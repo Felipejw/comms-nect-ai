@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
-import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode } from './baileys.js';
+import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode, restoreSessions } from './baileys.js';
 import { logger } from './logger.js';
 
 dotenv.config();
@@ -166,7 +166,15 @@ app.post('/sessions/:name/send/media', async (req: Request, res: Response) => {
 // Iniciar servidor
 // ==========================================
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info({ port: PORT }, 'Baileys server started');
   console.log(`🚀 Baileys server running on port ${PORT}`);
+
+  // Restaurar sessoes existentes ao iniciar
+  try {
+    await restoreSessions();
+    logger.info('Sessions restored successfully');
+  } catch (err) {
+    logger.error({ err }, 'Error restoring sessions on startup');
+  }
 });

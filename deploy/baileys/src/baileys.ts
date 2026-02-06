@@ -452,16 +452,29 @@ function formatJid(number: string): string {
 }
 
 async function sendWebhook(url: string, payload: any): Promise<void> {
-  if (!url) return;
+  if (!url) {
+    logger.warn({ event: payload?.event }, 'Webhook URL is empty — skipping webhook. Set WEBHOOK_URL env var.');
+    return;
+  }
+
+  const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+
+  logger.info({ 
+    url, 
+    event: payload?.event, 
+    session: payload?.session,
+    hasAnonKey: !!SUPABASE_ANON_KEY
+  }, 'Sending webhook...');
 
   try {
     const webhookHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     
     // Incluir apikey para Supabase Edge Functions
-    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
     if (SUPABASE_ANON_KEY) {
       webhookHeaders['apikey'] = SUPABASE_ANON_KEY;
       webhookHeaders['Authorization'] = `Bearer ${SUPABASE_ANON_KEY}`;
+    } else {
+      logger.warn('SUPABASE_ANON_KEY not set — webhook may fail auth');
     }
 
     const response = await fetch(url, {
@@ -472,12 +485,22 @@ async function sendWebhook(url: string, payload: any): Promise<void> {
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => '');
-      logger.warn({ status: response.status, url, error: errorText.substring(0, 200) }, 'Webhook request failed');
+      logger.error({ 
+        status: response.status, 
+        statusText: response.statusText,
+        url, 
+        event: payload?.event,
+        error: errorText.substring(0, 500) 
+      }, 'Webhook request FAILED');
     } else {
-      logger.info({ url: url.split('?')[0] }, 'Webhook sent successfully');
+      logger.info({ 
+        status: response.status, 
+        url: url.split('?')[0], 
+        event: payload?.event 
+      }, 'Webhook sent successfully');
     }
   } catch (err) {
-    logger.error({ err, url: url.split('?')[0] }, 'Error sending webhook');
+    logger.error({ err, url, event: payload?.event }, 'Error sending webhook (network/connection error)');
   }
 }
 
@@ -504,5 +527,5 @@ export async function restoreSessions(): Promise<void> {
   }
 }
 
-// Restaurar sessoes ao importar o modulo
-restoreSessions().catch(err => logger.error({ err }, 'Error in restoreSessions'));
+// NOTA: restoreSessions() agora e chamado pelo index.ts no callback do app.listen
+// para garantir que o servidor esteja pronto antes de restaurar sessoes.
