@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -6,8 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
-  // Handle CORS preflight requests
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -15,28 +13,16 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const evolutionApiUrl = Deno.env.get("EVOLUTION_API_URL");
-    const evolutionApiKey = Deno.env.get("EVOLUTION_API_KEY");
-
-    if (!evolutionApiUrl || !evolutionApiKey) {
-      console.error("Evolution API credentials not configured");
-      return new Response(
-        JSON.stringify({ success: false, error: "Evolution API não configurada" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
 
     const supabaseClient = createClient(supabaseUrl, supabaseServiceKey);
     const body = await req.json();
-    const { contactId, phone, includeStatus = false } = body;
+    const { contactId, phone } = body;
 
     let cleanPhone: string;
     
     if (phone) {
-      // Direct phone number provided
       cleanPhone = phone.replace(/\D/g, "");
     } else if (contactId) {
-      // Get contact from database
       const { data: contact, error: contactError } = await supabaseClient
         .from("contacts")
         .select("id, phone, avatar_url")
@@ -44,7 +30,6 @@ serve(async (req) => {
         .single();
 
       if (contactError || !contact) {
-        console.error("Contact not found:", contactError);
         return new Response(
           JSON.stringify({ success: false, error: "Contato não encontrado" }),
           { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -66,6 +51,30 @@ serve(async (req) => {
       );
     }
 
+    // Get Baileys server config from system_settings
+    const { data: urlSetting } = await supabaseClient
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    const { data: keySetting } = await supabaseClient
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const baileysUrl = urlSetting?.value;
+    const baileysApiKey = keySetting?.value;
+
+    if (!baileysUrl) {
+      console.log("Baileys server not configured, returning basic response");
+      return new Response(
+        JSON.stringify({ success: true, status: 'offline', lastSeen: null, avatarUrl: null }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Get active WhatsApp connection
     const { data: connection, error: connError } = await supabaseClient
       .from("connections")
@@ -77,87 +86,55 @@ serve(async (req) => {
       .maybeSingle();
 
     if (connError || !connection) {
-      console.error("No active connection:", connError);
       return new Response(
-        JSON.stringify({ success: false, error: "Nenhuma conexão WhatsApp ativa" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        JSON.stringify({ success: true, status: 'offline', lastSeen: null, avatarUrl: null }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const instanceName = (connection.session_data as any)?.instanceName || connection.name;
+    const sessionData = connection.session_data as Record<string, unknown> | null;
+    const sessionName = (sessionData?.sessionName as string) || connection.name.toLowerCase().replace(/\s+/g, "_");
     
-    console.log(`Fetching WhatsApp profile for ${cleanPhone} via instance ${instanceName}`);
+    console.log(`Fetching WhatsApp profile for ${cleanPhone} via Baileys session ${sessionName}`);
 
-    const result: any = { success: true };
+    const result: Record<string, unknown> = { success: true };
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (baileysApiKey) headers["X-API-Key"] = baileysApiKey;
 
-    // Fetch profile picture
+    // Try to fetch profile picture from Baileys
     try {
       const profileResponse = await fetch(
-        `${evolutionApiUrl}/chat/fetchProfilePictureUrl/${instanceName}`,
+        `${baileysUrl}/sessions/${sessionName}/profile-picture`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: evolutionApiKey,
-          },
-          body: JSON.stringify({
-            number: cleanPhone,
-          }),
+          headers,
+          body: JSON.stringify({ phone: cleanPhone }),
         }
       );
 
       if (profileResponse.ok) {
         const profileData = await profileResponse.json();
-        result.avatarUrl = profileData?.profilePictureUrl || profileData?.picture || null;
+        result.avatarUrl = profileData?.data?.url || profileData?.url || null;
         
-        // Update contact avatar if contactId was provided
         if (contactId && result.avatarUrl) {
           await supabaseClient
             .from("contacts")
-            .update({ avatar_url: result.avatarUrl })
+            .update({ avatar_url: result.avatarUrl as string })
             .eq("id", contactId);
         }
+      } else {
+        console.log("Profile picture endpoint returned:", profileResponse.status);
+        result.avatarUrl = null;
       }
     } catch (e) {
       console.error("Error fetching profile picture:", e);
+      result.avatarUrl = null;
     }
 
-    // Fetch online status (presence) if requested or by default for status check
-    try {
-      // Try to get presence/status
-      const presenceResponse = await fetch(
-        `${evolutionApiUrl}/chat/fetchPresence/${instanceName}`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            apikey: evolutionApiKey,
-          },
-          body: JSON.stringify({
-            number: cleanPhone,
-          }),
-        }
-      );
-
-      if (presenceResponse.ok) {
-        const presenceData = await presenceResponse.json();
-        console.log("Presence response:", presenceData);
-        
-        // Evolution API presence response format
-        result.status = presenceData?.presence === 'available' || presenceData?.presence === 'composing' 
-          ? 'online' 
-          : 'offline';
-        result.lastSeen = presenceData?.lastSeen || presenceData?.last_seen || null;
-      } else {
-        // Default to offline if can't fetch presence
-        result.status = 'offline';
-        result.lastSeen = null;
-      }
-    } catch (e) {
-      console.error("Error fetching presence:", e);
-      result.status = 'offline';
-      result.lastSeen = null;
-    }
+    // Presence/status - Baileys may not expose this via HTTP endpoint
+    // Default to offline as presence requires WebSocket subscription
+    result.status = 'offline';
+    result.lastSeen = null;
 
     console.log(`Profile fetch complete for ${cleanPhone}:`, result);
 

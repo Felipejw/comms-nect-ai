@@ -360,7 +360,7 @@ export default function Conexoes() {
             Atualizar
           </Button>
           
-          {/* WPPConnect Dialog */}
+          {/* WhatsApp QR Code Dialog */}
           <Dialog open={isCreateDialogOpen} onOpenChange={setIsCreateDialogOpen}>
             <DialogTrigger asChild>
               <Button className="gap-2 bg-emerald-500 hover:bg-emerald-600 text-white">
