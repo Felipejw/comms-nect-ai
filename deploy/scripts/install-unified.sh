@@ -104,14 +104,12 @@ detect_existing_baileys() {
     EXISTING_API_KEY=""
     EXISTING_SESSIONS_DIR=""
     
-    # Verificar locais comuns
     for dir in "/opt/baileys" "/root/baileys" "$HOME/baileys"; do
         if [ -d "$dir/sessions" ]; then
             log_success "Encontrada instalação Baileys em: $dir"
             BAILEYS_EXISTS=true
             EXISTING_SESSIONS_DIR="$dir/sessions"
             
-            # Tentar extrair API Key existente
             if [ -f "$dir/.env" ]; then
                 EXISTING_API_KEY=$(grep -E "^API_KEY=" "$dir/.env" 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'")
                 if [ -n "$EXISTING_API_KEY" ]; then
@@ -132,10 +130,8 @@ migrate_baileys_sessions() {
     if [ "$BAILEYS_EXISTS" = true ] && [ -n "$EXISTING_SESSIONS_DIR" ]; then
         log_step "Migrando Sessões WhatsApp"
         
-        # Criar diretório de destino
         mkdir -p "$DEPLOY_DIR/volumes/baileys/sessions"
         
-        # Contar sessões
         SESSION_COUNT=$(find "$EXISTING_SESSIONS_DIR" -maxdepth 1 -type d | wc -l)
         SESSION_COUNT=$((SESSION_COUNT - 1))
         
@@ -176,7 +172,7 @@ collect_user_info() {
     fi
     log_success "Domínio/IP: $DOMAIN"
     
-    # Email SSL: usar variável de ambiente ou gerar
+    # Email SSL
     if [ -z "$SSL_EMAIL" ]; then
         SSL_EMAIL="admin@${DOMAIN}"
     fi
@@ -210,7 +206,6 @@ collect_user_info() {
 generate_jwt_keys() {
     log_step "Gerando Chaves JWT"
     
-    # Gerar ANON_KEY
     ANON_KEY=$(node -e "
         const jwt = require('jsonwebtoken');
         const payload = {
@@ -222,7 +217,6 @@ generate_jwt_keys() {
         console.log(jwt.sign(payload, '$JWT_SECRET'));
     " 2>/dev/null) || ANON_KEY=$(openssl rand -base64 64 | tr -dc 'a-zA-Z0-9' | head -c 64)
     
-    # Gerar SERVICE_ROLE_KEY
     SERVICE_ROLE_KEY=$(node -e "
         const jwt = require('jsonwebtoken');
         const payload = {
@@ -458,18 +452,15 @@ EOF
 configure_ssl() {
     log_step "Configurando SSL"
     
-    # Verificar se certbot está instalado
     if ! command -v certbot &> /dev/null; then
         log_info "Instalando Certbot..."
         apt-get update
         apt-get install -y certbot
     fi
     
-    # Tentar obter certificado Let's Encrypt
     if [ -n "$DOMAIN" ] && [ -n "$SSL_EMAIL" ]; then
         log_info "Obtendo certificado SSL para $DOMAIN..."
         
-        # Parar serviços que possam estar usando porta 80
         docker compose -f "$DEPLOY_DIR/docker-compose.yml" down 2>/dev/null || true
         
         certbot certonly --standalone -d "$DOMAIN" --email "$SSL_EMAIL" --agree-tos --non-interactive || {
@@ -482,7 +473,6 @@ configure_ssl() {
                 -subj "/CN=$DOMAIN"
         }
         
-        # Copiar certificados se obtidos via Let's Encrypt
         if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
             cp "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" "$DEPLOY_DIR/nginx/ssl/"
             cp "/etc/letsencrypt/live/$DOMAIN/privkey.pem" "$DEPLOY_DIR/nginx/ssl/"
@@ -507,7 +497,6 @@ build_frontend() {
         if [ -f "$PROJECT_DIR/package.json" ]; then
             cd "$PROJECT_DIR"
             
-            # Instalar dependências
             if command -v npm &> /dev/null; then
                 npm install
                 npm run build
@@ -531,16 +520,11 @@ start_services() {
     
     cd "$DEPLOY_DIR"
     
-    # Iniciar com profile baileys
     log_info "Iniciando containers Docker..."
     docker compose --profile baileys up -d
     
-    # Aguardar serviços iniciarem
     log_info "Aguardando serviços iniciarem..."
     sleep 30
-    
-    # Verificar saúde dos serviços
-    log_info "Verificando saúde dos serviços..."
     
     services=("supabase-db" "supabase-auth" "supabase-rest" "supabase-kong" "baileys-server" "app-nginx")
     for service in "${services[@]}"; do
@@ -552,11 +536,200 @@ start_services() {
     done
 }
 
+# Aguardar banco de dados ficar pronto
+wait_for_database() {
+    log_step "Aguardando Banco de Dados"
+    
+    local max_attempts=30
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        attempt=$((attempt + 1))
+        
+        if docker exec supabase-db pg_isready -U postgres &>/dev/null; then
+            log_success "Banco de dados está pronto (tentativa $attempt/$max_attempts)"
+            return 0
+        fi
+        
+        log_info "Aguardando banco de dados... ($attempt/$max_attempts)"
+        sleep 5
+    done
+    
+    log_error "Banco de dados não ficou pronto após $max_attempts tentativas"
+    return 1
+}
+
+# Aguardar GoTrue (Auth) ficar pronto
+wait_for_auth() {
+    log_step "Aguardando Serviço de Autenticação"
+    
+    local max_attempts=20
+    local attempt=0
+    
+    while [ $attempt -lt $max_attempts ]; do
+        attempt=$((attempt + 1))
+        
+        # Tentar via Kong (porta 8000)
+        local health_code
+        health_code=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/auth/v1/health" 2>/dev/null || echo "000")
+        
+        if [ "$health_code" = "200" ]; then
+            log_success "Serviço de autenticação está pronto (tentativa $attempt/$max_attempts)"
+            return 0
+        fi
+        
+        log_info "Aguardando autenticação... ($attempt/$max_attempts) [HTTP $health_code]"
+        sleep 5
+    done
+    
+    log_warn "Serviço de autenticação pode não estar pronto. Continuando..."
+    return 1
+}
+
+# Criar admin, tenant e subscription automaticamente
+create_admin_and_tenant() {
+    log_step "Criando Admin e Tenant"
+    
+    # 1. Criar usuário admin via GoTrue API (via Kong)
+    log_info "Criando usuário admin via API..."
+    
+    local signup_response
+    signup_response=$(curl -s -X POST "http://localhost:8000/auth/v1/signup" \
+        -H "apikey: $ANON_KEY" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"email\": \"$ADMIN_EMAIL\",
+            \"password\": \"$ADMIN_PASSWORD\",
+            \"data\": {
+                \"name\": \"$ADMIN_NAME\"
+            }
+        }" 2>/dev/null)
+    
+    # Extrair user_id da resposta
+    local ADMIN_USER_ID
+    ADMIN_USER_ID=$(echo "$signup_response" | grep -o '"id":"[^"]*"' | head -1 | cut -d'"' -f4)
+    
+    if [ -z "$ADMIN_USER_ID" ]; then
+        log_warn "Não foi possível criar admin via API. Tentando via SQL direto..."
+        
+        # Fallback: criar via SQL direto no banco
+        ADMIN_USER_ID=$(docker exec supabase-db psql -U postgres -t -c "
+            INSERT INTO auth.users (
+                instance_id, id, aud, role, email, 
+                encrypted_password, email_confirmed_at,
+                raw_app_meta_data, raw_user_meta_data,
+                created_at, updated_at, confirmation_token
+            ) VALUES (
+                '00000000-0000-0000-0000-000000000000',
+                gen_random_uuid(), 'authenticated', 'authenticated',
+                '$ADMIN_EMAIL',
+                crypt('$ADMIN_PASSWORD', gen_salt('bf')),
+                now(),
+                '{\"provider\": \"email\", \"providers\": [\"email\"]}'::jsonb,
+                '{\"name\": \"$ADMIN_NAME\"}'::jsonb,
+                now(), now(), ''
+            )
+            ON CONFLICT (email) DO UPDATE SET updated_at = now()
+            RETURNING id;
+        " 2>/dev/null | tr -d ' \n')
+        
+        if [ -z "$ADMIN_USER_ID" ]; then
+            # Se já existe, buscar o ID
+            ADMIN_USER_ID=$(docker exec supabase-db psql -U postgres -t -c "
+                SELECT id FROM auth.users WHERE email = '$ADMIN_EMAIL' LIMIT 1;
+            " 2>/dev/null | tr -d ' \n')
+        fi
+    fi
+    
+    if [ -z "$ADMIN_USER_ID" ]; then
+        log_error "Falha ao criar/encontrar usuário admin"
+        log_warn "Você pode criar o admin manualmente após a instalação"
+        return 1
+    fi
+    
+    log_success "Admin criado com ID: $ADMIN_USER_ID"
+    
+    # 2. Promover para super_admin
+    log_info "Promovendo para super_admin..."
+    docker exec supabase-db psql -U postgres -c "
+        -- Remover role existente se houver
+        DELETE FROM public.user_roles WHERE user_id = '$ADMIN_USER_ID';
+        
+        -- Inserir como super_admin
+        INSERT INTO public.user_roles (user_id, role)
+        VALUES ('$ADMIN_USER_ID', 'super_admin')
+        ON CONFLICT (user_id, role) DO NOTHING;
+    " 2>/dev/null
+    log_success "Usuário promovido para super_admin"
+    
+    # 3. Criar tenant principal
+    log_info "Criando tenant principal..."
+    local TENANT_ID
+    TENANT_ID=$(docker exec supabase-db psql -U postgres -t -c "
+        INSERT INTO public.tenants (name, slug, owner_user_id, plan, subscription_status, is_active, subscription_expires_at)
+        VALUES ('Empresa Principal', 'empresa-principal', '$ADMIN_USER_ID', 'basic', 'trial', true, now() + interval '30 days')
+        ON CONFLICT DO NOTHING
+        RETURNING id;
+    " 2>/dev/null | tr -d ' \n')
+    
+    if [ -z "$TENANT_ID" ]; then
+        # Se já existe, buscar o ID
+        TENANT_ID=$(docker exec supabase-db psql -U postgres -t -c "
+            SELECT id FROM public.tenants WHERE owner_user_id = '$ADMIN_USER_ID' LIMIT 1;
+        " 2>/dev/null | tr -d ' \n')
+    fi
+    
+    if [ -n "$TENANT_ID" ]; then
+        log_success "Tenant criado com ID: $TENANT_ID"
+        
+        # 4. Atualizar perfil do admin com tenant_id
+        log_info "Vinculando admin ao tenant..."
+        docker exec supabase-db psql -U postgres -c "
+            UPDATE public.profiles 
+            SET tenant_id = '$TENANT_ID'
+            WHERE user_id = '$ADMIN_USER_ID';
+        " 2>/dev/null
+        log_success "Admin vinculado ao tenant"
+        
+        # 5. Criar subscription trial de 30 dias
+        log_info "Criando subscription trial..."
+        docker exec supabase-db psql -U postgres -c "
+            INSERT INTO public.tenant_subscriptions (
+                tenant_id, plan_id, billing_cycle, status,
+                current_period_start, current_period_end, trial_ends_at
+            )
+            SELECT 
+                '$TENANT_ID',
+                sp.id,
+                'monthly',
+                'active',
+                now(),
+                now() + interval '30 days',
+                now() + interval '30 days'
+            FROM public.subscription_plans sp
+            WHERE sp.slug = 'basico'
+            LIMIT 1
+            ON CONFLICT DO NOTHING;
+        " 2>/dev/null
+        log_success "Trial de 30 dias ativado"
+        
+        # 6. Injetar credenciais do Baileys no system_settings
+        log_info "Configurando credenciais do Baileys no banco..."
+        docker exec supabase-db psql -U postgres -c "
+            UPDATE public.system_settings
+            SET value = '$BAILEYS_API_KEY'
+            WHERE key = 'baileys_api_key';
+        " 2>/dev/null
+        log_success "Credenciais do Baileys configuradas"
+    else
+        log_warn "Não foi possível criar tenant. Configure manualmente."
+    fi
+}
+
 # Verificar instalação
 verify_installation() {
     log_step "Verificando Instalação"
     
-    # Testar endpoint de saúde
     sleep 10
     
     log_info "Testando endpoints..."
@@ -579,6 +752,59 @@ verify_installation() {
     fi
 }
 
+# Salvar credenciais em arquivo
+save_credentials() {
+    log_step "Salvando Credenciais"
+    
+    cat > "$DEPLOY_DIR/CREDENCIAIS.txt" << EOF
+============================================
+   CREDENCIAIS DO SISTEMA
+   Gerado em: $(date)
+============================================
+
+=== ACESSO AO SISTEMA ===
+URL:      https://$DOMAIN
+Email:    $ADMIN_EMAIL
+Senha:    $ADMIN_PASSWORD
+
+=== BAILEYS (WhatsApp Engine) ===
+API Key:  $BAILEYS_API_KEY
+URL API:  https://$DOMAIN/baileys
+
+=== BANCO DE DADOS ===
+Host:     localhost
+Porta:    5432
+Database: postgres
+Usuário:  postgres
+Senha:    $POSTGRES_PASSWORD
+
+=== CHAVES JWT ===
+JWT Secret:      $JWT_SECRET
+Anon Key:        $ANON_KEY
+Service Role:    $SERVICE_ROLE_KEY
+
+=== COMANDOS ÚTEIS ===
+# Ver logs
+docker compose --profile baileys logs -f
+
+# Reiniciar
+docker compose --profile baileys restart
+
+# Parar
+docker compose --profile baileys down
+
+# Backup
+./scripts/backup.sh
+
+============================================
+  GUARDE ESTE ARQUIVO EM LOCAL SEGURO!
+============================================
+EOF
+
+    chmod 600 "$DEPLOY_DIR/CREDENCIAIS.txt"
+    log_success "Credenciais salvas em: $DEPLOY_DIR/CREDENCIAIS.txt"
+}
+
 # Mostrar resumo final
 show_summary() {
     echo -e "\n${GREEN}"
@@ -592,30 +818,34 @@ show_summary() {
     echo ""
     echo -e "${CYAN}=== INFORMAÇÕES DE ACESSO ===${NC}"
     echo ""
-    echo -e "Sistema Web:     ${GREEN}https://$DOMAIN${NC}"
-    echo -e "Baileys API:     ${GREEN}https://$DOMAIN/baileys${NC}"
-    echo -e "Supabase Studio: ${GREEN}https://$DOMAIN/studio/${NC}"
+    echo -e "  Sistema Web:     ${GREEN}https://$DOMAIN${NC}"
+    echo -e "  Baileys API:     ${GREEN}https://$DOMAIN/baileys${NC}"
+    echo ""
+    echo -e "${CYAN}=== CREDENCIAIS DO ADMIN ===${NC}"
+    echo ""
+    echo -e "  Email:           ${YELLOW}$ADMIN_EMAIL${NC}"
+    echo -e "  Senha:           ${YELLOW}$ADMIN_PASSWORD${NC}"
     echo ""
     echo -e "${CYAN}=== CREDENCIAIS ===${NC}"
     echo ""
-    echo -e "Baileys API Key: ${YELLOW}$BAILEYS_API_KEY${NC}"
-    echo -e "JWT Secret:      ${YELLOW}(salvo em .env)${NC}"
+    echo -e "  Baileys API Key: ${YELLOW}$BAILEYS_API_KEY${NC}"
+    echo -e "  JWT Secret:      ${YELLOW}(salvo em .env e CREDENCIAIS.txt)${NC}"
+    echo ""
+    echo -e "  ${GREEN}Arquivo completo: $DEPLOY_DIR/CREDENCIAIS.txt${NC}"
     echo ""
     echo -e "${CYAN}=== COMANDOS ÚTEIS ===${NC}"
     echo ""
-    echo "# Ver logs de todos os serviços"
-    echo "docker compose --profile baileys logs -f"
+    echo "  # Ver logs de todos os serviços"
+    echo "  docker compose --profile baileys logs -f"
     echo ""
-    echo "# Ver status dos containers"
-    echo "docker compose --profile baileys ps"
+    echo "  # Ver status dos containers"
+    echo "  docker compose --profile baileys ps"
     echo ""
-    echo "# Reiniciar serviços"
-    echo "docker compose --profile baileys restart"
+    echo "  # Reiniciar serviços"
+    echo "  docker compose --profile baileys restart"
     echo ""
-    echo "# Parar serviços"
-    echo "docker compose --profile baileys down"
-    echo ""
-    echo -e "${YELLOW}IMPORTANTE: Guarde as credenciais em local seguro!${NC}"
+    echo -e "${YELLOW}  IMPORTANTE: Guarde as credenciais em local seguro!${NC}"
+    echo -e "${YELLOW}  O arquivo CREDENCIAIS.txt contém TUDO que você precisa.${NC}"
     echo ""
 }
 
@@ -636,6 +866,10 @@ main() {
     configure_ssl
     build_frontend
     start_services
+    wait_for_database
+    wait_for_auth
+    create_admin_and_tenant
+    save_credentials
     verify_installation
     show_summary
 }
