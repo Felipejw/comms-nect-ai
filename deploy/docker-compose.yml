@@ -354,6 +354,7 @@ services:
     environment:
       API_KEY: ${BAILEYS_API_KEY}
       WEBHOOK_URL: http://kong:8000/functions/v1/baileys-webhook
+      SUPABASE_ANON_KEY: ${ANON_KEY}
       NODE_ENV: production
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
