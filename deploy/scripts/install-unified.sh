@@ -197,11 +197,15 @@ collect_user_info() {
     JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 48)
     log_success "JWT Secret gerado"
     
-    # Credenciais do admin
+    # Credenciais do admin (permite senha fixa via variável de ambiente)
     ADMIN_EMAIL="admin@admin.com"
-    ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+    if [ -z "$ADMIN_PASSWORD" ]; then
+        ADMIN_PASSWORD=$(openssl rand -base64 16 | tr -dc 'a-zA-Z0-9' | head -c 16)
+        log_success "Senha do admin gerada automaticamente"
+    else
+        log_success "Usando senha do admin fornecida via variável ADMIN_PASSWORD"
+    fi
     ADMIN_NAME="Administrador"
-    log_success "Credenciais do admin geradas"
 }
 
 # Gerar chaves JWT válidas usando Python3 (disponível em toda VPS Ubuntu)
@@ -587,14 +591,16 @@ generate_frontend_config() {
     
     mkdir -p "$DEPLOY_DIR/frontend/dist"
     
+    # Usar window.location.origin para que funcione em HTTP e HTTPS
+    # Isso elimina problemas de mismatch de protocolo
     cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
 window.__SUPABASE_CONFIG__ = {
-  url: "https://${DOMAIN}",
+  url: window.location.origin,
   anonKey: "${ANON_KEY}"
 };
 CONFIGEOF
     
-    log_success "config.js gerado com domínio: $DOMAIN"
+    log_success "config.js gerado (usa origin dinâmico, anonKey injetada)"
 }
 
 # Compilar frontend se necessário
