@@ -127,8 +127,8 @@ export default function LidContactIndicator({ contact, conversationId, className
       <AlertTitle className="text-warning font-medium">Contato sem número identificado</AlertTitle>
       <AlertDescription className="text-sm">
         <p className="text-muted-foreground mb-2">
-          Este contato possui apenas um identificador interno do WhatsApp (LID: ...{lidSuffix}). 
-          Não é possível enviar mensagens até que o número real seja descoberto ou o contato envie uma nova mensagem.
+          O número real deste contato ainda não foi identificado (LID: ...{lidSuffix}), 
+          mas você pode enviar mensagens normalmente. O sistema tentará descobrir o número real automaticamente.
         </p>
         
         <div className="flex items-center gap-2 mt-2">

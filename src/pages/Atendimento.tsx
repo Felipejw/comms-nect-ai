@@ -1673,7 +1673,12 @@ export default function Atendimento() {
                   </div>
                   <div className="flex items-center gap-2">
                     <p className="text-xs text-muted-foreground truncate">
-                      {formatPhoneDisplay(selectedConversation.contact?.phone) || selectedConversation.contact?.email || "-"}
+                      {formatPhoneDisplay(selectedConversation.contact?.phone)
+                        || (selectedConversation.contact?.whatsapp_lid
+                          ? `LID: ...${selectedConversation.contact.whatsapp_lid.slice(-6)}`
+                          : null)
+                        || selectedConversation.contact?.email
+                        || "-"}
                     </p>
                     {selectedConversation.channel === "whatsapp" && (
                       <div className="flex items-center gap-1.5">
@@ -2113,33 +2118,23 @@ export default function Atendimento() {
                         size="icon" 
                         className={cn(
                           "shrink-0",
-                          isLidOnlyContact(selectedConversation?.contact)
-                            ? "bg-muted text-muted-foreground cursor-not-allowed"
-                            : "bg-accent hover:bg-accent/90"
+                          "bg-accent hover:bg-accent/90"
                         )}
                         onClick={handleSendMessage}
                         disabled={
                           (!messageText.trim() && !mediaPreview && !isRecording) || 
                           sendMessage.isPending || 
-                          isUploading ||
-                          isLidOnlyContact(selectedConversation?.contact)
+                          isUploading
                         }
                       >
                         {(sendMessage.isPending || isUploading) ? (
                           <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : isLidOnlyContact(selectedConversation?.contact) ? (
-                          <AlertTriangle className="w-5 h-5" />
                         ) : (
                           <Send className="w-5 h-5" />
                         )}
                       </Button>
                     </span>
                   </TooltipTrigger>
-                  {isLidOnlyContact(selectedConversation?.contact) && (
-                    <TooltipContent>
-                      <p>Não é possível enviar mensagens - contato sem número identificado</p>
-                    </TooltipContent>
-                  )}
                 </Tooltip>
               </TooltipProvider>
             </div>
