@@ -426,17 +426,29 @@ async function sendWebhook(url: string, payload: any): Promise<void> {
   if (!url) return;
 
   try {
+    const webhookHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    
+    // Incluir apikey para Supabase Edge Functions
+    const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || '';
+    if (SUPABASE_ANON_KEY) {
+      webhookHeaders['apikey'] = SUPABASE_ANON_KEY;
+      webhookHeaders['Authorization'] = `Bearer ${SUPABASE_ANON_KEY}`;
+    }
+
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: webhookHeaders,
       body: JSON.stringify(payload)
     });
 
     if (!response.ok) {
-      logger.warn({ status: response.status, url }, 'Webhook request failed');
+      const errorText = await response.text().catch(() => '');
+      logger.warn({ status: response.status, url, error: errorText.substring(0, 200) }, 'Webhook request failed');
+    } else {
+      logger.info({ url: url.split('?')[0] }, 'Webhook sent successfully');
     }
   } catch (err) {
-    logger.error({ err, url }, 'Error sending webhook');
+    logger.error({ err, url: url.split('?')[0] }, 'Error sending webhook');
   }
 }
 
