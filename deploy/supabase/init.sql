@@ -8,8 +8,7 @@
 -- Criar schema para extensões (necessário para self-hosted)
 CREATE SCHEMA IF NOT EXISTS extensions;
 
--- Extensões necessárias
-CREATE EXTENSION IF NOT EXISTS "pg_stat_statements" WITH SCHEMA "extensions";
+-- Extensões necessárias (pg_stat_statements removido - pode não existir no container)
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 

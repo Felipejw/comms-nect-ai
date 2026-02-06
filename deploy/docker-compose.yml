@@ -28,10 +28,12 @@ services:
     volumes:
       - ./volumes/kong/kong.yml:/home/kong/temp.yml:ro
     depends_on:
-      - rest
-      - auth
-      - storage
-      - functions
+      auth:
+        condition: service_healthy
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
     networks:
       - supabase-network
 
