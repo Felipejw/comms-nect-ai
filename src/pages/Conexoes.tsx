@@ -144,8 +144,19 @@ export default function Conexoes() {
           await refetch();
           // Reset attempts on success
           setRecreateAttempts(prev => ({ ...prev, [pollingConnection]: 0 }));
-        } catch (qrError) {
-          console.log(`[Polling] Failed to fetch QR:`, qrError);
+        } catch (qrErr: any) {
+          const errorMsg = qrErr?.message || "";
+          const isAuthError = errorMsg.includes("API Key inválida") || errorMsg.includes("401");
+          
+          if (isAuthError) {
+            console.log("[Polling] Auth error detected (401), stopping polling immediately");
+            setQrError("API Key inválida. A chave configurada no sistema não corresponde à do servidor Baileys. Corrija em Configurações > Opções > Servidor WhatsApp.");
+            setPollingConnection(null);
+            setPollCount(0);
+            return;
+          }
+          
+          console.log(`[Polling] Failed to fetch QR:`, qrErr);
           if (attempts >= 4) {
             console.log("[Polling] No QR after 5 attempts, stopping and showing error");
             setQrError("O servidor não conseguiu gerar o QR Code. Clique em 'Tentar Novamente' para recriar a instância.");
@@ -158,7 +169,20 @@ export default function Conexoes() {
         }
       }
 
-      await checkStatus.mutateAsync(pollingConnection).catch(() => {});
+      // Also check status - detect auth errors there too
+      try {
+        await checkStatus.mutateAsync(pollingConnection);
+      } catch (statusErr: any) {
+        const statusMsg = statusErr?.message || "";
+        if (statusMsg.includes("API Key inválida") || statusMsg.includes("401")) {
+          console.log("[Polling] Auth error on status check, stopping polling");
+          setQrError("API Key inválida. A chave configurada no sistema não corresponde à do servidor Baileys. Corrija em Configurações > Opções > Servidor WhatsApp.");
+          setPollingConnection(null);
+          setPollCount(0);
+          return;
+        }
+      }
+
       refetch();
     }, 5000);
 
@@ -579,9 +603,11 @@ export default function Conexoes() {
           <div className="flex flex-col items-center py-4">
             <div className="w-64 h-64 rounded-xl bg-white flex items-center justify-center p-2">
               {qrError ? (
-                <div className="flex flex-col items-center gap-2 text-destructive p-4 text-center">
-                  <AlertTriangle className="w-12 h-12" />
-                  <span className="text-sm font-medium">Erro ao gerar QR Code</span>
+                <div className="flex flex-col items-center gap-2 p-4 text-center">
+                  <AlertTriangle className={`w-12 h-12 ${qrError.includes("API Key") ? "text-amber-500" : "text-destructive"}`} />
+                  <span className="text-sm font-medium text-foreground">
+                    {qrError.includes("API Key") ? "Erro de Autenticação" : "Erro ao gerar QR Code"}
+                  </span>
                   <span className="text-xs text-muted-foreground">{qrError}</span>
                 </div>
               ) : currentQrConnection?.qr_code ? (
