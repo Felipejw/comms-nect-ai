@@ -221,8 +221,10 @@ async function processIncomingMessage(sessionName: string, msg: proto.IWebMessag
   if (!messageContent) return;
 
   const contentType = getContentType(messageContent);
-  const from = msg.key.remoteJid?.replace('@s.whatsapp.net', '').replace('@g.us', '') || '';
-  const isGroup = msg.key.remoteJid?.endsWith('@g.us') || false;
+  const rawJid = msg.key.remoteJid || '';
+  const from = rawJid.replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@lid', '');
+  const isLid = rawJid.endsWith('@lid');
+  const isGroup = rawJid.endsWith('@g.us');
 
   let body = '';
   let mediaUrl: string | null = null;
@@ -271,11 +273,14 @@ async function processIncomingMessage(sessionName: string, msg: proto.IWebMessag
     payload: {
       id: msg.key.id,
       from,
+      rawJid,
       fromMe: msg.key.fromMe || false,
       isGroup,
+      isLid,
       body,
       timestamp: msg.messageTimestamp,
       pushName: msg.pushName,
+      participant: msg.key.participant || null,
       type: mediaType,
       hasMedia: ['image', 'video', 'audio', 'ptt', 'document', 'sticker'].includes(mediaType),
       mimetype,
@@ -442,11 +447,11 @@ export async function sendMediaMessage(
 // ==========================================
 
 function formatJid(number: string): string {
+  // Se ja tem sufixo (@s.whatsapp.net, @lid, @g.us), retornar como esta
+  if (number.includes('@')) return number;
+  
   // Remover caracteres nao numericos
   const clean = number.replace(/\D/g, '');
-  
-  // Verificar se ja tem @s.whatsapp.net
-  if (number.includes('@')) return number;
   
   return `${clean}@s.whatsapp.net`;
 }
