@@ -1,0 +1,1 @@
+ALTER TABLE public.activity_logs ALTER COLUMN entity_id TYPE text USING entity_id::text;
