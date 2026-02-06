@@ -75,7 +75,23 @@ export default function Relatorios() {
               <SelectItem value="year">Este Ano</SelectItem>
             </SelectContent>
           </Select>
-          <Button variant="outline" className="gap-2">
+          <Button variant="outline" className="gap-2" onClick={() => {
+            if (!stats && agentPerformance.length === 0) {
+              return;
+            }
+            const csvRows = [
+              ["Atendente", "Atendimentos", "Resolvidos", "Tempo Médio", "Taxa Resolução"],
+              ...agentPerformance.map(a => [a.name, String(a.atendimentos), String(a.resolvidos), a.tempoMedio, a.taxaResolucao]),
+            ];
+            const csvContent = csvRows.map(r => r.join(",")).join("\n");
+            const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = `relatorio-${period}.csv`;
+            link.click();
+            URL.revokeObjectURL(url);
+          }}>
             <Download className="w-4 h-4" />
             Exportar
           </Button>
@@ -226,7 +242,7 @@ export default function Relatorios() {
                 <TableHead className="text-right">Atendimentos</TableHead>
                 <TableHead className="text-right">Resolvidos</TableHead>
                 <TableHead className="text-right">Tempo Médio</TableHead>
-                <TableHead className="text-right">Satisfação</TableHead>
+                <TableHead className="text-right">Taxa Resolução</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -237,8 +253,8 @@ export default function Relatorios() {
                   <TableCell className="text-right">{row.resolvidos}</TableCell>
                   <TableCell className="text-right">{row.tempoMedio}</TableCell>
                   <TableCell className="text-right">
-                    <Badge className={parseInt(row.satisfacao) >= 90 ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}>
-                      {row.satisfacao}
+                    <Badge className={parseInt(row.taxaResolucao) >= 80 ? "bg-success/10 text-success" : "bg-warning/10 text-warning"}>
+                      {row.taxaResolucao}
                     </Badge>
                   </TableCell>
                 </TableRow>

@@ -28,6 +28,16 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -70,6 +80,17 @@ export default function Usuarios() {
   const [isResettingPassword, setIsResettingPassword] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
   
+  // Edit user state
+  const [isEditOpen, setIsEditOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState<{ id: string; name: string; email: string } | null>(null);
+  const [editName, setEditName] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  
+  // Delete user state
+  const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [deletingUser, setDeletingUser] = useState<{ id: string; name: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  
   // Form state
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -77,11 +98,14 @@ export default function Usuarios() {
   const [newRole, setNewRole] = useState<"admin" | "atendente">("atendente");
   const [newPermissions, setNewPermissions] = useState<Record<string, PermissionState>>(getDefaultPermissions());
 
-  const filteredUsers = users.filter(
-    (u) =>
-      u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      u.email.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredUsers = users.filter((u) => {
+    if (searchQuery.startsWith("role:")) {
+      const roleFilter = searchQuery.replace("role:", "");
+      return getNormalizedRole(u.role) === roleFilter;
+    }
+    return u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      u.email.toLowerCase().includes(searchQuery.toLowerCase());
+  });
 
   const handleCreateUser = async () => {
     if (!newName.trim() || !newEmail.trim() || !newUserPassword.trim()) {
@@ -129,6 +153,56 @@ export default function Usuarios() {
 
   const handleRoleChange = async (userId: string, newRole: "admin" | "atendente") => {
     await updateRole.mutateAsync({ userId, role: newRole });
+  };
+
+  const handleOpenEdit = (user: { id: string; name: string; email: string }) => {
+    setEditingUser(user);
+    setEditName(user.name);
+    setIsEditOpen(true);
+  };
+
+  const handleEditUser = async () => {
+    if (!editingUser || !editName.trim()) return;
+    setIsEditing(true);
+    try {
+      const { error } = await supabase
+        .from("profiles")
+        .update({ name: editName.trim() })
+        .eq("user_id", editingUser.id);
+      if (error) throw error;
+      toast.success("Atendente atualizado com sucesso!");
+      setIsEditOpen(false);
+      setEditingUser(null);
+      refetch();
+    } catch (error) {
+      toast.error("Erro ao atualizar: " + (error as Error).message);
+    } finally {
+      setIsEditing(false);
+    }
+  };
+
+  const handleOpenDelete = (user: { id: string; name: string }) => {
+    setDeletingUser(user);
+    setIsDeleteOpen(true);
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deletingUser) return;
+    setIsDeleting(true);
+    try {
+      const { error } = await supabase.functions.invoke("delete-user", {
+        body: { userId: deletingUser.id },
+      });
+      if (error) throw error;
+      toast.success("Atendente excluído com sucesso!");
+      setIsDeleteOpen(false);
+      setDeletingUser(null);
+      refetch();
+    } catch (error) {
+      toast.error("Erro ao excluir: " + (error as Error).message);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const handleOpenPermissions = (userId: string, userName: string) => {
@@ -339,10 +413,25 @@ export default function Usuarios() {
             className="pl-9"
           />
         </div>
-        <Button variant="outline" className="gap-2">
-          <Filter className="w-4 h-4" />
-          Filtrar
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" className="gap-2">
+              <Filter className="w-4 h-4" />
+              Filtrar
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setSearchQuery("")}>
+              Todos
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSearchQuery("role:admin")}>
+              Administradores
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setSearchQuery("role:atendente")}>
+              Atendentes
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <div className="table-container overflow-x-auto">
@@ -439,7 +528,7 @@ export default function Usuarios() {
                               Gerenciar Permissões
                             </DropdownMenuItem>
                           )}
-                          <DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleOpenEdit({ id: user.id, name: user.name, email: user.email })}>
                             <Edit className="w-4 h-4 mr-2" />
                             Editar
                           </DropdownMenuItem>
@@ -447,7 +536,7 @@ export default function Usuarios() {
                             <Key className="w-4 h-4 mr-2" />
                             Redefinir senha
                           </DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive">
+                          <DropdownMenuItem className="text-destructive" onClick={() => handleOpenDelete({ id: user.id, name: user.name })}>
                             <Trash2 className="w-4 h-4 mr-2" />
                             Excluir
                           </DropdownMenuItem>
@@ -540,6 +629,48 @@ export default function Usuarios() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Edit User Dialog */}
+      <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Editar Atendente</DialogTitle>
+            <DialogDescription>Altere o nome do atendente {editingUser?.name}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Nome</Label>
+              <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Nome completo" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditOpen(false)}>Cancelar</Button>
+            <Button onClick={handleEditUser} disabled={isEditing || !editName.trim()}>
+              {isEditing && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete User Confirmation */}
+      <AlertDialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir atendente?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tem certeza que deseja excluir "{deletingUser?.name}"? Esta ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteUser} disabled={isDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {isDeleting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Excluir
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

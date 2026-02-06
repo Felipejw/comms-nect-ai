@@ -170,9 +170,9 @@ export function useUnreadMessageCounts(userId: string) {
 
       if (error) throw error;
 
-      const counts = new Map<string, number>();
+      const counts: Record<string, number> = {};
       data?.forEach(msg => {
-        counts.set(msg.sender_id, (counts.get(msg.sender_id) || 0) + 1);
+        counts[msg.sender_id] = (counts[msg.sender_id] || 0) + 1;
       });
 
       return counts;

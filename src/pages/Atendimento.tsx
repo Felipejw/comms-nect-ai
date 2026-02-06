@@ -317,7 +317,7 @@ export default function Atendimento() {
       const matchesStatus = statusFilter.length === 0 || statusFilter.includes(c.status);
       
       // Tag filter
-      const matchesTags = tagFilter.length === 0;
+      const matchesTags = tagFilter.length === 0 || (c.tags?.some(t => tagFilter.includes(t.id)) ?? false);
       
       // Queue filter
       const matchesQueue = queueFilter === 'all' || c.queue_id === queueFilter;
