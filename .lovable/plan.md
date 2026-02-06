@@ -1,45 +1,49 @@
 
 
-# Correcoes: Indicador LID e Bug "Gerenciar Tags"
+# Melhorar exibicao de contatos LID na pagina de Contatos
 
-## Problema 1 - Icone de alerta no "Contato sem numero identificado"
+## Situacao Atual
 
-O indicador de contato LID (sem numero real) usa o icone `AlertTriangle` e o estilo `variant="destructive"`, o que transmite a impressao de erro. Na verdade, e apenas um aviso informativo.
+Na pagina de Contatos, os contatos que vieram do WhatsApp possuem apenas um identificador interno (LID) e nao o numero de telefone real. Atualmente, a coluna "Telefone" mostra "-" com um badge "LID", o que nao e informativo.
 
-**Alteracoes**:
+O problema raiz: o WhatsApp mais recente usa identificadores LID ao inves de numeros de telefone em algumas situacoes. O sistema tem uma funcao para resolver esses LIDs (`resolve-lid-contact`), mas ela so e chamada manualmente na tela de Atendimento.
 
-### Arquivo: `src/components/atendimento/LidContactIndicator.tsx`
-- Trocar o icone `AlertTriangle` por `Info` (do lucide-react)
-- Mudar o `variant` do Alert de `"destructive"` para nenhum (padrao), mantendo o estilo visual `border-warning/50 bg-warning/10`
-- Atualizar o titulo para algo mais neutro, como "Contato com identificador temporario"
+## Solucao
 
-### Arquivo: `src/pages/Atendimento.tsx`
-- Na lista de conversas (linha ~1526): trocar o icone `AlertTriangle` no badge do avatar por `Info`, com cor mais suave
-- No header da conversa (linha ~1734): trocar `AlertTriangle` por `Info` e ajustar o tooltip para tom informativo
+Melhorar a exibicao na pagina de Contatos para:
+1. Mostrar "Pendente" em vez de "-" com badge "LID" 
+2. Adicionar botao para tentar resolver o numero individualmente
+3. Adicionar botao de resolucao em massa para todos os contatos com LID
 
 ---
 
-## Problema 2 - "Gerenciar tags" nao abre ao clicar
+## Detalhes Tecnicos
 
-O botao "Gerenciar tags" no `DropdownMenu` (menu de opcoes da conversa) chama `setShowTagPopover(true)`. Porem, o `Popover` das tags esta vinculado a um `PopoverTrigger` que e um botao separado no header. Quando o `DropdownMenu` fecha (ao clicar no item), ele captura o foco e impede que o `Popover` abra corretamente -- um conflito conhecido entre Radix `DropdownMenu` e `Popover`.
+### Arquivo: `src/pages/Contatos.tsx`
 
-**Solucao**: Usar um `setTimeout` para atrasar a abertura do Popover, garantindo que o `DropdownMenu` tenha tempo de fechar completamente antes do Popover abrir.
+**Alteracao 1 - Coluna Telefone (linhas 604-621)**
 
-### Arquivo: `src/pages/Atendimento.tsx`
-- No `DropdownMenuItem` de "Gerenciar tags" (linha ~1828): envolver o `setShowTagPopover(true)` em um `setTimeout` com delay de ~100ms para que o DropdownMenu feche antes do Popover tentar abrir
+Substituir a exibicao atual:
+- Em vez de mostrar "-" com badge "LID", mostrar "Pendente" com um botao pequeno para tentar resolver o numero
+- Quando o contato tem `whatsapp_lid` mas nao tem `phone`, exibir:
+  - Texto "Pendente" em cor suave
+  - Botao com icone de busca para chamar `resolve-lid-contact`
+  - Mostrar o numero real se a resolucao for bem-sucedida
 
-```text
-onClick={() => {
-  setTimeout(() => setShowTagPopover(true), 100);
-}}
-```
+**Alteracao 2 - Botao "Resolver Numeros" na barra de acoes**
 
----
+Adicionar um botao ao lado do "Sincronizar" para resolver todos os contatos LID de uma vez:
+- Contar quantos contatos tem LID sem telefone real
+- Ao clicar, iterar sobre esses contatos chamando `resolve-lid-contact` para cada um
+- Mostrar progresso e resultado
 
-## Resumo das Alteracoes
+**Alteracao 3 - Substituir icone AlertTriangle por Info**
+
+Trocar `AlertTriangle` por `Info` na importacao e nos indicadores de LID (consistente com as mudancas feitas na tela de Atendimento).
+
+### Resumo das Alteracoes
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `src/components/atendimento/LidContactIndicator.tsx` | Trocar `AlertTriangle` por `Info`; remover `variant="destructive"` |
-| `src/pages/Atendimento.tsx` | Trocar icones `AlertTriangle` por `Info` nos indicadores LID; adicionar `setTimeout` no "Gerenciar tags" |
+| `src/pages/Contatos.tsx` | Melhorar exibicao da coluna Telefone para contatos LID; adicionar botao de resolucao individual e em massa; trocar AlertTriangle por Info |
 
