@@ -4,13 +4,14 @@ import makeWASocket, {
   WASocket,
   proto,
   downloadMediaMessage,
-  getContentType
-} from '@whiskeysockets/baileys';
+  getContentType,
+  fetchLatestBaileysVersion
+} from 'baileys';
 import { Boom } from '@hapi/boom';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as QRCode from 'qrcode';
-import { logger } from './logger';
+import { logger } from './logger.js';
 
 // ==========================================
 // Tipos
@@ -67,10 +68,15 @@ export async function createSession(name: string, webhookUrl: string): Promise<S
   const sessionPath = path.join(SESSIONS_DIR, name);
   const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
+  // Buscar versao mais recente do protocolo WhatsApp
+  const { version } = await fetchLatestBaileysVersion();
+  logger.info({ version }, 'Using WA version');
+
   const sock = makeWASocket({
     auth: state,
     logger: logger as any,
     browser: ['CommsNect', 'Chrome', '120.0.0'],
+    version,
     connectTimeoutMs: 60000,
     qrTimeout: 60000,
     defaultQueryTimeoutMs: 60000,
