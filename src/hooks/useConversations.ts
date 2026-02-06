@@ -79,9 +79,9 @@ export interface Conversation {
 export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | 'archived') {
   const queryClient = useQueryClient();
 
-  // Subscribe to realtime updates for conversations
+  // Subscribe to realtime updates for conversations and contacts
   useEffect(() => {
-    const channel = supabase
+    const conversationsChannel = supabase
       .channel('conversations-realtime')
       .on(
         'postgres_changes',
@@ -91,14 +91,30 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
           table: 'conversations',
         },
         () => {
-          // Invalidate queries to refetch with updated data
           queryClient.invalidateQueries({ queryKey: ['conversations'] });
         }
       )
       .subscribe();
 
+    const contactsChannel = supabase
+      .channel('contacts-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'contacts',
+        },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          queryClient.invalidateQueries({ queryKey: ['contacts'] });
+        }
+      )
+      .subscribe();
+
     return () => {
-      supabase.removeChannel(channel);
+      supabase.removeChannel(conversationsChannel);
+      supabase.removeChannel(contactsChannel);
     };
   }, [queryClient, status]);
 
