@@ -1,112 +1,88 @@
 
-# Plano: Conectar Baileys ao Nginx Unificado
 
-## Diagnóstico
+# Plano: Conectar Baileys Automaticamente a Rede do Supabase
 
-O setup atual:
-- **app-nginx**: Container Nginx nas portas 80/443, na rede `supabase-network`
-- **baileys-server**: Container Baileys na porta 3000, em rede separada (bridge padrão)
+## Problema
 
-O arquivo `deploy/nginx/nginx.conf` já tem a configuração para `/baileys/`:
-```nginx
-location /baileys/ {
-    set $upstream_baileys baileys:3000;  # <- Espera container "baileys" na mesma rede
-    ...
-}
+O arquivo `deploy/baileys/docker-compose.yml` nao declara nenhuma rede Docker. Quando voce sobe o Baileys com `docker compose up`, ele cria sua propria rede isolada. O Nginx (container `app-nginx`) esta na rede `deploy_supabase-network` e nao consegue se comunicar com o `baileys-server`, resultando no erro 502.
+
+## Solucao
+
+Modificar o `deploy/baileys/docker-compose.yml` para conectar o container `baileys-server` a rede `deploy_supabase-network` como rede externa.
+
+### Alteracao no arquivo `deploy/baileys/docker-compose.yml`
+
+Adicionar:
+- A rede `deploy_supabase-network` como rede externa na secao `networks` do arquivo
+- A referencia a essa rede no servico `baileys`
+
+O arquivo ficara assim:
+
+```yaml
+services:
+  baileys:
+    build: .
+    container_name: baileys-server
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - API_KEY=${API_KEY}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+      - NODE_ENV=production
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      - ./sessions:/app/sessions
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - supabase-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  supabase-network:
+    name: deploy_supabase-network
+    external: true
 ```
 
-Mas o container se chama `baileys-server` e está em outra rede Docker.
+## O que muda
 
-## Solução
+| Antes | Depois |
+|-------|--------|
+| Container em rede isolada | Container na mesma rede do Nginx e Supabase |
+| Precisa de `docker network connect` manual | Conexao automatica ao subir o container |
+| Erro 502 no proxy | Nginx resolve `baileys-server:3000` via DNS interno |
 
-### Passo 1: Conectar o container à rede correta
+## Passos apos publicacao
 
-Execute no VPS:
+No VPS, basta recriar o container do Baileys:
+
 ```bash
-sudo docker network connect deploy_supabase-network baileys-server
+cd /caminho/do/baileys
+sudo docker compose down
+sudo docker compose up -d --build
 ```
 
-### Passo 2: Atualizar a configuração do Nginx
+E recarregar o Nginx:
 
-O arquivo `deploy/nginx/nginx.conf` precisa ser atualizado para usar o nome correto do container (`baileys-server` em vez de `baileys`).
-
-**Modificação em** `deploy/nginx/nginx.conf`:
-
-Na linha que define o upstream do Baileys, alterar:
-```nginx
-# De:
-set $upstream_baileys baileys:3000;
-
-# Para:
-set $upstream_baileys baileys-server:3000;
-```
-
-### Passo 3: Aplicar a configuração
-
-Após a modificação do arquivo e publicação, no VPS executar:
 ```bash
-# Ir para o diretório do deploy unificado
-cd /caminho/do/deploy  # (onde está o docker-compose.yml principal)
-
-# Recarregar a configuração do Nginx
 sudo docker exec app-nginx nginx -s reload
 ```
 
-## Alternativa Rápida (Sem editar arquivos)
+Depois testar:
 
-Se preferir uma correção imediata sem aguardar publicação, você pode:
-
-1. Conectar à rede:
-```bash
-sudo docker network connect deploy_supabase-network baileys-server
-```
-
-2. Criar um alias de rede para o container:
-```bash
-sudo docker network disconnect deploy_supabase-network baileys-server
-sudo docker network connect --alias baileys deploy_supabase-network baileys-server
-```
-
-Isso faz o container `baileys-server` responder pelo nome `baileys` dentro da rede, sem precisar modificar o nginx.conf.
-
-3. Testar:
 ```bash
 curl https://chatbotvital.store/baileys/health
 ```
 
-## Resultado Esperado
+## Secao Tecnica
 
-Após a correção, o fluxo será:
-```
-Frontend -> Edge Function -> https://chatbotvital.store/baileys/...
-                                      |
-                              app-nginx (443)
-                                      |
-                              baileys-server:3000 (via rede Docker)
-                                      |
-                              Retorna JSON com QR Code
-```
-
-## Seção Técnica
-
-### Por que o erro ocorria
-
-1. O Nginx dentro do container tentava resolver `baileys:3000`
-2. Como `baileys-server` estava em outra rede Docker, o DNS não encontrava
-3. O Nginx retornava 502 Bad Gateway
-4. A Edge Function recebia HTML de erro em vez de JSON
-
-### Verificação da rede atual
-
-Para confirmar o nome da rede, execute:
-```bash
-sudo docker network ls | grep -E "supabase|deploy"
-```
-
-A rede provavelmente se chama `deploy_supabase-network` (prefixo do diretório + nome definido no compose).
-
-### Arquivos a modificar
-
-| Arquivo | Alteração |
-|---------|-----------|
-| `deploy/nginx/nginx.conf` | Linha 159: mudar `baileys:3000` para `baileys-server:3000` |
+A chave da solucao e declarar a rede como `external: true` com o atributo `name: deploy_supabase-network`. Isso indica ao Docker Compose que a rede ja existe (criada pelo compose principal do Supabase) e o container deve se juntar a ela em vez de criar uma nova. O atributo `name` e necessario porque o Docker Compose prefixa automaticamente o nome do diretorio ao nome da rede -- sem ele, o compose tentaria criar `baileys_supabase-network` em vez de usar `deploy_supabase-network`.
