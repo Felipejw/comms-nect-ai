@@ -1,91 +1,119 @@
 
 
-# Fix: Mensagens recebidas no WhatsApp nao aparecem no sistema
+# Fix: Mensagens nao aparecem e numero incorreto
 
-## Problema Diagnosticado
+## Problemas Identificados
 
-O servidor Baileys no VPS esta recebendo as mensagens do WhatsApp corretamente, porem **nao esta enviando os webhooks** para o sistema. A Edge Function `baileys-webhook` nao tem nenhum log, confirmando que nunca foi chamada.
+Foram encontrados **3 problemas** que precisam ser corrigidos:
 
-Existem **dois problemas** a corrigir:
+### 1. Mensagem nao e salva no banco de dados
+O log da Edge Function mostra o erro:
+```text
+Could not find the 'external_id' column of 'messages' in the schema cache
+```
+O webhook tenta inserir um campo `external_id` na tabela `messages`, mas essa coluna nao existe. Por isso a mensagem "Ola" nunca foi gravada, e a conversa aparece vazia.
 
-1. **VPS: Variaveis de ambiente provavelmente vazias** -- O `.env` do Docker no VPS precisa ter `WEBHOOK_URL` e `SUPABASE_ANON_KEY` preenchidos corretamente para que o webhook funcione.
+### 2. Numero de telefone e na verdade um LID (identificador interno do WhatsApp)
+O numero `249687990878288` nao e um telefone real -- e um LID (Linked ID) do WhatsApp. O webhook recebe `from: "249687990878288@lid"` e remove apenas o `@lid`, armazenando o LID como se fosse um telefone. O sistema deveria:
+- Detectar o sufixo `@lid` no campo `from`
+- Armazenar o valor no campo `whatsapp_lid` do contato (em vez do campo `phone`)
+- Marcar o contato como "LID-only" para que o alerta apareca na tela
 
-2. **Codigo: `restoreSessions()` nao e chamado ao iniciar** -- O `index.ts` do Baileys nao chama `restoreSessions()` no startup, entao apos rebuild/restart do Docker, as sessoes anteriores sao perdidas e novas sessoes criadas pelo edge function podem nao ter o webhook configurado corretamente.
+Atualmente, o detector `isLidOnlyContact` so identifica numeros com mais de 15 digitos, mas este LID tem exatamente 15, passando despercebido.
+
+### 3. Nao consegue enviar mensagens
+A chamada ao `send-whatsapp` falha com "Failed to fetch" (timeout). Alem disso, o LID armazenado como telefone passa pela validacao de tamanho (10-15 chars), mas nao e um numero real de telefone, entao o Baileys nao conseguiria enviar a mensagem para ele.
 
 ## Plano de Correcao
 
-### Etapa 1: Atualizar o `index.ts` do repositorio
+### Etapa 1: Adicionar coluna delivery_status na tabela messages (migracao)
+Remover a referencia ao campo `external_id` no webhook e garantir que a mensagem seja salva com os campos corretos.
 
-Adicionar a chamada de `restoreSessions()` ao iniciar o servidor, para que sessoes existentes sejam restauradas automaticamente com a URL de webhook correta.
+### Etapa 2: Corrigir o webhook para tratar LID corretamente
+**Arquivo:** `supabase/functions/baileys-webhook/index.ts`
 
-**Arquivo:** `deploy/baileys/src/index.ts`
+- Remover `external_id` do insert na tabela messages (campo nao existe)
+- Detectar se o `from` termina em `@lid` no payload original
+- Se for LID: armazenar no campo `whatsapp_lid` do contato e deixar `phone` como `null`
+- Se for numero real: armazenar no campo `phone` normalmente
 
-Alterar o final do arquivo para:
+### Etapa 3: Corrigir a deteccao de LID no frontend
+**Arquivo:** `src/components/atendimento/LidContactIndicator.tsx`
+
+- Ajustar a funcao `isLidOnlyContact` para tambem detectar o contato atual que tem um LID armazenado como phone (numero `249687990878288`)
+- Contatos sem phone E sem whatsapp_lid tambem devem ser tratados
+
+### Etapa 4: Corrigir o send-whatsapp para LID
+**Arquivo:** `supabase/functions/send-whatsapp/index.ts`
+
+- Quando o contato so tem LID, tentar enviar usando o LID diretamente via Baileys (o protocolo suporta envio para LID com sufixo `@lid`)
+- Melhorar os logs para diagnostico
+
+### Etapa 5: Corrigir o contato existente no banco
+Atualizar o contato `249687990878288` para mover o LID para o campo correto:
+- Mover `phone` para `whatsapp_lid`
+- Limpar `phone` (sera preenchido quando o numero real for descoberto)
+
+## Detalhes Tecnicos
+
+### Alteracoes no banco de dados:
 ```text
-import { ..., restoreSessions } from './baileys.js';
+UPDATE contacts 
+SET whatsapp_lid = phone, phone = NULL 
+WHERE phone = '249687990878288';
+```
 
-app.listen(PORT, async () => {
-  logger.info({ port: PORT }, 'Baileys server started');
-  console.log(`Baileys server running on port ${PORT}`);
-  
-  // Restaurar sessoes existentes
-  try {
-    await restoreSessions();
-    logger.info('Sessions restored successfully');
-  } catch (err) {
-    logger.error({ err }, 'Error restoring sessions');
-  }
+### Alteracoes no webhook (baileys-webhook):
+```text
+// Antes:
+const from = msg.from?.replace("@s.whatsapp.net", "").replace("@g.us", "") || "";
+
+// Depois:
+const rawFrom = msg.from || "";
+const isLid = rawFrom.endsWith("@lid");
+const from = rawFrom.replace("@s.whatsapp.net", "").replace("@g.us", "").replace("@lid", "");
+
+// Na criacao do contato:
+if (isLid) {
+  // Armazenar como whatsapp_lid, nao como phone
+  contact = await createContact({ whatsapp_lid: from, phone: null, ... });
+} else {
+  contact = await createContact({ phone: from, ... });
+}
+```
+
+### Alteracoes no insert de mensagens:
+```text
+// Remover external_id que nao existe na tabela
+const { error } = await supabaseClient.from("messages").insert({
+  conversation_id: conversation.id,
+  content: body,
+  message_type: messageType,
+  media_url: mediaUrl,
+  sender_type: "contact",
+  // external_id: messageId,  <-- REMOVER
+  is_read: false,
 });
 ```
 
-### Etapa 2: Melhorar logs de webhook no `baileys.ts`
-
-Adicionar log mais detalhado na funcao `sendWebhook` para facilitar diagnostico:
-
-**Arquivo:** `deploy/baileys/src/baileys.ts`
-
-Na funcao `sendWebhook`, adicionar log do URL e status de resposta para facilitar debug no VPS.
-
-### Etapa 3: Orientar usuario a configurar `.env` no VPS
-
-O usuario precisara executar no VPS:
-
+### Alteracoes no send-whatsapp:
 ```text
-# Verificar .env atual
-cat /opt/baileys/.env
-
-# Preencher as variaveis obrigatorias
-sudo tee -a /opt/baileys/.env << 'EOF'
-WEBHOOK_URL=https://qducanwbpleoceynmend.supabase.co/functions/v1/baileys-webhook
-SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFkdWNhbndicGxlb2NleW5tZW5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcwNTUxODIsImV4cCI6MjA4MjYzMTE4Mn0.1EQ_XXifnOx3REsjE9ZCbd7dYC7IvXxEjZFIP25vmOA
-EOF
+// Para contatos LID, enviar com sufixo @lid
+if (whatsappLid && (!phone || phone.length > 15)) {
+  phoneToSend = whatsappLid;
+  // Enviar para LID@lid no Baileys
+}
 ```
 
-Depois, rebuild:
-```text
-sudo docker compose down
-sudo docker compose up -d
-sudo docker compose logs -f baileys
-```
+## Arquivos a modificar:
+- `supabase/functions/baileys-webhook/index.ts` -- corrigir insert e tratamento de LID
+- `supabase/functions/send-whatsapp/index.ts` -- suportar envio para LID
+- `src/components/atendimento/LidContactIndicator.tsx` -- melhorar deteccao de LID
+- Migracao SQL para corrigir o contato existente
 
-### Etapa 4: Melhorar a Edge Function `baileys-webhook`
-
-Adicionar log mais informativo na entrada da funcao para confirmar que esta sendo chamada e com que dados, facilitando debug futuro.
-
-## Resumo Tecnico
-
-```text
-Fluxo atual (quebrado):
-  WhatsApp -> Baileys Server -> [webhook nao enviado] -> baileys-webhook -> DB
-
-Fluxo corrigido:
-  WhatsApp -> Baileys Server -> POST /functions/v1/baileys-webhook -> DB -> Realtime -> UI
-```
-
-**Arquivos a modificar:**
-- `deploy/baileys/src/index.ts` -- adicionar `restoreSessions()` no startup
-- `deploy/baileys/src/baileys.ts` -- melhorar logs do webhook
-- `supabase/functions/baileys-webhook/index.ts` -- melhorar logs de entrada
-
-**Apos implementar:** O usuario precisara atualizar os arquivos no VPS e reconstruir o container Docker.
-
+## Resultado esperado:
+Apos as correcoes:
+1. Mensagens recebidas serao salvas corretamente no banco
+2. Contatos LID serao identificados e marcados com o alerta
+3. O sistema tentara resolver o numero real automaticamente
+4. Envio de mensagens funcionara tanto para numeros reais quanto para LIDs
