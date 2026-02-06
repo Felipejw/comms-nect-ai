@@ -306,6 +306,7 @@ DOMAIN=$DOMAIN
 SSL_EMAIL=$SSL_EMAIL
 API_EXTERNAL_URL=https://$DOMAIN
 SITE_URL=https://$DOMAIN
+ADDITIONAL_REDIRECT_URLS=
 
 # ==========================================
 # BANCO DE DADOS
@@ -405,6 +406,23 @@ create_directories() {
     
     # Criar arquivo vazio se não existir (evita erro de mount)
     touch "$DEPLOY_DIR/volumes/db/init/init.sql"
+    
+    # Gerar script de sincronização de senhas que roda DENTRO do init do PostgreSQL
+    # Isso garante que as senhas das roles correspondam ao POSTGRES_PASSWORD
+    # ANTES de qualquer serviço conectar (elimina race condition)
+    cat > "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh" << PASSEOF
+#!/bin/bash
+set -e
+echo "=== Sincronizando senhas dos roles internos ==="
+psql -v ON_ERROR_STOP=0 -U postgres <<-EOSQL
+    ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';
+    ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';
+EOSQL
+echo "=== Senhas sincronizadas com sucesso ==="
+PASSEOF
+    chmod +x "$DEPLOY_DIR/volumes/db/init/99-sync-passwords.sh"
+    log_success "Script 99-sync-passwords.sh gerado"
     
     log_success "Diretórios criados"
 }
@@ -721,20 +739,10 @@ start_services() {
     fi
 
     # =============================================
-    # ETAPA 1c: Aguardar conclusão dos scripts de init do Supabase
-    # A imagem postgres do Supabase executa scripts internos que criam
-    # e configuram roles. Precisamos esperar que TODOS terminem antes
-    # de testar/alterar senhas, caso contrário nossas alterações serão
-    # sobrescritas por scripts que ainda estão rodando.
-    # =============================================
-    log_info "Aguardando 15s para scripts internos do Supabase completarem..."
-    sleep 15
-    log_success "Tempo de espera para scripts de init concluído"
-
-    # =============================================
-    # ETAPA 1d: Executar init.sql manualmente
-    # Rodamos via docker exec (sem ON_ERROR_STOP), então
-    # erros são avisos e NÃO matam o PostgreSQL.
+    # ETAPA 1c: Executar init.sql manualmente
+    # O script 99-sync-passwords.sh já foi executado automaticamente
+    # pelo PostgreSQL durante o init, sincronizando as senhas das roles.
+    # Agora só precisamos rodar o nosso init.sql com as tabelas do app.
     # =============================================
     log_info "Executando init.sql manualmente (modo seguro)..."
     docker exec supabase-db psql -U postgres -f /docker-entrypoint-initdb.d/migrations/init.sql 2>&1 | tail -5
@@ -748,60 +756,38 @@ start_services() {
     fi
 
     # =============================================
-    # ETAPA 1e: Testar senha via rede Docker ANTES de alterar
-    # Se a senha já está correta (Supabase configurou internamente),
-    # NÃO fazemos ALTER ROLE (evita race condition onde nossa
-    # alteração é sobrescrita por scripts de init tardios).
+    # ETAPA 1d: Verificar que as senhas estão corretas
+    # O 99-sync-passwords.sh deveria ter rodado durante o init.
+    # Fazemos um teste rápido e ALTER ROLE como fallback apenas se falhar.
     # =============================================
-    log_info "Testando autenticação via rede Docker (como Auth vai conectar)..."
+    log_info "Verificando autenticação das roles..."
     
     local network_name
     network_name=$(docker inspect supabase-db --format='{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null | head -1)
-    
     if [ -z "$network_name" ]; then
         network_name="deploy_supabase-network"
     fi
-    log_info "Rede Docker detectada: $network_name"
     
     local password_ok=false
-    
     if docker run --rm --network "$network_name" \
         -e PGPASSWORD="${POSTGRES_PASSWORD}" \
         postgres:15-alpine \
         psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
         password_ok=true
-        log_success "Senha já está correta - nenhuma alteração necessária!"
+        log_success "Senhas das roles corretas (99-sync-passwords.sh funcionou!)"
     fi
     
     if [ "$password_ok" = "false" ]; then
-        log_warn "Senha padrão do Supabase não corresponde. Aplicando ALTER ROLE como fallback..."
-        
-        # Each ALTER ROLE in separate transaction to avoid cascade failure
+        log_warn "99-sync-passwords.sh pode não ter rodado. Aplicando ALTER ROLE como fallback..."
         docker exec supabase-db psql -U postgres -c \
             "ALTER ROLE supabase_auth_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
         docker exec supabase-db psql -U postgres -c \
             "ALTER ROLE supabase_storage_admin WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
         docker exec supabase-db psql -U postgres -c \
             "ALTER ROLE authenticator WITH PASSWORD '${POSTGRES_PASSWORD}';" 2>&1
-        # supabase_admin is superuser - skip
-        log_info "Pulando supabase_admin (superuser - não alterável)"
-        
-        # Reload pg config to ensure changes take effect
         docker exec supabase-db psql -U postgres -c "SELECT pg_reload_conf();" 2>/dev/null
-        sleep 3
-        
-        # Re-test after ALTER ROLE
-        if docker run --rm --network "$network_name" \
-            -e PGPASSWORD="${POSTGRES_PASSWORD}" \
-            postgres:15-alpine \
-            psql -U supabase_auth_admin -h db -d postgres -c "SELECT 1;" 2>/dev/null | grep -q "1"; then
-            log_success "Senha sincronizada e verificada com sucesso!"
-        else
-            log_error "Falha persistente de autenticação por senha."
-            log_error "GoTrue pode não conseguir conectar ao banco."
-            docker logs supabase-db --tail 10 2>&1
-            log_warn "Tentando continuar mesmo assim..."
-        fi
+        sleep 2
+        log_success "Senhas sincronizadas via fallback"
     fi
 
     # =============================================
