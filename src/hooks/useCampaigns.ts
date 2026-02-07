@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getUserTenantId } from '@/lib/tenant';
 
 export interface Campaign {
   id: string;
@@ -175,9 +176,10 @@ export function useCreateCampaign() {
       max_interval?: number;
       template_id?: string;
     }) => {
+      const tenant_id = await getUserTenantId();
       const { data, error } = await supabase
         .from('campaigns')
-        .insert(input)
+        .insert({ ...input, tenant_id })
         .select()
         .single();
 
@@ -264,9 +266,11 @@ export function useAddContactsToCampaign() {
 
   return useMutation({
     mutationFn: async ({ campaignId, contactIds }: { campaignId: string; contactIds: string[] }) => {
+      const tenant_id = await getUserTenantId();
       const inserts = contactIds.map(contact_id => ({
         campaign_id: campaignId,
         contact_id,
+        tenant_id,
       }));
 
       const { error } = await supabase

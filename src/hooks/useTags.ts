@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getUserTenantId } from '@/lib/tenant';
 
 export interface Tag {
   id: string;
@@ -30,9 +31,10 @@ export function useCreateTag() {
 
   return useMutation({
     mutationFn: async (input: { name: string; color: string; description?: string }) => {
+      const tenant_id = await getUserTenantId();
       const { data, error } = await supabase
         .from('tags')
-        .insert(input)
+        .insert({ ...input, tenant_id })
         .select()
         .single();
 
@@ -101,9 +103,10 @@ export function useAddTagToContact() {
 
   return useMutation({
     mutationFn: async ({ contactId, tagId }: { contactId: string; tagId: string }) => {
+      const tenant_id = await getUserTenantId();
       const { error } = await supabase
         .from('contact_tags')
-        .insert({ contact_id: contactId, tag_id: tagId });
+        .insert({ contact_id: contactId, tag_id: tagId, tenant_id });
 
       if (error) throw error;
     },

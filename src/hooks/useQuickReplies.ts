@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getUserTenantId } from '@/lib/tenant';
 
 export interface QuickReply {
   id: string;
@@ -40,9 +41,10 @@ export function useCreateQuickReply() {
       category?: string;
       created_by?: string;
     }) => {
+      const tenant_id = await getUserTenantId();
       const { data, error } = await supabase
         .from('quick_replies')
-        .insert(input)
+        .insert({ ...input, tenant_id })
         .select()
         .single();
 
