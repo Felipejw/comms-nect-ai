@@ -1,141 +1,182 @@
 
 
-# Correção: Incluir tenant_id em todas as operações de criação
+# Simplificacao: Remover Multi-Tenancy (Uma Unica Empresa)
 
-## O que está acontecendo (explicação simples)
+## Por que isso resolve o problema
 
-O sistema é multi-empresa (multi-tenant). Cada dado no banco pertence a uma empresa identificada por um `tenant_id`. Quando o código cria um contato, ele não informa a qual empresa o contato pertence, e o banco rejeita a operação por segurança.
+Hoje, **cada operacao de salvar** precisa informar o `tenant_id` (identificador da empresa). Quando isso nao vai junto, o banco bloqueia por seguranca. Isso eh a causa dos erros que voce esta vendo.
 
-O mesmo problema pode afetar outras operações de criação (tags, agendamentos, campanhas, etc).
+Removendo esse sistema, as operacoes de salvar passam a funcionar diretamente, sem precisar identificar empresa nenhuma.
 
-## O que será feito
+## O que sera removido
 
-### 1. Corrigir criação de contatos (useContacts.ts)
+- Tabelas: `tenants`, `tenant_settings`, `tenant_subscriptions`, `subscription_plans`, `subscription_payments`, `products`, `sales`
+- Coluna `tenant_id` de todas as tabelas de dados (contacts, conversations, messages, tags, etc.)
+- Paginas: Super Admin, Onboarding (configurar empresa)
+- Componentes: SubscriptionBlocker, SuperAdminTenants, SuperAdminProducts, SuperAdminSales, SuperAdminPlans, SuperAdminStats
+- Hooks: useTenant, useSubscription, useSales, useProducts
+- Helper: `src/lib/tenant.ts` (getUserTenantId)
+- Funcao de edge: setup-tenant
+- Rota `/super-admin` e `/onboarding`
 
-Adicionar `tenant_id` do usuário logado ao criar um contato:
+## O que sera mantido
 
-```typescript
-// ANTES (sem tenant_id):
-const { data, error } = await supabase
-  .from('contacts')
-  .insert(input)
+- Sistema de **roles** (admin, manager, operator) - continua funcionando normalmente
+- Sistema de **permissoes** por modulo - continua funcionando
+- Todas as funcionalidades do sistema (atendimento, chatbot, campanhas, contatos, etc.)
+- Autenticacao e login
 
-// DEPOIS (com tenant_id):
-const { data: { user } } = await supabase.auth.getUser();
-const { data: profile } = await supabase
-  .from('profiles')
-  .select('tenant_id')
-  .eq('user_id', user.id)
-  .single();
+## Passo a passo da implementacao
 
-const { data, error } = await supabase
-  .from('contacts')
-  .insert({ ...input, tenant_id: profile.tenant_id })
+### 1. Banco de dados - Simplificar politicas RLS
+
+Recriar todas as politicas de seguranca (RLS) sem referencia a `tenant_id`. Exemplo:
+
+Antes:
+```sql
+CREATE POLICY "Users can view contacts" ON contacts 
+  FOR SELECT USING (
+    is_super_admin(auth.uid()) 
+    OR tenant_id = get_user_tenant_id(auth.uid()) 
+    OR tenant_id IS NULL
+  );
 ```
 
-### 2. Corrigir importação de contatos (Contatos.tsx)
+Depois:
+```sql
+CREATE POLICY "Authenticated users can view contacts" ON contacts 
+  FOR SELECT USING (auth.uid() IS NOT NULL);
+```
 
-A importação de CSV também não inclui `tenant_id`. Será corrigido da mesma forma.
+Isso sera feito para todas as ~25 tabelas que usam tenant_id.
 
-### 3. Corrigir todas as outras tabelas que precisam de tenant_id
+### 2. Banco de dados - Remover coluna tenant_id
 
-Verificar e corrigir os hooks de criação para todas as tabelas que exigem `tenant_id`:
+Depois de atualizar as politicas, remover a coluna `tenant_id` das tabelas de dados:
 
-| Hook/Arquivo | Tabela | Problema |
-|---|---|---|
-| useContacts.ts (useCreateContact) | contacts | Falta tenant_id no INSERT |
-| Contatos.tsx (importação CSV) | contacts | Falta tenant_id no INSERT direto |
-| useTags.ts | tags | Verificar se inclui tenant_id |
-| useCampaigns.ts | campaigns | Verificar se inclui tenant_id |
-| useSchedules.ts | schedules | Verificar se inclui tenant_id |
-| useQuickReplies.ts | quick_replies | Verificar se inclui tenant_id |
+```sql
+ALTER TABLE contacts DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE conversations DROP COLUMN IF EXISTS tenant_id;
+ALTER TABLE messages DROP COLUMN IF EXISTS tenant_id;
+-- ... e todas as outras
+```
 
-### 4. Criar helper reutilizável para pegar o tenant_id
+### 3. Banco de dados - Remover tabelas e funcoes de tenant
 
-Para não repetir código, criar uma função utilitária:
+```sql
+DROP TABLE IF EXISTS tenant_settings CASCADE;
+DROP TABLE IF EXISTS subscription_payments CASCADE;
+DROP TABLE IF EXISTS tenant_subscriptions CASCADE;
+DROP TABLE IF EXISTS subscription_plans CASCADE;
+DROP TABLE IF EXISTS sales CASCADE;
+DROP TABLE IF EXISTS products CASCADE;
+DROP TABLE IF EXISTS tenants CASCADE;
+
+DROP FUNCTION IF EXISTS get_user_tenant_id CASCADE;
+DROP FUNCTION IF EXISTS can_access_tenant CASCADE;
+DROP FUNCTION IF EXISTS tenant_has_active_subscription CASCADE;
+DROP FUNCTION IF EXISTS get_tenant_plan_limits CASCADE;
+```
+
+### 4. Codigo - Remover tenant_id dos hooks de criacao
+
+Arquivos que serao simplificados (remover chamada a `getUserTenantId`):
+- `src/hooks/useContacts.ts`
+- `src/hooks/useTags.ts`
+- `src/hooks/useCampaigns.ts`
+- `src/hooks/useSchedules.ts`
+- `src/hooks/useQuickReplies.ts`
+- `src/pages/Contatos.tsx` (importacao CSV)
+
+Exemplo - antes:
+```typescript
+const tenant_id = await getUserTenantId();
+const { data, error } = await supabase
+  .from('contacts')
+  .insert({ ...input, tenant_id });
+```
+
+Depois:
+```typescript
+const { data, error } = await supabase
+  .from('contacts')
+  .insert(input);
+```
+
+### 5. Codigo - Remover paginas e componentes de tenant
+
+Arquivos a serem **deletados**:
+- `src/pages/SuperAdmin.tsx`
+- `src/pages/Onboarding.tsx`
+- `src/components/superadmin/SuperAdminTenants.tsx`
+- `src/components/superadmin/SuperAdminProducts.tsx`
+- `src/components/superadmin/SuperAdminSales.tsx`
+- `src/components/superadmin/SuperAdminStats.tsx`
+- `src/components/superadmin/SuperAdminPlans.tsx`
+- `src/components/subscription/SubscriptionBlocker.tsx`
+- `src/components/auth/SuperAdminRoute.tsx`
+- `src/hooks/useTenant.ts`
+- `src/hooks/useSubscription.ts`
+- `src/hooks/useProducts.ts`
+- `src/hooks/useSales.ts`
+- `src/lib/tenant.ts`
+- `supabase/functions/setup-tenant/index.ts`
+
+### 6. Codigo - Simplificar AuthContext
+
+Remover do contexto de autenticacao:
+- `tenant` (objeto do tenant)
+- `isSuperAdmin` (nao ha mais super admin)
+- Busca de dados do tenant
+- Referencia a `profile.tenant_id`
+
+O role "admin" passa a ser o papel mais alto (em vez de super_admin).
+
+### 7. Codigo - Simplificar ProtectedRoute
+
+Remover a verificacao de `tenant_id` que redireciona para onboarding:
 
 ```typescript
-// Em um novo hook ou utilitário
-async function getUserTenantId(): Promise<string | null> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return null;
-  
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('tenant_id')
-    .eq('user_id', user.id)
-    .single();
-    
-  return profile?.tenant_id || null;
+// REMOVER esta linha:
+if (!isSuperAdmin && !profile?.tenant_id) {
+  return <Navigate to="/onboarding" replace />;
 }
 ```
 
-### 5. Atualizar init.sql para VPS
+### 8. Codigo - Atualizar rotas (App.tsx)
 
-Adicionar as UNIQUE constraints que podem estar faltando em instalações anteriores. Usar blocos DO/EXCEPTION para não falhar se já existirem:
+Remover as rotas:
+- `/super-admin`
+- `/onboarding`
 
-```sql
--- No final do init.sql, adicionar migração para instalações existentes:
-DO $$ BEGIN
-  ALTER TABLE public.system_settings 
-    ADD CONSTRAINT system_settings_key_unique UNIQUE (key);
-EXCEPTION WHEN duplicate_table THEN NULL;
-END $$;
+### 9. Codigo - Atualizar sidebar
 
-DO $$ BEGIN
-  ALTER TABLE public.tenant_settings 
-    ADD CONSTRAINT tenant_settings_tenant_id_key_unique UNIQUE (tenant_id, key);
-EXCEPTION WHEN duplicate_table THEN NULL;
-END $$;
-```
+Remover o link "Super Admin" da barra lateral.
 
-## Comando SQL para rodar na VPS agora
+### 10. Deploy - Atualizar init.sql
 
-Se ainda não rodou, execute este comando para corrigir o banco existente:
+Reescrever o `deploy/supabase/init.sql` sem as tabelas e politicas de tenant.
 
-```bash
-sudo docker exec supabase-db psql -U postgres -c "
-  -- Remover duplicatas de system_settings
-  DELETE FROM public.system_settings a
-  USING public.system_settings b
-  WHERE a.id < b.id AND a.key = b.key;
+### 11. SQL para rodar na VPS
 
-  -- Adicionar UNIQUE se não existe
-  DO \$\$ BEGIN
-    ALTER TABLE public.system_settings ADD CONSTRAINT system_settings_key_unique UNIQUE (key);
-  EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
-  END \$\$;
+Sera fornecido um comando SQL completo para rodar na VPS que faz toda a migracao do banco existente.
 
-  -- Remover duplicatas de tenant_settings
-  DELETE FROM public.tenant_settings a
-  USING public.tenant_settings b
-  WHERE a.id < b.id AND a.tenant_id = b.tenant_id AND a.key = b.key;
+## Resumo do impacto
 
-  DO \$\$ BEGIN
-    ALTER TABLE public.tenant_settings ADD CONSTRAINT tenant_settings_tenant_id_key_unique UNIQUE (tenant_id, key);
-  EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
-  END \$\$;
-"
-```
+| Item | Quantidade |
+|------|-----------|
+| Tabelas removidas | 7 |
+| Colunas removidas | ~20 (tenant_id de cada tabela) |
+| Arquivos deletados | ~15 |
+| Arquivos modificados | ~15 |
+| Funcoes SQL removidas | 4 |
+| Politicas RLS reescritas | ~50 |
 
-## Arquivos a serem modificados
+## Resultado final
 
-| Arquivo | O que muda |
-|---|---|
-| src/hooks/useContacts.ts | Incluir tenant_id no insert de useCreateContact |
-| src/pages/Contatos.tsx | Incluir tenant_id na importação CSV |
-| src/hooks/useTags.ts | Verificar e incluir tenant_id |
-| src/hooks/useCampaigns.ts | Verificar e incluir tenant_id |
-| src/hooks/useSchedules.ts | Verificar e incluir tenant_id |
-| src/hooks/useQuickReplies.ts | Verificar e incluir tenant_id |
-| deploy/supabase/init.sql | Adicionar migrações de UNIQUE constraints |
-
-## Resultado
-
-Depois destas correções:
-- Criar contatos vai funcionar sem erro de segurança
-- Importar contatos via CSV vai funcionar
-- Salvar configurações do Baileys vai funcionar (após rodar o SQL acima)
-- Todas as operações de criação terão o tenant_id correto
-- VPS novas já terão as constraints corretas desde o início
+- Salvar configuracoes vai funcionar sem erros
+- Criar contatos, tags, campanhas, etc. vai funcionar sem erros
+- O sistema fica mais simples e facil de manter
+- Menos chances de bugs no futuro
+- A VPS precisara rodar um script SQL unico para migrar
 
