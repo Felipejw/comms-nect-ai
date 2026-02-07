@@ -42,7 +42,9 @@ export function useSystemSettings() {
       toast.success("Configuração atualizada!");
     },
     onError: (error: any) => {
-      toast.error(`Erro ao atualizar: ${error?.message || 'desconhecido'}`);
+      const msg = error?.message || 'desconhecido';
+      console.error('System settings update error:', { code: error?.code, msg, details: error?.details, hint: error?.hint });
+      toast.error(`Erro ao atualizar: ${msg}`);
     },
   });
 
@@ -58,31 +60,22 @@ export function useSystemSettings() {
       description?: string;
       category?: string;
     }) => {
-      const { data: existing } = await supabase
+      const { error } = await supabase
         .from("system_settings")
-        .select("id")
-        .eq("key", key)
-        .single();
-
-      if (existing) {
-        const { error } = await supabase
-          .from("system_settings")
-          .update({ value })
-          .eq("key", key);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase
-          .from("system_settings")
-          .insert({ key, value, description, category });
-        if (error) throw error;
-      }
+        .upsert(
+          { key, value, description, category },
+          { onConflict: "key" }
+        );
+      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system-settings"] });
       toast.success("Configuração salva!");
     },
     onError: (error: any) => {
-      toast.error(`Erro ao salvar: ${error?.message || 'desconhecido'}`);
+      const msg = error?.message || 'desconhecido';
+      console.error('System settings upsert error:', { code: error?.code, msg, details: error?.details, hint: error?.hint });
+      toast.error(`Erro ao salvar: ${msg}`);
     },
   });
 

@@ -208,8 +208,9 @@ export function useUpsertTenantSetting() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["tenant-settings", data.tenant_id] });
     },
-    onError: (error) => {
-      toast.error("Erro ao salvar configuração: " + error.message);
+    onError: (error: any) => {
+      console.error("Tenant setting upsert error:", error);
+      toast.error("Erro ao salvar configuração: " + (error?.message || 'desconhecido'));
     },
   });
 }

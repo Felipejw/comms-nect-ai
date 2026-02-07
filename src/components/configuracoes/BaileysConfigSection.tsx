@@ -97,9 +97,9 @@ export function BaileysConfigSection() {
 
       toast.success("Configurações do Baileys salvas!");
     } catch (error: any) {
-      console.error("Error saving Baileys settings:", error);
+      console.error("Baileys save error:", JSON.stringify(error, null, 2));
       const errorMsg = error?.message || error?.toString() || 'Erro desconhecido';
-      toast.error(`Erro ao salvar: ${errorMsg}`);
+      toast.error(`Erro ao salvar configurações: ${errorMsg}`);
     } finally {
       setIsSaving(false);
     }

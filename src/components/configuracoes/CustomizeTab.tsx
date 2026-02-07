@@ -184,9 +184,10 @@ export const CustomizeTab = () => {
       
       refreshBranding();
       toast.success("Identidade da plataforma salva com sucesso!");
-    } catch (error) {
-      console.error("Error saving branding:", error);
-      toast.error("Erro ao salvar configurações");
+    } catch (error: any) {
+      console.error("Branding save error:", JSON.stringify(error, null, 2));
+      const errorMsg = error?.message || error?.toString() || 'Erro desconhecido';
+      toast.error(`Erro ao salvar configurações: ${errorMsg}`);
     } finally {
       setIsSaving(false);
     }
