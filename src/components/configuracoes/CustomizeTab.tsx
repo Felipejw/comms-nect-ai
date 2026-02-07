@@ -9,6 +9,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { useApplyBranding } from "@/hooks/useApplyBranding";
+import { safeSettingUpsert } from "@/lib/safeSettingUpsert";
 
 export const CustomizeTab = () => {
   const { settings, isLoading } = useSystemSettings();
@@ -94,16 +95,12 @@ export const CustomizeTab = () => {
       const publicUrl = urlData.publicUrl;
       setPlatformLogo(publicUrl);
 
-      const { error: saveError } = await supabase
-        .from("system_settings")
-        .upsert({
-          key: "platform_logo_url",
-          value: publicUrl,
-          description: "URL do logotipo da plataforma",
-          category: "branding",
-        }, { onConflict: "key" });
-
-      if (saveError) throw saveError;
+      await safeSettingUpsert({
+        key: "platform_logo_url",
+        value: publicUrl,
+        description: "URL do logotipo da plataforma",
+        category: "branding",
+      });
 
       await queryClient.invalidateQueries({ queryKey: ["system-settings"] });
       await queryClient.invalidateQueries({ queryKey: ["branding-settings"] });
@@ -120,16 +117,12 @@ export const CustomizeTab = () => {
     try {
       setPlatformLogo("");
       
-      const { error } = await supabase
-        .from("system_settings")
-        .upsert({
-          key: "platform_logo_url",
-          value: "",
-          description: "URL do logotipo da plataforma",
-          category: "branding",
-        }, { onConflict: "key" });
-
-      if (error) throw error;
+      await safeSettingUpsert({
+        key: "platform_logo_url",
+        value: "",
+        description: "URL do logotipo da plataforma",
+        category: "branding",
+      });
 
       await queryClient.invalidateQueries({ queryKey: ["system-settings"] });
       await queryClient.invalidateQueries({ queryKey: ["branding-settings"] });
@@ -158,11 +151,7 @@ export const CustomizeTab = () => {
       ];
 
       for (const update of updates) {
-        const { error } = await supabase
-          .from("system_settings")
-          .upsert(update, { onConflict: "key" });
-        
-        if (error) throw error;
+        await safeSettingUpsert(update);
       }
 
       await queryClient.invalidateQueries({ queryKey: ["system-settings"] });
