@@ -76,7 +76,7 @@ export default function Campanhas() {
   const [selectedContactIds, setSelectedContactIds] = useState<string[]>([]);
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
 
-  const { data: campaigns = [], isLoading } = useCampaigns();
+  const { data: campaigns = [], isLoading, isError, error, refetch } = useCampaigns();
   const { data: contacts = [] } = useContacts();
   const { data: tags = [] } = useTags();
   const updateCampaign = useUpdateCampaign();
@@ -157,6 +157,18 @@ export default function Campanhas() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-destructive font-medium">Erro ao carregar campanhas</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{error?.message}</p>
+        <Button variant="outline" onClick={() => refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }

@@ -4,7 +4,10 @@ import {
   Clock,
   CheckCircle,
   Loader2,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { StatsCard } from "@/components/dashboard/StatsCard";
 import { RecentConversations } from "@/components/dashboard/RecentConversations";
 import { ActivityChart } from "@/components/dashboard/ActivityChart";
@@ -12,12 +15,26 @@ import { TeamPerformance } from "@/components/dashboard/TeamPerformance";
 import { useDashboardStats } from "@/hooks/useDashboardStats";
 
 export default function Dashboard() {
-  const { data: stats, isLoading } = useDashboardStats();
+  const { data: stats, isLoading, isError, error, refetch } = useDashboardStats();
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <AlertCircle className="w-10 h-10 text-destructive" />
+        <p className="text-destructive font-medium">Erro ao carregar dashboard</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{error?.message}</p>
+        <Button variant="outline" onClick={() => refetch()} className="gap-2">
+          <RefreshCw className="w-4 h-4" />
+          Tentar novamente
+        </Button>
       </div>
     );
   }

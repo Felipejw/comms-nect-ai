@@ -36,6 +36,7 @@ export function useContacts() {
   return useQuery({
     queryKey: ['contacts'],
     queryFn: async () => {
+      const timeoutSignal = AbortSignal.timeout(15000);
       const { data, error } = await supabase
         .from('contacts')
         .select(`
@@ -45,7 +46,9 @@ export function useContacts() {
             tags (id, name, color)
           )
         `)
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(500)
+        .abortSignal(timeoutSignal);
 
       if (error) throw error;
       

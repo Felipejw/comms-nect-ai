@@ -45,7 +45,7 @@ export default function Tags() {
   const [deleteTag, setDeleteTag] = useState<TagType | null>(null);
   const [formData, setFormData] = useState({ name: "", color: "#3B82F6", description: "" });
 
-  const { data: tags, isLoading } = useTags();
+  const { data: tags, isLoading, isError, error, refetch } = useTags();
   const createTag = useCreateTag();
   const updateTag = useUpdateTag();
   const deleteTagMutation = useDeleteTag();
@@ -98,6 +98,18 @@ export default function Tags() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-destructive font-medium">Erro ao carregar tags</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{error?.message}</p>
+        <Button variant="outline" onClick={() => refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }

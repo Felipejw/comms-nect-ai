@@ -60,7 +60,7 @@ const roleConfig = {
 };
 
 export default function Usuarios() {
-  const { data: users = [], isLoading, refetch } = useUsers();
+  const { data: users = [], isLoading, isError, error, refetch } = useUsers();
   const updateRole = useUpdateUserRole();
   const { isAdmin } = useAuth();
   
@@ -288,6 +288,18 @@ export default function Usuarios() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-destructive font-medium">Erro ao carregar usuários</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{(error as Error)?.message}</p>
+        <Button variant="outline" onClick={() => refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }

@@ -18,16 +18,17 @@ export function useDashboardStats() {
   return useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: async () => {
+      const timeoutSignal = AbortSignal.timeout(15000);
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       const todayISO = today.toISOString();
 
       // Get conversation counts using individual count queries (avoids 1000-row limit)
       const [newRes, inProgressRes, resolvedRes, archivedRes] = await Promise.all([
-        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'new'),
-        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'in_progress'),
-        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'resolved'),
-        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'archived'),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'new').abortSignal(timeoutSignal),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'in_progress').abortSignal(timeoutSignal),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'resolved').abortSignal(timeoutSignal),
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'archived').abortSignal(timeoutSignal),
       ]);
 
       const conversationsByStatus = {
@@ -39,23 +40,16 @@ export function useDashboardStats() {
 
       const activeConversations = conversationsByStatus.new + conversationsByStatus.in_progress;
 
-      // Get resolved today
-      const { count: resolvedToday } = await supabase
-        .from('conversations')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'resolved')
-        .gte('updated_at', todayISO);
+      // Get resolved today, total contacts, and new contacts today in parallel
+      const [resolvedTodayRes, totalContactsRes, newContactsTodayRes] = await Promise.all([
+        supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('status', 'resolved').gte('updated_at', todayISO).abortSignal(timeoutSignal),
+        supabase.from('contacts').select('*', { count: 'exact', head: true }).abortSignal(timeoutSignal),
+        supabase.from('contacts').select('*', { count: 'exact', head: true }).gte('created_at', todayISO).abortSignal(timeoutSignal),
+      ]);
 
-      // Get total contacts
-      const { count: totalContacts } = await supabase
-        .from('contacts')
-        .select('*', { count: 'exact', head: true });
-
-      // Get new contacts today
-      const { count: newContactsToday } = await supabase
-        .from('contacts')
-        .select('*', { count: 'exact', head: true })
-        .gte('created_at', todayISO);
+      const resolvedToday = resolvedTodayRes.count;
+      const totalContacts = totalContactsRes.count;
+      const newContactsToday = newContactsTodayRes.count;
 
       return {
         activeConversations,
