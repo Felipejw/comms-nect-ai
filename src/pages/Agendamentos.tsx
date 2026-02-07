@@ -47,7 +47,7 @@ export default function Agendamentos() {
   const { user, hasPermission, isAdmin } = useAuth();
   const canEdit = isAdmin || hasPermission('agendamentos', 'edit');
   
-  const { data: schedules = [], isLoading } = useSchedules();
+  const { data: schedules = [], isLoading, isError, error, refetch } = useSchedules();
   const { data: contacts = [] } = useContacts();
   const { data: conversations = [] } = useConversations();
   const createSchedule = useCreateSchedule();
@@ -134,6 +134,18 @@ export default function Agendamentos() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-destructive font-medium">Erro ao carregar agendamentos</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{error?.message}</p>
+        <Button variant="outline" onClick={() => refetch()}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }

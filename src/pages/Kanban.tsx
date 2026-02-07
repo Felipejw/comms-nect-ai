@@ -69,8 +69,8 @@ export default function Kanban() {
   const { hasPermission, isAdmin } = useAuth();
   const canEdit = isAdmin || hasPermission('kanban', 'edit');
   
-  const { data: columns = [], isLoading: columnsLoading } = useKanbanColumns();
-  const { data: conversations = [], isLoading: conversationsLoading } = useKanbanConversations();
+  const { data: columns = [], isLoading: columnsLoading, isError: columnsError, error: columnsErrorMsg, refetch: refetchColumns } = useKanbanColumns();
+  const { data: conversations = [], isLoading: conversationsLoading, isError: conversationsError, refetch: refetchConversations } = useKanbanConversations();
   const createColumn = useCreateKanbanColumn();
   const updateColumn = useUpdateKanbanColumn();
   const deleteColumn = useDeleteKanbanColumn();
@@ -177,11 +177,24 @@ export default function Kanban() {
   };
 
   const isLoading = columnsLoading || conversationsLoading;
+  const isError = columnsError || conversationsError;
 
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-destructive font-medium">Erro ao carregar kanban</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{(columnsErrorMsg as Error)?.message}</p>
+        <Button variant="outline" onClick={() => { refetchColumns(); refetchConversations(); }}>
+          Tentar novamente
+        </Button>
       </div>
     );
   }

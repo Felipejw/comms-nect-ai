@@ -139,7 +139,7 @@ export default function Contatos() {
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  const { data: contacts, isLoading } = useContacts();
+  const { data: contacts, isLoading, isError, error, refetch } = useContacts();
   const createContact = useCreateContact();
   const deleteContact = useDeleteContact();
   const updateContact = useUpdateContact();
@@ -448,6 +448,19 @@ export default function Contatos() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-destructive font-medium">Erro ao carregar contatos</p>
+        <p className="text-sm text-muted-foreground max-w-md text-center">{error?.message}</p>
+        <Button variant="outline" onClick={() => refetch()} className="gap-2">
+          <RefreshCw className="w-4 h-4" />
+          Tentar novamente
+        </Button>
       </div>
     );
   }
