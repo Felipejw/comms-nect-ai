@@ -1409,5 +1409,39 @@ INSERT INTO public.system_settings (key, value, description, category) VALUES
 ON CONFLICT (key) DO NOTHING;
 
 -- ============================================================
+-- PARTE 11: MIGRAÇÕES PARA INSTALAÇÕES EXISTENTES
+-- ============================================================
+-- Estas migrações adicionam constraints que podem estar faltando
+-- em bancos criados antes destas correções serem adicionadas ao init.sql.
+-- Usam DO/EXCEPTION para não falhar se já existirem.
+
+-- Remover duplicatas antes de adicionar UNIQUE (se houver)
+DO $$ BEGIN
+  DELETE FROM public.system_settings a
+  USING public.system_settings b
+  WHERE a.id < b.id AND a.key = b.key;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE public.system_settings
+    ADD CONSTRAINT system_settings_key_unique UNIQUE (key);
+EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  DELETE FROM public.tenant_settings a
+  USING public.tenant_settings b
+  WHERE a.id < b.id AND a.tenant_id = b.tenant_id AND a.key = b.key;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER TABLE public.tenant_settings
+    ADD CONSTRAINT tenant_settings_tenant_id_key_unique UNIQUE (tenant_id, key);
+EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+END $$;
+
+-- ============================================================
 -- FIM DO SCRIPT DE INICIALIZAÇÃO
 -- ============================================================

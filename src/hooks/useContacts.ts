@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { getUserTenantId } from '@/lib/tenant';
 
 export interface Contact {
   id: string;
@@ -94,9 +95,10 @@ export function useCreateContact() {
 
   return useMutation({
     mutationFn: async (input: CreateContactInput) => {
+      const tenant_id = await getUserTenantId();
       const { data, error } = await supabase
         .from('contacts')
-        .insert(input)
+        .insert({ ...input, tenant_id })
         .select()
         .single();
 
