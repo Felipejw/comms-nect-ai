@@ -14,7 +14,6 @@ export interface Message {
   is_read: boolean;
   delivery_status?: 'sent' | 'delivered' | 'read' | null;
   created_at: string;
-  tenant_id?: string | null;
 }
 
 export interface ConversationTag {
