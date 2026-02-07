@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { getUserTenantId } from '@/lib/tenant';
 
 export interface Schedule {
   id: string;
@@ -16,17 +15,8 @@ export interface Schedule {
   reminder_sent: boolean;
   created_at: string;
   updated_at: string;
-  contact?: {
-    id: string;
-    name: string;
-    phone: string | null;
-  };
-  conversation?: {
-    id: string;
-    contact?: {
-      name: string;
-    };
-  };
+  contact?: { id: string; name: string; phone: string | null };
+  conversation?: { id: string; contact?: { name: string } };
 }
 
 export function useSchedules() {
@@ -35,11 +25,7 @@ export function useSchedules() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('schedules')
-        .select(`
-          *,
-          contact:contacts (id, name, phone),
-          conversation:conversations (id, contact:contacts (name))
-        `)
+        .select(`*, contact:contacts (id, name, phone), conversation:conversations (id, contact:contacts (name))`)
         .order('scheduled_at', { ascending: true });
 
       if (error) throw error;
@@ -53,22 +39,10 @@ export function useCreateSchedule() {
 
   return useMutation({
     mutationFn: async (input: {
-      contact_id?: string;
-      conversation_id?: string;
-      user_id: string;
-      title: string;
-      description?: string;
-      message_content?: string;
-      scheduled_at: string;
-      reminder?: boolean;
+      contact_id?: string; conversation_id?: string; user_id: string; title: string;
+      description?: string; message_content?: string; scheduled_at: string; reminder?: boolean;
     }) => {
-      const tenant_id = await getUserTenantId();
-      const { data, error } = await supabase
-        .from('schedules')
-        .insert({ ...input, tenant_id })
-        .select()
-        .single();
-
+      const { data, error } = await supabase.from('schedules').insert(input).select().single();
       if (error) throw error;
       return data;
     },
@@ -76,9 +50,7 @@ export function useCreateSchedule() {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
       toast.success('Agendamento criado com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao criar agendamento: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao criar agendamento: ' + error.message); },
   });
 }
 
@@ -86,24 +58,11 @@ export function useUpdateSchedule() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({
-      id,
-      ...input
-    }: {
-      id: string;
-      title?: string;
-      description?: string;
-      scheduled_at?: string;
-      status?: Schedule['status'];
-      reminder?: boolean;
+    mutationFn: async ({ id, ...input }: {
+      id: string; title?: string; description?: string; scheduled_at?: string;
+      status?: Schedule['status']; reminder?: boolean;
     }) => {
-      const { data, error } = await supabase
-        .from('schedules')
-        .update(input)
-        .eq('id', id)
-        .select()
-        .single();
-
+      const { data, error } = await supabase.from('schedules').update(input).eq('id', id).select().single();
       if (error) throw error;
       return data;
     },
@@ -111,9 +70,7 @@ export function useUpdateSchedule() {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
       toast.success('Agendamento atualizado com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao atualizar agendamento: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao atualizar agendamento: ' + error.message); },
   });
 }
 
@@ -122,19 +79,13 @@ export function useDeleteSchedule() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('schedules')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('schedules').delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['schedules'] });
       toast.success('Agendamento excluído com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao excluir agendamento: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao excluir agendamento: ' + error.message); },
   });
 }

@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { getUserTenantId } from '@/lib/tenant';
 
 export interface Contact {
   id: string;
@@ -53,7 +52,6 @@ export function useContacts() {
 
       if (error) throw error;
       
-      // Transform data to include tags directly
       return (data || []).map(contact => ({
         ...contact,
         tags: contact.contact_tags?.map((ct: any) => ct.tags).filter(Boolean) || []
@@ -95,10 +93,9 @@ export function useCreateContact() {
 
   return useMutation({
     mutationFn: async (input: CreateContactInput) => {
-      const tenant_id = await getUserTenantId();
       const { data, error } = await supabase
         .from('contacts')
-        .insert({ ...input, tenant_id })
+        .insert(input)
         .select()
         .single();
 
@@ -120,7 +117,6 @@ export function useUpdateContact() {
 
   return useMutation({
     mutationFn: async ({ id, ...input }: UpdateContactInput & { id: string }) => {
-      // Se o nome está sendo atualizado, marcar como edição manual
       const updateData = input.name ? { ...input, name_source: 'manual' } : input;
       
       const { data, error } = await supabase

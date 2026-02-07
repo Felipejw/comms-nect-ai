@@ -1,7 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { getUserTenantId } from '@/lib/tenant';
 
 export interface Campaign {
   id: string;
@@ -19,15 +18,13 @@ export interface Campaign {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  // New fields
   message_variations: string[] | null;
   use_variations: boolean | null;
   use_buttons: boolean | null;
-  buttons: unknown; // JSON from database
+  buttons: unknown;
   min_interval: number | null;
   max_interval: number | null;
   template_id: string | null;
-  tenant_id?: string | null;
 }
 
 export interface CampaignContact {
@@ -97,10 +94,7 @@ export function useCampaignContacts(campaignId: string) {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('campaign_contacts')
-        .select(`
-          *,
-          contact:contacts (id, name, phone)
-        `)
+        .select(`*, contact:contacts (id, name, phone)`)
         .eq('campaign_id', campaignId);
 
       if (error) throw error;
@@ -110,7 +104,6 @@ export function useCampaignContacts(campaignId: string) {
   });
 }
 
-// Message Templates
 export function useMessageTemplates() {
   return useQuery({
     queryKey: ['message-templates'],
@@ -130,19 +123,8 @@ export function useCreateMessageTemplate() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (input: {
-      name: string;
-      message: string;
-      media_url?: string;
-      media_type?: string;
-      created_by?: string;
-    }) => {
-      const { data, error } = await supabase
-        .from('message_templates')
-        .insert(input)
-        .select()
-        .single();
-
+    mutationFn: async (input: { name: string; message: string; media_url?: string; media_type?: string; created_by?: string }) => {
+      const { data, error } = await supabase.from('message_templates').insert(input).select().single();
       if (error) throw error;
       return data;
     },
@@ -150,9 +132,7 @@ export function useCreateMessageTemplate() {
       queryClient.invalidateQueries({ queryKey: ['message-templates'] });
       toast.success('Template salvo com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao salvar template: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao salvar template: ' + error.message); },
   });
 }
 
@@ -161,28 +141,12 @@ export function useCreateCampaign() {
 
   return useMutation({
     mutationFn: async (input: {
-      name: string;
-      description?: string;
-      message: string;
-      media_url?: string;
-      media_type?: string;
-      scheduled_at?: string;
-      created_by?: string;
-      message_variations?: string[];
-      use_variations?: boolean;
-      use_buttons?: boolean;
-      buttons?: Array<{ id: string; text: string }>;
-      min_interval?: number;
-      max_interval?: number;
-      template_id?: string;
+      name: string; description?: string; message: string; media_url?: string; media_type?: string;
+      scheduled_at?: string; created_by?: string; message_variations?: string[]; use_variations?: boolean;
+      use_buttons?: boolean; buttons?: Array<{ id: string; text: string }>; min_interval?: number;
+      max_interval?: number; template_id?: string;
     }) => {
-      const tenant_id = await getUserTenantId();
-      const { data, error } = await supabase
-        .from('campaigns')
-        .insert({ ...input, tenant_id })
-        .select()
-        .single();
-
+      const { data, error } = await supabase.from('campaigns').insert(input).select().single();
       if (error) throw error;
       return data;
     },
@@ -190,9 +154,7 @@ export function useCreateCampaign() {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       toast.success('Campanha criada com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao criar campanha: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao criar campanha: ' + error.message); },
   });
 }
 
@@ -200,32 +162,12 @@ export function useUpdateCampaign() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({
-      id,
-      ...input
-    }: {
-      id: string;
-      name?: string;
-      description?: string;
-      message?: string;
-      media_url?: string;
-      media_type?: string;
-      status?: Campaign['status'];
-      scheduled_at?: string;
-      message_variations?: string[];
-      use_variations?: boolean;
-      use_buttons?: boolean;
-      buttons?: Array<{ id: string; text: string }>;
-      min_interval?: number;
-      max_interval?: number;
+    mutationFn: async ({ id, ...input }: {
+      id: string; name?: string; description?: string; message?: string; media_url?: string; media_type?: string;
+      status?: Campaign['status']; scheduled_at?: string; message_variations?: string[]; use_variations?: boolean;
+      use_buttons?: boolean; buttons?: Array<{ id: string; text: string }>; min_interval?: number; max_interval?: number;
     }) => {
-      const { data, error } = await supabase
-        .from('campaigns')
-        .update(input)
-        .eq('id', id)
-        .select()
-        .single();
-
+      const { data, error } = await supabase.from('campaigns').update(input).eq('id', id).select().single();
       if (error) throw error;
       return data;
     },
@@ -233,9 +175,7 @@ export function useUpdateCampaign() {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       toast.success('Campanha atualizada com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao atualizar campanha: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao atualizar campanha: ' + error.message); },
   });
 }
 
@@ -244,20 +184,14 @@ export function useDeleteCampaign() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('campaigns')
-        .delete()
-        .eq('id', id);
-
+      const { error } = await supabase.from('campaigns').delete().eq('id', id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['campaigns'] });
       toast.success('Campanha excluída com sucesso!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao excluir campanha: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao excluir campanha: ' + error.message); },
   });
 }
 
@@ -266,25 +200,18 @@ export function useAddContactsToCampaign() {
 
   return useMutation({
     mutationFn: async ({ campaignId, contactIds }: { campaignId: string; contactIds: string[] }) => {
-      const tenant_id = await getUserTenantId();
       const inserts = contactIds.map(contact_id => ({
         campaign_id: campaignId,
         contact_id,
-        tenant_id,
       }));
 
-      const { error } = await supabase
-        .from('campaign_contacts')
-        .insert(inserts);
-
+      const { error } = await supabase.from('campaign_contacts').insert(inserts);
       if (error) throw error;
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['campaign-contacts', variables.campaignId] });
       toast.success('Contatos adicionados à campanha!');
     },
-    onError: (error: Error) => {
-      toast.error('Erro ao adicionar contatos: ' + error.message);
-    },
+    onError: (error: Error) => { toast.error('Erro ao adicionar contatos: ' + error.message); },
   });
 }

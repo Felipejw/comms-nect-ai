@@ -50,7 +50,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { useContacts, useCreateContact, useDeleteContact, useUpdateContact, Contact } from "@/hooks/useContacts";
 import { useSyncContacts, hasLidIssue, hasPlaceholderName } from "@/hooks/useSyncContacts";
 import { supabase } from "@/integrations/supabase/client";
-import { getUserTenantId } from "@/lib/tenant";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { format, formatDistanceToNow } from "date-fns";
@@ -410,8 +409,6 @@ export default function Contatos() {
     let successCount = 0;
     let errorCount = 0;
 
-    const tenant_id = await getUserTenantId();
-
     for (const row of csvData.rows) {
       const name = row[columnMapping.name]?.trim();
       if (!name) continue;
@@ -422,7 +419,6 @@ export default function Contatos() {
           email: columnMapping.email >= 0 ? row[columnMapping.email]?.trim() || null : null,
           phone: columnMapping.phone >= 0 ? row[columnMapping.phone]?.trim() || null : null,
           company: columnMapping.company >= 0 ? row[columnMapping.company]?.trim() || null : null,
-          tenant_id,
         });
 
         if (error) {
