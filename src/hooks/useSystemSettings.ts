@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { safeSettingUpsert } from "@/lib/safeSettingUpsert";
 
 interface SystemSetting {
   id: string;
@@ -30,12 +31,7 @@ export function useSystemSettings() {
 
   const updateSetting = useMutation({
     mutationFn: async ({ key, value }: { key: string; value: string }) => {
-      const { error } = await supabase
-        .from("system_settings")
-        .update({ value })
-        .eq("key", key);
-
-      if (error) throw error;
+      await safeSettingUpsert({ key, value });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system-settings"] });
@@ -60,13 +56,7 @@ export function useSystemSettings() {
       description?: string;
       category?: string;
     }) => {
-      const { error } = await supabase
-        .from("system_settings")
-        .upsert(
-          { key, value, description, category },
-          { onConflict: "key" }
-        );
-      if (error) throw error;
+      await safeSettingUpsert({ key, value, description, category });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["system-settings"] });
