@@ -7,7 +7,6 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { BrandingProvider } from "@/components/BrandingProvider";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
-import { SuperAdminRoute } from "@/components/auth/SuperAdminRoute";
 import Index from "./pages/Index";
 import Login from "./pages/Login";
 import AcessoNegado from "./pages/AcessoNegado";
@@ -29,8 +28,6 @@ import Relatorios from "./pages/Relatorios";
 import Painel from "./pages/Painel";
 import Configuracoes from "./pages/Configuracoes";
 import Diagnostico from "./pages/Diagnostico";
-import SuperAdmin from "./pages/SuperAdmin";
-import Onboarding from "./pages/Onboarding";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -55,7 +52,6 @@ const App = () => (
               <Route path="/" element={<Index />} />
               <Route path="/login" element={<Login />} />
               <Route path="/acesso-negado" element={<AcessoNegado />} />
-              <Route path="/onboarding" element={<Onboarding />} />
               
               {/* App Routes with Layout */}
               <Route element={<AppLayout />}>
@@ -77,7 +73,6 @@ const App = () => (
                 <Route path="/conexoes" element={<ProtectedRoute module="conexoes"><Conexoes /></ProtectedRoute>} />
                 <Route path="/diagnostico" element={<ProtectedRoute module="conexoes"><Diagnostico /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
-                <Route path="/super-admin" element={<SuperAdminRoute><SuperAdmin /></SuperAdminRoute>} />
               </Route>
               
               <Route path="*" element={<NotFound />} />

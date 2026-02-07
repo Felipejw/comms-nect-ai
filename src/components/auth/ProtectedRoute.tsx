@@ -15,9 +15,8 @@ export function ProtectedRoute({
   module, 
   requiredAction = "view" 
 }: ProtectedRouteProps) {
-  const { user, loading, hasPermission, isAdmin, isSuperAdmin, role, profile } = useAuth();
+  const { user, loading, hasPermission, isAdmin, role } = useAuth();
 
-  // Show loading while auth state is being determined
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -26,12 +25,10 @@ export function ProtectedRoute({
     );
   }
 
-  // Not logged in - redirect to login
   if (!user) {
     return <Navigate to="/login" replace />;
   }
 
-  // Still loading role data - show loader
   if (role === null) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -40,17 +37,10 @@ export function ProtectedRoute({
     );
   }
 
-  // If user has no tenant and is not super admin, redirect to onboarding
-  if (!isSuperAdmin && !profile?.tenant_id) {
-    return <Navigate to="/onboarding" replace />;
-  }
-
-  // Admins have full access
   if (isAdmin) {
     return <>{children}</>;
   }
 
-  // Check module permission
   if (module && !hasPermission(module, requiredAction)) {
     return <Navigate to="/acesso-negado" replace />;
   }
@@ -58,7 +48,6 @@ export function ProtectedRoute({
   return <>{children}</>;
 }
 
-// Helper to get module from route path
 export function getModuleFromPath(path: string): string | undefined {
   return ROUTE_TO_MODULE[path];
 }
