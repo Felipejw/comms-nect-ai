@@ -1234,6 +1234,25 @@ CREATE POLICY "Admins and managers can update settings" ON public.system_setting
 CREATE POLICY "Admins and managers can delete settings" ON public.system_settings FOR DELETE USING (is_admin_or_manager(auth.uid()));
 
 -- ============================================================
+-- PARTE 7.5: GRANTS para roles de autenticação
+-- Garante que authenticated pode fazer CRUD completo
+-- e anon pode apenas ler dados publicos
+-- ============================================================
+
+GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+
+GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+  IN SCHEMA public GRANT ALL ON TABLES TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+  IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated, service_role;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+  IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+
+-- ============================================================
 -- PARTE 8: STORAGE BUCKETS
 -- Wrapped in safe block: storage schema is created by the storage container,
 -- NOT during DB init. These will be skipped on first boot and created by storage service.
