@@ -1,127 +1,156 @@
 
 
-# Correção: Permissões de Tabela para Role `authenticated`
+# Correção: Spinner Infinito e Falta de Tratamento de Erros
 
-## Causa Raiz Identificada
+## Problema
 
-O problema NÃO é nas RLS policies (estão corretas) e NÃO é no CORS. O problema é que o role PostgreSQL `authenticated` (usado para todas as operações de usuários logados) **só tem permissão de SELECT** nas tabelas.
+Todas as páginas do sistema (Contatos, Dashboard, Tags, etc.) mostram um spinner de carregamento infinito quando a consulta ao banco de dados falha ou demora muito. Nenhuma página verifica se ocorreu um erro -- elas apenas checam `isLoading` e mostram o spinner para sempre se a requisição travar.
 
-Em uma instalação Supabase self-hosted, o PostgreSQL precisa que o role `authenticated` tenha permissões de INSERT, UPDATE e DELETE nas tabelas para que as operações de escrita funcionem. No ambiente Cloud, isso é configurado automaticamente. Na instalação self-hosted, a configuração está incompleta.
+Isso afeta diretamente o servidor self-hosted porque:
+- Consultas pesadas (ex: Contatos sem limite) podem demorar ou travar
+- Sem tratamento de erro, o usuario nao sabe o que esta acontecendo
+- Sem timeout, requisições podem ficar pendentes indefinidamente
 
-### Evidência
+## Diagnostico Imediato (rodar no servidor)
 
-No arquivo `deploy/scripts/install-unified.sh`, linha 762:
-```sql
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
-  GRANT SELECT ON TABLES TO authenticated, anon;
-```
-
-Isso concede **apenas SELECT**. O `deploy/supabase/init.sql` NÃO contém nenhum `GRANT` para o role `authenticated`. Resultado: todas as tabelas criadas pelo init.sql ficam com permissão apenas de leitura para usuários autenticados.
-
-### Por que SELECT funciona mas INSERT/UPDATE não
-
-- O login funciona porque o serviço de autenticação opera diretamente no banco, sem passar pelas permissões de role
-- Visualizar dados funciona porque SELECT está liberado
-- Criar/salvar falha porque INSERT/UPDATE/DELETE NÃO estão liberados para o role `authenticated`
-
-## Correção Imediata (rodar agora no servidor)
-
-Execute este comando no terminal da VPS para corrigir imediatamente:
+Antes de implementar, rode estes comandos no VPS para verificar o estado dos servicos:
 
 ```bash
-sudo docker exec supabase-db psql -U postgres -c "
-  GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
-  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
-  GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO anon;
-"
+# Verificar se todos os containers estão rodando
+sudo docker compose ps
+
+# Verificar logs do PostgREST (API REST)
+sudo docker compose logs --tail=50 rest
+
+# Verificar se o PostgREST responde
+curl -s http://localhost:3000/rest/v1/contacts?limit=1 \
+  -H "apikey: SUA_ANON_KEY" \
+  -H "Authorization: Bearer SUA_ANON_KEY" | head -c 200
+
+# Verificar quantidade de contatos
+sudo docker exec supabase-db psql -U postgres -c "SELECT count(*) FROM contacts;"
+
+# Verificar se há queries travadas
+sudo docker exec supabase-db psql -U postgres -c "SELECT pid, state, query_start, left(query, 80) FROM pg_stat_activity WHERE state != 'idle' AND query NOT LIKE '%pg_stat%';"
 ```
 
-Apos executar, tente criar um contato ou fluxo novamente. Deve funcionar imediatamente, sem reiniciar nenhum container.
+## Correcoes no Codigo
 
-## Correção Permanente (no codigo)
+### 1. Adicionar timeout global ao QueryClient (src/App.tsx)
 
-Para garantir que instalacoes futuras e atualizacoes nunca tenham esse problema, sera adicionada uma seção de GRANTS ao final do `init.sql` e corrigido o fallback do `install-unified.sh`.
-
-### Arquivo 1: `deploy/supabase/init.sql`
-
-Adicionar uma nova PARTE entre as policies (PARTE 7) e o storage (PARTE 8) com os grants necessarios:
-
-```sql
--- PARTE 7.5: GRANTS para roles de autenticação
--- Garante que authenticated pode fazer CRUD completo
--- e anon pode apenas ler dados publicos
-
-GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
-
-GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres 
-  IN SCHEMA public GRANT ALL ON TABLES TO authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres 
-  IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated, service_role;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres 
-  IN SCHEMA public GRANT SELECT ON TABLES TO anon;
-```
-
-### Arquivo 2: `deploy/scripts/install-unified.sh`
-
-Corrigir a linha 762 do fallback para conceder ALL em vez de apenas SELECT:
-
-De:
-```sql
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
-  GRANT SELECT ON TABLES TO authenticated, anon;
-```
-
-Para:
-```sql
-GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
-  GRANT ALL ON TABLES TO authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
-  GRANT ALL ON SEQUENCES TO authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public 
-  GRANT SELECT ON TABLES TO anon;
-```
-
-### Arquivo 3: Melhorar mensagens de erro nos hooks
-
-Atualizar o `useFlows.ts` para exibir mensagem de erro detalhada (como ja foi feito em outros hooks):
+O `QueryClient` nao tem nenhuma configuracao. Adicionar:
+- `retry: 2` (maximo 2 tentativas, em vez de 3)
+- `staleTime: 30000` (dados validos por 30s)
+- Um wrapper que adiciona `AbortSignal.timeout()` nas queries
 
 ```typescript
-// De:
-onError: () => {
-  toast.error("Erro ao criar fluxo");
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 2,
+      staleTime: 30000,
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+```
+
+### 2. Adicionar tratamento de erro em TODAS as paginas com loading
+
+Atualmente, 7 paginas tem o mesmo problema -- so checam `isLoading`:
+
+| Pagina | Hook usado |
+|--------|-----------|
+| Contatos.tsx | useContacts() |
+| Dashboard.tsx | useDashboardStats() |
+| Tags.tsx | useTags() |
+| Campanhas.tsx | useCampaigns() |
+| Usuarios.tsx | useUsers() |
+| Kanban.tsx | useKanbanColumns() + useConversations() |
+| Agendamentos.tsx | useSchedules() |
+
+Todas precisam extrair `isError` e `error` do hook e mostrar uma mensagem quando a query falha:
+
+```typescript
+// DE:
+const { data: contacts, isLoading } = useContacts();
+
+if (isLoading) {
+  return <Loader2 ... />;
 }
 
-// Para:
-onError: (error: Error) => {
-  toast.error("Erro ao criar fluxo: " + error.message);
+// PARA:
+const { data: contacts, isLoading, isError, error, refetch } = useContacts();
+
+if (isLoading) {
+  return <Loader2 ... />;
+}
+
+if (isError) {
+  return (
+    <div className="flex flex-col items-center justify-center h-64 gap-4">
+      <p className="text-destructive">Erro ao carregar dados</p>
+      <p className="text-sm text-muted-foreground">{error?.message}</p>
+      <Button variant="outline" onClick={() => refetch()}>
+        Tentar novamente
+      </Button>
+    </div>
+  );
 }
 ```
 
-Aplicar o mesmo padrao em todos os handlers `onError` do `useFlows.ts`.
+### 3. Adicionar limite na query de contatos (useContacts.ts)
 
-## Resumo das alteracoes
+A query atual carrega TODOS os contatos sem limite. Se existem milhares de contatos, isso causa timeout:
+
+```typescript
+// DE:
+.order('created_at', { ascending: false });
+
+// PARA:
+.order('created_at', { ascending: false })
+.limit(500);
+```
+
+Adicionar tambem suporte a busca server-side para quando o usuario pesquisa.
+
+### 4. Adicionar timeout nas queries criticas
+
+Para evitar que requisicoes fiquem pendentes indefinidamente, adicionar AbortController com timeout:
+
+```typescript
+queryFn: async ({ signal }) => {
+  const timeoutSignal = AbortSignal.timeout(15000); // 15 segundos
+  const { data, error } = await supabase
+    .from('contacts')
+    .select(...)
+    .abortSignal(timeoutSignal);
+  // ...
+}
+```
+
+## Arquivos a serem modificados
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `deploy/supabase/init.sql` | Adicionar secao de GRANTS apos as policies RLS |
-| `deploy/scripts/install-unified.sh` | Corrigir fallback de grants (SELECT -> ALL) |
-| `src/hooks/useFlows.ts` | Mensagens de erro detalhadas em todos os handlers |
+| src/App.tsx | Configurar QueryClient com retry e staleTime |
+| src/pages/Contatos.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/pages/Dashboard.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/pages/Tags.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/pages/Campanhas.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/pages/Usuarios.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/pages/Kanban.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/pages/Agendamentos.tsx | Adicionar isError/error/refetch + UI de erro |
+| src/hooks/useContacts.ts | Adicionar .limit(500) e timeout |
+| src/hooks/useDashboardStats.ts | Adicionar timeout |
 
-## Apos implementar e fazer deploy
+## Resultado Esperado
 
-```bash
-cd /opt/sistema && git pull origin main
-# O comando SQL acima ja corrige o banco existente.
-# O init.sql corrigido so toma efeito em novas instalações.
-```
+Apos as alteracoes:
+- Paginas mostram mensagem de erro clara em vez de spinner infinito
+- Botao "Tentar novamente" permite recarregar sem refresh da pagina
+- Mensagem tecnica do erro aparece para facilitar diagnostico
+- Queries nao ficam pendentes por mais de 15 segundos
+- Lista de contatos limitada a 500 por consulta para evitar timeout
+- Menos requisicoes desnecessarias (staleTime de 30s)
 
