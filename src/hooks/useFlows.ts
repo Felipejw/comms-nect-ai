@@ -109,8 +109,8 @@ export function useCreateFlow() {
       queryClient.invalidateQueries({ queryKey: ["chatbot-flows"] });
       toast.success("Fluxo criado com sucesso!");
     },
-    onError: () => {
-      toast.error("Erro ao criar fluxo");
+    onError: (error: Error) => {
+      toast.error("Erro ao criar fluxo: " + error.message);
     },
   });
 }
@@ -139,8 +139,8 @@ export function useUpdateFlow() {
       queryClient.invalidateQueries({ queryKey: ["chatbot-flows"] });
       toast.success("Fluxo atualizado!");
     },
-    onError: () => {
-      toast.error("Erro ao atualizar fluxo");
+    onError: (error: Error) => {
+      toast.error("Erro ao atualizar fluxo: " + error.message);
     },
   });
 }
@@ -166,8 +166,8 @@ export function useDeleteFlow() {
       queryClient.invalidateQueries({ queryKey: ["chatbot-flows"] });
       toast.success("Fluxo excluído!");
     },
-    onError: () => {
-      toast.error("Erro ao excluir fluxo");
+    onError: (error: Error) => {
+      toast.error("Erro ao excluir fluxo: " + error.message);
     },
   });
 }
