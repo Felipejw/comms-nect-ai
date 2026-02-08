@@ -778,10 +778,10 @@ start_services() {
     docker exec supabase-db psql -U postgres -f /docker-entrypoint-initdb.d/migrations/init.sql 2>&1 | tail -5
     
     # Verificar se init.sql criou as tabelas
-    if docker exec supabase-db psql -U postgres -t -c "SELECT 1 FROM public.tenants LIMIT 0;" 2>/dev/null | grep -q ""; then
+    if docker exec supabase-db psql -U postgres -t -c "SELECT 1 FROM public.profiles LIMIT 0;" 2>/dev/null | grep -q ""; then
         log_success "init.sql executado com sucesso - tabelas criadas"
     else
-        log_error "init.sql falhou - tabela public.tenants não encontrada"
+        log_error "init.sql falhou - tabela public.profiles não encontrada"
         log_warn "Continuando mesmo assim..."
     fi
 
@@ -926,9 +926,9 @@ wait_for_services() {
     return 1
 }
 
-# Criar admin, tenant e subscription automaticamente
-create_admin_and_tenant() {
-    log_step "Criando Admin e Tenant"
+# Criar admin automaticamente (sem tenant)
+create_admin() {
+    log_step "Criando Usuário Admin"
     
     # 1. Criar usuário admin via GoTrue API (via Kong)
     log_info "Criando usuário admin via API..."
@@ -989,81 +989,27 @@ create_admin_and_tenant() {
     
     log_success "Admin criado com ID: $ADMIN_USER_ID"
     
-    # 2. Promover para super_admin
-    log_info "Promovendo para super_admin..."
+    # 2. Promover para admin
+    log_info "Promovendo para admin..."
     docker exec supabase-db psql -U postgres -c "
         -- Remover role existente se houver
         DELETE FROM public.user_roles WHERE user_id = '$ADMIN_USER_ID';
         
-        -- Inserir como super_admin
+        -- Inserir como admin
         INSERT INTO public.user_roles (user_id, role)
-        VALUES ('$ADMIN_USER_ID', 'super_admin')
+        VALUES ('$ADMIN_USER_ID', 'admin')
         ON CONFLICT (user_id, role) DO NOTHING;
     " 2>/dev/null
-    log_success "Usuário promovido para super_admin"
+    log_success "Usuário promovido para admin"
     
-    # 3. Criar tenant principal
-    log_info "Criando tenant principal..."
-    local TENANT_ID
-    TENANT_ID=$(docker exec supabase-db psql -U postgres -t -c "
-        INSERT INTO public.tenants (name, slug, owner_user_id, plan, subscription_status, is_active, subscription_expires_at)
-        VALUES ('Empresa Principal', 'empresa-principal', '$ADMIN_USER_ID', 'basic', 'trial', true, now() + interval '30 days')
-        ON CONFLICT DO NOTHING
-        RETURNING id;
-    " 2>/dev/null | tr -d ' \n')
-    
-    if [ -z "$TENANT_ID" ]; then
-        # Se já existe, buscar o ID
-        TENANT_ID=$(docker exec supabase-db psql -U postgres -t -c "
-            SELECT id FROM public.tenants WHERE owner_user_id = '$ADMIN_USER_ID' LIMIT 1;
-        " 2>/dev/null | tr -d ' \n')
-    fi
-    
-    if [ -n "$TENANT_ID" ]; then
-        log_success "Tenant criado com ID: $TENANT_ID"
-        
-        # 4. Atualizar perfil do admin com tenant_id
-        log_info "Vinculando admin ao tenant..."
-        docker exec supabase-db psql -U postgres -c "
-            UPDATE public.profiles 
-            SET tenant_id = '$TENANT_ID'
-            WHERE user_id = '$ADMIN_USER_ID';
-        " 2>/dev/null
-        log_success "Admin vinculado ao tenant"
-        
-        # 5. Criar subscription trial de 30 dias
-        log_info "Criando subscription trial..."
-        docker exec supabase-db psql -U postgres -c "
-            INSERT INTO public.tenant_subscriptions (
-                tenant_id, plan_id, billing_cycle, status,
-                current_period_start, current_period_end, trial_ends_at
-            )
-            SELECT 
-                '$TENANT_ID',
-                sp.id,
-                'monthly',
-                'active',
-                now(),
-                now() + interval '30 days',
-                now() + interval '30 days'
-            FROM public.subscription_plans sp
-            WHERE sp.slug = 'basico'
-            LIMIT 1
-            ON CONFLICT DO NOTHING;
-        " 2>/dev/null
-        log_success "Trial de 30 dias ativado"
-        
-        # 6. Injetar credenciais do Baileys no system_settings
-        log_info "Configurando credenciais do Baileys no banco..."
-        docker exec supabase-db psql -U postgres -c "
-            UPDATE public.system_settings
-            SET value = '$BAILEYS_API_KEY'
-            WHERE key = 'baileys_api_key';
-        " 2>/dev/null
-        log_success "Credenciais do Baileys configuradas"
-    else
-        log_warn "Não foi possível criar tenant. Configure manualmente."
-    fi
+    # 3. Configurar credenciais do Baileys no system_settings
+    log_info "Configurando credenciais do Baileys no banco..."
+    docker exec supabase-db psql -U postgres -c "
+        UPDATE public.system_settings
+        SET value = '$BAILEYS_API_KEY'
+        WHERE key = 'baileys_api_key';
+    " 2>/dev/null
+    log_success "Credenciais do Baileys configuradas"
 }
 
 # Verificar instalação
@@ -1213,7 +1159,7 @@ main() {
     generate_frontend_config
     start_services
     wait_for_services
-    create_admin_and_tenant
+    create_admin
     save_credentials
     verify_installation
     show_summary

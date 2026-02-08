@@ -255,11 +255,11 @@ if [ "$ADMIN_EXISTS" = "0" ] || [ -z "$ADMIN_EXISTS" ]; then
     fi
     
     if [ -n "$ADMIN_USER_ID" ]; then
-        # Promover para super_admin
+        # Promover para admin
         docker exec supabase-db psql -U postgres -c "
             DELETE FROM public.user_roles WHERE user_id = '${ADMIN_USER_ID}';
             INSERT INTO public.user_roles (user_id, role)
-            VALUES ('${ADMIN_USER_ID}', 'super_admin')
+            VALUES ('${ADMIN_USER_ID}', 'admin')
             ON CONFLICT (user_id, role) DO NOTHING;
         " 2>/dev/null
         
