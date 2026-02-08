@@ -136,7 +136,7 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         query = query.eq('status', status);
       }
 
-      const { data, error } = await query;
+      const { data, error } = await query.abortSignal(AbortSignal.timeout(15000));
       if (error) throw error;
       
       // Fetch assignee profiles separately
@@ -147,7 +147,8 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         const { data: profiles } = await supabase
           .from('profiles')
           .select('id, user_id, name, avatar_url')
-          .in('user_id', assignedToIds);
+          .in('user_id', assignedToIds)
+          .abortSignal(AbortSignal.timeout(15000));
         
         profiles?.forEach(p => assigneeMap.set(p.user_id, p));
       }
@@ -163,7 +164,8 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
             conversation_id,
             tag:tags(id, name, color)
           `)
-          .in('conversation_id', conversationIds);
+          .in('conversation_id', conversationIds)
+          .abortSignal(AbortSignal.timeout(15000));
         
         convTags?.forEach(ct => {
           const tag = ct.tag as unknown as { id: string; name: string; color: string };
@@ -261,7 +263,8 @@ export function useMessages(conversationId: string) {
         .from('messages')
         .select('*')
         .eq('conversation_id', conversationId)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: true })
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (error) throw error;
       return (data || []) as Message[];

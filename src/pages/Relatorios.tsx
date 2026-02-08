@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, Calendar, Users, MessageSquare, Clock, CheckCircle, Loader2 } from "lucide-react";
+import { Download, Calendar, Users, MessageSquare, Clock, CheckCircle, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -45,7 +45,10 @@ export default function Relatorios() {
     categoryData,
     isLoadingCategory,
     agentPerformance,
-    isLoadingAgents
+    isLoadingAgents,
+    hasError,
+    errorMessage,
+    refetchAll,
   } = useReportStats(period);
 
   const formatTime = (minutes: number) => {
@@ -97,6 +100,18 @@ export default function Relatorios() {
           </Button>
         </div>
       </div>
+
+      {hasError && (
+        <div className="flex flex-col items-center justify-center py-8 gap-3 bg-card rounded-xl border border-destructive/50">
+          <AlertCircle className="w-8 h-8 text-destructive" />
+          <p className="font-medium">Erro ao carregar relatórios</p>
+          <p className="text-sm text-muted-foreground">{errorMessage}</p>
+          <Button variant="outline" size="sm" onClick={refetchAll}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Tentar novamente
+          </Button>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

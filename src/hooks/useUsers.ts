@@ -23,14 +23,16 @@ export function useUsers() {
       const { data: profiles, error: profilesError } = await supabase
         .from('profiles')
         .select('*')
-        .order('name');
+        .order('name')
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (profilesError) throw profilesError;
 
       // Fetch roles for all users
       const { data: roles, error: rolesError } = await supabase
         .from('user_roles')
-        .select('user_id, role');
+        .select('user_id, role')
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (rolesError) throw rolesError;
 
@@ -53,7 +55,8 @@ export function useUser(userId: string) {
         .from('profiles')
         .select('*')
         .eq('user_id', userId)
-        .maybeSingle();
+        .maybeSingle()
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (profileError) throw profileError;
       if (!profile) return null;
@@ -62,7 +65,8 @@ export function useUser(userId: string) {
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
-        .maybeSingle();
+        .maybeSingle()
+        .abortSignal(AbortSignal.timeout(15000));
 
       return {
         ...profile,
@@ -142,7 +146,8 @@ export function useOnlineUsers() {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('is_online', true);
+        .eq('is_online', true)
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (error) throw error;
       return (data || []) as UserProfile[];

@@ -16,15 +16,18 @@ export function useReportStats(period: Period) {
           .from("conversations")
           .select("id, status, created_at, updated_at, assigned_to, queue_id")
           .gte("created_at", startDate.toISOString())
-          .lte("created_at", endDate.toISOString()),
+          .lte("created_at", endDate.toISOString())
+          .abortSignal(AbortSignal.timeout(15000)),
         supabase
           .from("contacts")
           .select("*", { count: "exact", head: true })
-          .gte("created_at", startDate.toISOString()),
+          .gte("created_at", startDate.toISOString())
+          .abortSignal(AbortSignal.timeout(15000)),
         supabase
           .from("messages")
           .select("*", { count: "exact", head: true })
-          .gte("created_at", startDate.toISOString()),
+          .gte("created_at", startDate.toISOString())
+          .abortSignal(AbortSignal.timeout(15000)),
       ]);
 
       const conversations = conversationsRes.data || [];
@@ -74,7 +77,8 @@ export function useReportStats(period: Period) {
           .from("conversations")
           .select("id, status")
           .gte("created_at", monthStart.toISOString())
-          .lt("created_at", monthEnd.toISOString());
+          .lt("created_at", monthEnd.toISOString())
+          .abortSignal(AbortSignal.timeout(15000));
 
         const total = conversations?.length || 0;
         const resolved = conversations?.filter(
@@ -95,12 +99,13 @@ export function useReportStats(period: Period) {
   const categoryQuery = useQuery({
     queryKey: ["report-categories", period],
     queryFn: async () => {
-      const { data: queues } = await supabase.from("queues").select("id, name");
+      const { data: queues } = await supabase.from("queues").select("id, name").abortSignal(AbortSignal.timeout(15000));
       const { data: conversations } = await supabase
         .from("conversations")
         .select("queue_id")
         .gte("created_at", startDate.toISOString())
-        .lte("created_at", endDate.toISOString());
+        .lte("created_at", endDate.toISOString())
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (!queues || !conversations) return [];
 
@@ -127,13 +132,14 @@ export function useReportStats(period: Period) {
   const agentPerformanceQuery = useQuery({
     queryKey: ["report-agents", period],
     queryFn: async () => {
-      const { data: profiles } = await supabase.from("profiles").select("user_id, name");
+      const { data: profiles } = await supabase.from("profiles").select("user_id, name").abortSignal(AbortSignal.timeout(15000));
       const { data: conversations } = await supabase
         .from("conversations")
         .select("assigned_to, status, created_at, updated_at")
         .gte("created_at", startDate.toISOString())
         .lte("created_at", endDate.toISOString())
-        .not("assigned_to", "is", null);
+        .not("assigned_to", "is", null)
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (!profiles || !conversations) return [];
 
@@ -186,6 +192,14 @@ export function useReportStats(period: Period) {
     isLoadingCategory: categoryQuery.isLoading,
     agentPerformance: agentPerformanceQuery.data || [],
     isLoadingAgents: agentPerformanceQuery.isLoading,
+    hasError: statsQuery.isError || monthlyQuery.isError || categoryQuery.isError || agentPerformanceQuery.isError,
+    errorMessage: (statsQuery.error || monthlyQuery.error || categoryQuery.error || agentPerformanceQuery.error)?.message || "Erro de conexão",
+    refetchAll: () => {
+      statsQuery.refetch();
+      monthlyQuery.refetch();
+      categoryQuery.refetch();
+      agentPerformanceQuery.refetch();
+    },
   };
 }
 

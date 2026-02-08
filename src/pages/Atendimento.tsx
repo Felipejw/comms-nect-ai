@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, Info, Users } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, Info, Users, AlertCircle } from "lucide-react";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -196,7 +196,7 @@ export default function Atendimento() {
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: conversations, isLoading: conversationsLoading, refetch: refetchConversations } = useConversations();
+  const { data: conversations, isLoading: conversationsLoading, isError: conversationsError, refetch: refetchConversations } = useConversations();
   const { data: messages, isLoading: messagesLoading } = useMessages(selectedConversation?.id || "");
   const sendMessage = useSendMessage();
   const updateConversation = useUpdateConversation();
@@ -1089,6 +1089,22 @@ export default function Atendimento() {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (conversationsError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4">
+        <AlertCircle className="w-12 h-12 text-destructive" />
+        <div className="text-center">
+          <p className="font-medium">Erro ao carregar conversas</p>
+          <p className="text-sm text-muted-foreground mt-1">{(conversationsError as Error)?.message || "Erro de conexão com o servidor"}</p>
+        </div>
+        <Button variant="outline" onClick={() => refetchConversations()}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Tentar novamente
+        </Button>
       </div>
     );
   }

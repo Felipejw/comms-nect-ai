@@ -1,15 +1,16 @@
-import { Activity, Users, MessageSquare, Clock, Wifi, Loader2 } from "lucide-react";
+import { Activity, Users, MessageSquare, Clock, Wifi, Loader2, AlertCircle, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { usePanelStats, useActivityLog, useRecentConversationsPanel } from "@/hooks/usePanelStats";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export default function Painel() {
-  const { stats, isLoading: isLoadingStats } = usePanelStats();
-  const { activities, isLoading: isLoadingActivities } = useActivityLog();
-  const { conversations, isLoading: isLoadingConversations } = useRecentConversationsPanel();
+  const { stats, isLoading: isLoadingStats, isError: isErrorStats, error: errorStats, refetch: refetchStats } = usePanelStats();
+  const { activities, isLoading: isLoadingActivities, isError: isErrorActivities, error: errorActivities, refetch: refetchActivities } = useActivityLog();
+  const { conversations, isLoading: isLoadingConversations, isError: isErrorConversations, error: errorConversations, refetch: refetchConversations } = useRecentConversationsPanel();
 
   const realtimeStats = [
     { label: "Atendentes Online", value: stats?.agentsOnline ?? 0, icon: Users, color: "text-success" },
@@ -77,7 +78,16 @@ export default function Painel() {
 
       {/* Real-time Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {isLoadingStats ? (
+        {isErrorStats ? (
+          <div className="col-span-full flex flex-col items-center justify-center py-8 gap-3 bg-card rounded-xl border border-border">
+            <AlertCircle className="w-8 h-8 text-destructive" />
+            <p className="text-sm text-muted-foreground">{(errorStats as Error)?.message || "Erro ao carregar estatísticas"}</p>
+            <Button variant="outline" size="sm" onClick={() => refetchStats()}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Tentar novamente
+            </Button>
+          </div>
+        ) : isLoadingStats ? (
           <>
             {[1, 2, 3, 4].map((i) => (
               <Skeleton key={i} className="h-24 rounded-xl" />
@@ -100,14 +110,22 @@ export default function Painel() {
         )}
       </div>
 
-
       {/* Recent Conversations */}
       <div className="bg-card rounded-xl border border-border p-6">
         <h3 className="font-semibold text-lg mb-6 flex items-center gap-2">
           <MessageSquare className="w-5 h-5" />
           Conversas Recentes
         </h3>
-        {isLoadingConversations ? (
+        {isErrorConversations ? (
+          <div className="flex flex-col items-center justify-center py-8 gap-3">
+            <AlertCircle className="w-8 h-8 text-destructive" />
+            <p className="text-sm text-muted-foreground">{(errorConversations as Error)?.message || "Erro ao carregar conversas"}</p>
+            <Button variant="outline" size="sm" onClick={() => refetchConversations()}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Tentar novamente
+            </Button>
+          </div>
+        ) : isLoadingConversations ? (
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
               <Skeleton key={i} className="h-12 w-full" />
@@ -152,7 +170,16 @@ export default function Painel() {
           <Activity className="w-5 h-5" />
           Atividade Recente
         </h3>
-        {isLoadingActivities ? (
+        {isErrorActivities ? (
+          <div className="flex flex-col items-center justify-center py-8 gap-3">
+            <AlertCircle className="w-8 h-8 text-destructive" />
+            <p className="text-sm text-muted-foreground">{(errorActivities as Error)?.message || "Erro ao carregar atividades"}</p>
+            <Button variant="outline" size="sm" onClick={() => refetchActivities()}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Tentar novamente
+            </Button>
+          </div>
+        ) : isLoadingActivities ? (
           <div className="flex items-center justify-center py-8">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
