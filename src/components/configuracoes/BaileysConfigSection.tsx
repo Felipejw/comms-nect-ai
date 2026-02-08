@@ -81,12 +81,14 @@ export function BaileysConfigSection() {
 
     setIsSaving(true);
     try {
+      console.log("[BaileysConfig] Saving server URL...");
       await createOrUpdateSetting.mutateAsync({
         key: "baileys_server_url",
         value: normalizedUrl,
         description: "URL do servidor Baileys WhatsApp",
         category: "whatsapp",
       });
+      console.log("[BaileysConfig] Server URL saved. Saving API key...");
       
       await createOrUpdateSetting.mutateAsync({
         key: "baileys_api_key",
@@ -94,12 +96,15 @@ export function BaileysConfigSection() {
         description: "API Key do servidor Baileys",
         category: "whatsapp",
       });
+      console.log("[BaileysConfig] API key saved successfully.");
 
       toast.success("Configurações do Baileys salvas!");
     } catch (error: any) {
-      console.error("Baileys save error:", JSON.stringify(error, null, 2));
-      const errorMsg = error?.message || error?.toString() || 'Erro desconhecido';
-      toast.error(`Erro ao salvar configurações: ${errorMsg}`);
+      const code = error?.code || error?.status || 'N/A';
+      const msg = error?.message || error?.toString() || 'Erro desconhecido';
+      const details = error?.details || error?.hint || '';
+      console.error("[BaileysConfig] Save failed:", { code, msg, details, fullError: error });
+      toast.error(`Erro ao salvar (${code}): ${msg}`);
     } finally {
       setIsSaving(false);
     }
