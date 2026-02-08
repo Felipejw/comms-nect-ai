@@ -1,79 +1,59 @@
 
-# Corrigir Erros de Infraestrutura Self-Hosted
+# Corrigir Permissoes de Escrita no VPS
 
 ## Diagnostico
 
-Baseado nos logs que voce enviou, identifiquei **2 problemas** na instalacao:
+As funcoes RLS (`is_admin_or_manager`, `has_role`, etc.) agora existem e retornam `true` para o admin. Porem, em instalacoes self-hosted do Supabase, o role PostgreSQL `authenticated` (usado pelo PostgREST para todas as operacoes de usuarios logados) precisa de permissoes **explicitas** de `GRANT ALL` nas tabelas do schema `public`.
 
-### Problema 1: Realtime em loop de restart
-O servico `supabase-realtime` esta crashando com o erro:
-```
-ERROR 3F000 (invalid_schema_name) no schema has been selected to create in
-```
-**Causa**: O schema `_realtime` nao existe no banco de dados. O servico Realtime precisa desse schema para armazenar suas tabelas de migracoes internas. A configuracao do Docker Compose define `DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'`, mas esse schema nunca e criado no `init.sql` nem no script de instalacao.
+Sem essas permissoes, mesmo que o RLS permita a operacao, o PostgreSQL bloqueia a escrita por falta de privilegio a nivel de tabela -- o que resulta exatamente no erro que voce esta vendo ao tentar salvar.
 
-### Problema 2: Storage unhealthy
-O servico `supabase-storage` esta marcado como unhealthy. Provavelmente precisa de permissoes adicionais no banco para operar corretamente.
+## Solucao Imediata (rodar no VPS)
 
-### Impacto no Frontend
-Os erros "Failed to fetch" ao salvar configuracoes sao consequencia direta desses servicos instáveis -- o frontend tenta conectar via realtime e falha, causando o travamento.
-
----
-
-## Solucao
-
-### Passo 1: Comando imediato para corrigir agora (rodar no VPS)
-
-Voce precisa criar o schema `_realtime` e conceder permissoes. Rode este comando no VPS:
+Execute este comando para conceder permissoes de escrita ao role `authenticated` em todas as tabelas e sequences:
 
 ```bash
 sudo docker exec supabase-db psql -U postgres -c "
-  CREATE SCHEMA IF NOT EXISTS _realtime;
-  GRANT ALL ON SCHEMA _realtime TO supabase_admin;
-  ALTER DEFAULT PRIVILEGES IN SCHEMA _realtime GRANT ALL ON TABLES TO supabase_admin;
-  ALTER DEFAULT PRIVILEGES IN SCHEMA _realtime GRANT ALL ON SEQUENCES TO supabase_admin;
+  GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
+  GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO anon;
 "
 ```
 
-Depois reinicie os servicos instáveis:
+Em seguida, reinicie o PostgREST para limpar o cache de schema:
 
 ```bash
-cd /opt/sistema/deploy && sudo docker compose --profile baileys restart realtime storage
+cd /opt/sistema/deploy && sudo docker compose --profile baileys restart rest
 ```
 
-Aguarde ~30 segundos e verifique:
+## Verificacao
+
+Depois de rodar os comandos acima, tente salvar as configuracoes do Baileys novamente na interface. Se precisar de mais diagnostico, rode:
 
 ```bash
-sudo docker compose --profile baileys ps
+# Testar se o authenticated consegue acessar a tabela
+sudo docker exec supabase-db psql -U postgres -c "
+  SELECT has_table_privilege('authenticated', 'public.system_settings', 'INSERT');
+  SELECT has_table_privilege('authenticated', 'public.system_settings', 'UPDATE');
+  SELECT has_table_privilege('authenticated', 'public.system_settings', 'SELECT');
+"
 ```
 
-Todos os servicos devem estar `Up (healthy)`.
+Os 3 resultados devem retornar `t` (true).
 
-### Passo 2: Corrigir o init.sql para futuras instalacoes
+## Sobre a Conexao Baileys
 
-Adicionar a criacao do schema `_realtime` no arquivo `deploy/supabase/init.sql`, logo apos a criacao do schema `extensions`, para que futuras reinstalacoes nao tenham esse problema.
+Apos conseguir salvar a URL e API Key, a conexao com o servidor Baileys deve funcionar automaticamente. O fluxo e:
 
-Tambem adicionar no `install-unified.sh` a criacao do schema na etapa de roles/schemas, garantindo que mesmo se o init.sql rodar antes, o schema ja exista.
+1. Voce salva a URL (`https://155.117.41.226/baileys`) e a API Key na tela de configuracoes
+2. Na tela de Conexoes, ao criar uma instancia, o sistema chama a Edge Function `baileys-instance`
+3. Essa funcao le a URL e API Key do `system_settings` e faz a requisicao ao servidor Baileys
 
-### Passo 3: Corrigir o install-unified.sh
+Se mesmo apos salvar as configuracoes a conexao nao funcionar, o problema estara na comunicacao entre a Edge Function e o container Baileys -- mas primeiro precisamos resolver o salvamento.
 
-Na secao onde os schemas sao criados (onde ja existe `CREATE SCHEMA IF NOT EXISTS auth;`), adicionar:
+## Alteracoes no Codigo
 
-```sql
-CREATE SCHEMA IF NOT EXISTS _realtime;
-GRANT ALL ON SCHEMA _realtime TO supabase_admin;
-```
-
----
-
-## Arquivos a modificar
-
-1. **`deploy/supabase/init.sql`** -- Adicionar `CREATE SCHEMA IF NOT EXISTS _realtime;` + grants apos linha 11
-2. **`deploy/scripts/install-unified.sh`** -- Adicionar criacao do schema `_realtime` na secao de roles/schemas (apos `CREATE SCHEMA IF NOT EXISTS auth;` na linha 756)
-
-## Resultado esperado
-
-- Realtime para de reiniciar em loop
-- Storage volta a ficar healthy
-- Frontend consegue salvar configuracoes sem "Failed to fetch"
-- Futuras instalacoes limpas nao terao esse problema
+Nenhuma alteracao de codigo e necessaria. O problema e puramente de permissoes do banco de dados no VPS.
