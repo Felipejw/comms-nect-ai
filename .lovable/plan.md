@@ -1,112 +1,99 @@
 
+# Corrigir Carregamento Infinito em Todas as Telas (VPS)
 
-# Ajuste Completo do Sistema para VPS (Sem Super Admin, Sem Tenant)
+## Causa Raiz
 
-## Resumo
+O problema esta em dois pontos criticos:
 
-O sistema ainda tem restos do modelo multi-tenant em 3 areas:
-1. **Scripts de deploy** (`install-unified.sh`, `repair-auth.sh`) -- criam o admin como `super_admin` e tentam criar tabela `tenants`
-2. **init.sql** -- mantem `super_admin` no enum `app_role` e funcao `is_super_admin`
-3. **Codigo frontend** (`AuthContext.tsx`) -- mapeia `super_admin` para `admin` (funcional mas desnecessario)
+### 1. ProtectedRoute trava quando role e null
+Em `src/components/auth/ProtectedRoute.tsx` (linha 32-38), quando o `loading` termina mas o `role` e `null` (porque a query de `user_roles` falhou ou retornou vazio), o componente mostra um spinner eternamente:
 
-O `types.ts` NAO sera editado pois e gerado automaticamente pelo banco.
+```text
+ProtectedRoute:
+  loading = false  -->  OK, prossegue
+  user = existe     -->  OK, prossegue  
+  role = null       -->  SPINNER ETERNO (nao tem timeout nem fallback)
+```
 
-## Mudancas Detalhadas
+Isso acontece se:
+- A tabela `user_roles` nao tem o registro do admin
+- O GoTrue criou o usuario mas o trigger `handle_new_user` falhou parcialmente
+- A INSERT do role `admin` no script de instalacao nao executou
 
-### 1. `deploy/scripts/install-unified.sh`
+### 2. system_settings so permite leitura para admins
+A politica RLS da tabela `system_settings` e:
+```text
+"Admins can manage system settings" FOR ALL USING (is_admin_or_manager(...))
+```
 
-**Funcao `create_admin_and_tenant()` (linhas 929-1067)**
+Isso significa que so admins podem LER a tabela. Mas o `BrandingProvider` (que roda para TODOS os usuarios) e o sidebar (que mostra o nome da plataforma) precisam ler essas configuracoes. Se o role nao foi carregado corretamente, a query falha silenciosamente.
 
-Problemas atuais:
-- Promove admin para `super_admin` em vez de `admin`
-- Tenta criar tabela `tenants` (que nao existe mais)
-- Tenta criar `tenant_subscriptions` e `subscription_plans`
-- Tenta atualizar `profiles.tenant_id`
+## Mudancas Planejadas
 
-Correcoes:
-- Renomear funcao para `create_admin()`
-- Promover admin para `admin` (em vez de `super_admin`)
-- Remover TODA a logica de tenant (linhas 1005-1066)
-- Manter apenas: criar usuario + promover para admin + configurar baileys_api_key
+### Arquivo 1: `src/components/auth/ProtectedRoute.tsx`
+- Quando `loading` e `false` e `role` e `null`, mostrar uma tela de erro com:
+  - Mensagem clara: "Nao foi possivel carregar suas permissoes"
+  - Botao "Tentar novamente" (chama `refreshUserData`)
+  - Botao "Sair" (faz logout)
+- Isso substitui o spinner eterno por uma acao do usuario
 
-**Verificacao de tabelas (linha 781)**
+### Arquivo 2: `src/contexts/AuthContext.tsx`
+- No `fetchUserData`, quando `user_roles` retorna null (nenhum registro), definir role como `operator` como fallback em vez de deixar null
+- Isso garante que o usuario sempre tenha um role definido apos o loading
 
-Problema: Verifica se `public.tenants` existe para confirmar que init.sql rodou
-Correcao: Verificar `public.profiles` em vez de `public.tenants`
+### Arquivo 3: `deploy/supabase/init.sql`
+- Adicionar uma politica SELECT separada para `system_settings` que permita leitura para TODOS os usuarios autenticados:
+  ```text
+  "Authenticated users can view system settings" FOR SELECT USING (auth.uid() IS NOT NULL)
+  ```
+- Manter a politica existente de ALL para admins (gerenciamento)
+- Isso permite que o BrandingProvider e o sidebar funcionem para qualquer usuario logado
 
-### 2. `deploy/scripts/repair-auth.sh`
+### Arquivo 4: Migracao no banco Lovable Cloud
+- Aplicar a mesma politica de SELECT para system_settings no banco Cloud via migracao SQL
 
-**Promocao do admin (linhas 258-264)**
+## Resumo das Mudancas
 
-Problema: Promove para `super_admin`
-Correcao: Promover para `admin`
+| Arquivo | Mudanca |
+|---------|---------|
+| `src/components/auth/ProtectedRoute.tsx` | Tela de erro em vez de spinner eterno quando role e null |
+| `src/contexts/AuthContext.tsx` | Fallback para `operator` quando user_roles retorna vazio |
+| `deploy/supabase/init.sql` | Politica SELECT em system_settings para todos os autenticados |
+| Migracao SQL | Aplicar politica no banco Cloud |
 
-### 3. `deploy/supabase/init.sql`
+## Apos Aprovacao
 
-**Enum app_role (linha 23)**
-
-Problema: Inclui `super_admin` no enum
-Correcao: Manter `super_admin` no enum pois ALTER TYPE DROP VALUE nao e suportado no PostgreSQL, mas a funcao `is_super_admin` pode ser mantida para compatibilidade retroativa (bancos que ja tem usuarios com esse role). O `is_admin_or_manager` ja inclui `super_admin` na checagem, entao tudo funciona.
-
-> NOTA: Nao e possivel remover um valor de um ENUM existente no PostgreSQL sem recriar o tipo inteiro e todas as colunas que o usam. Manter `super_admin` no enum nao causa nenhum problema -- o codigo trata `super_admin` e `admin` como equivalentes.
-
-### 4. `src/contexts/AuthContext.tsx`
-
-Nenhuma mudanca necessaria. A linha `if (dbRole === 'super_admin' || dbRole === 'admin')` ja trata ambos corretamente. Isso garante compatibilidade com bancos VPS que ja tem usuarios `super_admin`.
-
-## Arquivos que serao modificados
-
-| Arquivo | O que muda |
-|---------|-----------|
-| `deploy/scripts/install-unified.sh` | Remover logica de tenant, promover admin como `admin`, verificar `profiles` em vez de `tenants` |
-| `deploy/scripts/repair-auth.sh` | Promover admin como `admin` em vez de `super_admin` |
-
-## O que NAO sera alterado (e por que)
-
-| Arquivo | Motivo |
-|---------|--------|
-| `deploy/supabase/init.sql` | Ja esta correto -- nao tem tabelas de tenant, RLS esta limpo, funcoes auxiliares estao ok |
-| `src/contexts/AuthContext.tsx` | Ja trata `super_admin` como `admin` (compatibilidade) |
-| `src/integrations/supabase/types.ts` | Gerado automaticamente, nao pode ser editado |
-| `src/components/layout/AppSidebar.tsx` | Ja NAO tem nenhuma referencia a Super Admin |
-
-## Apos aprovacao
-
-Depois que o codigo for atualizado, voce precisara:
-
-1. **Atualizar o repositorio na VPS**: `cd /opt/sistema && sudo git pull`
-2. **Reinstalar**: `cd deploy && sudo bash scripts/install-unified.sh`
-
-O script de instalacao agora vai:
-- Criar o admin como `admin` (nao `super_admin`)
-- NAO tentar criar tabelas de tenant
-- Funcionar perfeitamente na primeira execucao
+Voce precisara atualizar a VPS:
+1. `cd /opt/sistema && sudo git pull`
+2. Rodar no banco da VPS:
+```text
+sudo docker exec supabase-db psql -U postgres -c "
+  CREATE POLICY \"Authenticated users can view system settings\"
+  ON public.system_settings FOR SELECT
+  USING (auth.uid() IS NOT NULL);
+"
+```
+3. Reiniciar: `sudo docker compose --profile baileys restart`
 
 ## Secao Tecnica
 
-### Por que manter `super_admin` no enum?
-
-PostgreSQL nao suporta `ALTER TYPE ... DROP VALUE`. Para remover um valor de enum, seria necessario:
-1. Criar novo tipo
-2. Alterar todas as colunas que usam o tipo
-3. Remover tipo antigo
-4. Renomear novo tipo
-
-Isso e arriscado em producao e desnecessario pois o codigo ja trata `super_admin === admin`.
-
-### Fluxo da instalacao corrigida
+### Fluxo corrigido do ProtectedRoute
 
 ```text
-install-unified.sh
+ProtectedRoute
   |
-  +-- create_admin()          (antes: create_admin_and_tenant)
-  |     |
-  |     +-- Criar usuario via GoTrue API
-  |     +-- Promover para 'admin'     (antes: 'super_admin')
-  |     +-- Configurar baileys_api_key
-  |     +-- (SEM tenant, SEM subscription)
+  +-- loading = true?  --> Spinner (normal)
   |
-  +-- verify_installation()
-  +-- show_summary()
+  +-- user = null?     --> Redirect /login
+  |
+  +-- role = null?     --> TELA DE ERRO (antes: spinner eterno)
+  |                        [Tentar novamente] [Sair]
+  |
+  +-- isAdmin?         --> Renderizar children
+  |
+  +-- hasPermission?   --> Renderizar children ou Redirect /acesso-negado
 ```
 
+### Por que o fallback para operator?
+
+Se um usuario consegue logar mas nao tem nenhum registro em `user_roles`, e mais seguro trata-lo como `operator` (menor nivel de permissao) do que deixar o sistema travado. O admin pode depois ajustar o role pela interface de Atendentes.
