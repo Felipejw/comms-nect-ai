@@ -55,8 +55,8 @@ export function useUser(userId: string) {
         .from('profiles')
         .select('*')
         .eq('user_id', userId)
-        .maybeSingle()
-        .abortSignal(AbortSignal.timeout(15000));
+        .abortSignal(AbortSignal.timeout(15000))
+        .maybeSingle();
 
       if (profileError) throw profileError;
       if (!profile) return null;
@@ -65,8 +65,8 @@ export function useUser(userId: string) {
         .from('user_roles')
         .select('role')
         .eq('user_id', userId)
-        .maybeSingle()
-        .abortSignal(AbortSignal.timeout(15000));
+        .abortSignal(AbortSignal.timeout(15000))
+        .maybeSingle();
 
       return {
         ...profile,

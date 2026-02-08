@@ -196,7 +196,7 @@ export default function Atendimento() {
   const { user, profile } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { data: conversations, isLoading: conversationsLoading, isError: conversationsError, refetch: refetchConversations } = useConversations();
+  const { data: conversations, isLoading: conversationsLoading, isError: conversationsIsError, error: conversationsError, refetch: refetchConversations } = useConversations();
   const { data: messages, isLoading: messagesLoading } = useMessages(selectedConversation?.id || "");
   const sendMessage = useSendMessage();
   const updateConversation = useUpdateConversation();
@@ -1093,7 +1093,7 @@ export default function Atendimento() {
     );
   }
 
-  if (conversationsError) {
+  if (conversationsIsError) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4">
         <AlertCircle className="w-12 h-12 text-destructive" />
