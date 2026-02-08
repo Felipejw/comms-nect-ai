@@ -1,59 +1,79 @@
 
-# Corrigir Permissoes de Escrita no VPS
 
-## Diagnostico
+# Corrigir Salvamento Intermitente de Configuracoes
 
-As funcoes RLS (`is_admin_or_manager`, `has_role`, etc.) agora existem e retornam `true` para o admin. Porem, em instalacoes self-hosted do Supabase, o role PostgreSQL `authenticated` (usado pelo PostgREST para todas as operacoes de usuarios logados) precisa de permissoes **explicitas** de `GRANT ALL` nas tabelas do schema `public`.
+## Causa Raiz
 
-Sem essas permissoes, mesmo que o RLS permita a operacao, o PostgreSQL bloqueia a escrita por falta de privilegio a nivel de tabela -- o que resulta exatamente no erro que voce esta vendo ao tentar salvar.
+O problema esta no arquivo `src/lib/safeSettingUpsert.ts`. A funcao usa `.maybeSingle()` sem `.limit(1)`:
 
-## Solucao Imediata (rodar no VPS)
+```typescript
+const { data: existing } = await supabase
+  .from("system_settings")
+  .select("id")
+  .eq("key", key)
+  .maybeSingle();  // FALHA se houver 2+ linhas com a mesma key
+```
 
-Execute este comando para conceder permissoes de escrita ao role `authenticated` em todas as tabelas e sequences:
+Quando o salvamento funcionou pela primeira vez, ele fez INSERT. Se por qualquer motivo (race condition entre os dois saves sequenciais, ou tentativas anteriores) existirem linhas duplicadas com a mesma `key`, o `.maybeSingle()` retorna erro em vez de dados -- e o salvamento falha toda vez a partir dai.
+
+## Solucao
+
+### 1. Tornar `safeSettingUpsert` mais robusto
+
+Reescrever a funcao para:
+- Usar `.limit(1)` antes de `.maybeSingle()` para nunca falhar em duplicatas
+- Limpar duplicatas automaticamente quando encontradas
+- Adicionar logs detalhados para diagnostico
+- Ter fallback: se UPDATE falha, tenta DELETE + INSERT
+
+### 2. Adicionar limpeza automatica de duplicatas
+
+Na funcao, antes do SELECT principal, adicionar logica que detecta e remove linhas duplicadas com a mesma `key`, mantendo apenas a mais recente.
+
+### 3. Melhorar tratamento de erros no `BaileysConfigSection`
+
+Adicionar logs mais detalhados no catch do `handleSave` para facilitar diagnostico futuro.
+
+## Arquivos a modificar
+
+1. **`src/lib/safeSettingUpsert.ts`** -- Reescrever com logica resiliente:
+   - Adicionar `.limit(1)` no SELECT
+   - Adicionar limpeza de duplicatas
+   - Adicionar fallback DELETE + INSERT
+   - Adicionar logs de diagnostico
+
+2. **`src/components/configuracoes/BaileysConfigSection.tsx`** -- Melhorar diagnostico de erros no `handleSave`
+
+## Detalhes Tecnicos
+
+### Nova logica do `safeSettingUpsert`:
+
+```text
+1. SELECT count(*) WHERE key = X
+2. Se count > 1: DELETE extras, manter apenas o mais recente
+3. SELECT id WHERE key = X LIMIT 1
+4. Se existe: UPDATE WHERE id = (id encontrado)
+5. Se nao existe: INSERT
+6. Se INSERT falha (possivel duplicata): tenta UPDATE WHERE key = X
+```
+
+### Mudancas no `BaileysConfigSection`:
+
+- Adicionar `console.error` mais detalhado com status code HTTP
+- Mostrar mensagem de erro mais especifica no toast
+
+## Comando de diagnostico para o VPS (rodar agora)
+
+Para verificar se ja existem duplicatas no banco:
 
 ```bash
 sudo docker exec supabase-db psql -U postgres -c "
-  GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
-  GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated, service_role;
-  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated, service_role;
-  GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO authenticated, service_role;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO authenticated, service_role;
-  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT SELECT ON TABLES TO anon;
+  SELECT key, count(*) as qtd 
+  FROM public.system_settings 
+  GROUP BY key 
+  HAVING count(*) > 1;
 "
 ```
 
-Em seguida, reinicie o PostgREST para limpar o cache de schema:
+Se retornar linhas, confirma que o problema sao duplicatas. De qualquer forma, a correcao no codigo vai resolver independentemente.
 
-```bash
-cd /opt/sistema/deploy && sudo docker compose --profile baileys restart rest
-```
-
-## Verificacao
-
-Depois de rodar os comandos acima, tente salvar as configuracoes do Baileys novamente na interface. Se precisar de mais diagnostico, rode:
-
-```bash
-# Testar se o authenticated consegue acessar a tabela
-sudo docker exec supabase-db psql -U postgres -c "
-  SELECT has_table_privilege('authenticated', 'public.system_settings', 'INSERT');
-  SELECT has_table_privilege('authenticated', 'public.system_settings', 'UPDATE');
-  SELECT has_table_privilege('authenticated', 'public.system_settings', 'SELECT');
-"
-```
-
-Os 3 resultados devem retornar `t` (true).
-
-## Sobre a Conexao Baileys
-
-Apos conseguir salvar a URL e API Key, a conexao com o servidor Baileys deve funcionar automaticamente. O fluxo e:
-
-1. Voce salva a URL (`https://155.117.41.226/baileys`) e a API Key na tela de configuracoes
-2. Na tela de Conexoes, ao criar uma instancia, o sistema chama a Edge Function `baileys-instance`
-3. Essa funcao le a URL e API Key do `system_settings` e faz a requisicao ao servidor Baileys
-
-Se mesmo apos salvar as configuracoes a conexao nao funcionar, o problema estara na comunicacao entre a Edge Function e o container Baileys -- mas primeiro precisamos resolver o salvamento.
-
-## Alteracoes no Codigo
-
-Nenhuma alteracao de codigo e necessaria. O problema e puramente de permissoes do banco de dados no VPS.
