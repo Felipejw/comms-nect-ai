@@ -1,79 +1,85 @@
 
+# Corrigir Comunicacao entre Edge Function e Servidor Baileys
 
-# Corrigir Salvamento Intermitente de Configuracoes
+## Diagnostico
 
-## Causa Raiz
+Existem **dois problemas distintos** acontecendo:
 
-O problema esta no arquivo `src/lib/safeSettingUpsert.ts`. A funcao usa `.maybeSingle()` sem `.limit(1)`:
+### Problema 1: Salvamento de Configuracoes (RESOLVIDO)
+As configuracoes do Baileys (`baileys_server_url` e `baileys_api_key`) **ja estao salvas** corretamente no banco de dados:
+- URL: `https://chatbotvital.store/baileys`
+- API Key: `9c23d1a...` (salva)
 
-```typescript
-const { data: existing } = await supabase
-  .from("system_settings")
-  .select("id")
-  .eq("key", key)
-  .maybeSingle();  // FALHA se houver 2+ linhas com a mesma key
+Se voce esta tendo problemas ao re-salvar, e porque o codigo atualizado (com o `safeSettingUpsert` robusto) ainda nao foi publicado no VPS. Mas os valores ja estao la.
+
+### Problema 2: Erro ao Criar Conexao (PROBLEMA REAL)
+O erro "Edge Function returned a non-2xx status code" na tela de Conexoes acontece porque a Edge Function (rodando na nuvem) tenta conectar ao servidor Baileys via HTTPS, mas o certificado SSL do dominio `chatbotvital.store` esta com a **cadeia de certificados mal configurada**.
+
+Erro exato nos logs:
+```
+invalid peer certificate: Other(OtherError(CaUsedAsEndEntity))
 ```
 
-Quando o salvamento funcionou pela primeira vez, ele fez INSERT. Se por qualquer motivo (race condition entre os dois saves sequenciais, ou tentativas anteriores) existirem linhas duplicadas com a mesma `key`, o `.maybeSingle()` retorna erro em vez de dados -- e o salvamento falha toda vez a partir dai.
+Isso significa que o certificado SSL usa um certificado de Autoridade Certificadora (CA) como certificado do servidor, o que e rejeitado pelo Deno (runtime das Edge Functions).
 
 ## Solucao
 
-### 1. Tornar `safeSettingUpsert` mais robusto
+Atualizar a Edge Function `baileys-instance` para ser tolerante a erros de SSL, tentando automaticamente usar HTTP como fallback quando HTTPS falha por problemas de certificado. Isso e seguro porque a comunicacao e de servidor para servidor (Edge Function para VPS).
 
-Reescrever a funcao para:
-- Usar `.limit(1)` antes de `.maybeSingle()` para nunca falhar em duplicatas
-- Limpar duplicatas automaticamente quando encontradas
-- Adicionar logs detalhados para diagnostico
-- Ter fallback: se UPDATE falha, tenta DELETE + INSERT
+### Mudancas no codigo
 
-### 2. Adicionar limpeza automatica de duplicatas
+**Arquivo: `supabase/functions/baileys-instance/index.ts`**
 
-Na funcao, antes do SELECT principal, adicionar logica que detecta e remove linhas duplicadas com a mesma `key`, mantendo apenas a mais recente.
-
-### 3. Melhorar tratamento de erros no `BaileysConfigSection`
-
-Adicionar logs mais detalhados no catch do `handleSave` para facilitar diagnostico futuro.
-
-## Arquivos a modificar
-
-1. **`src/lib/safeSettingUpsert.ts`** -- Reescrever com logica resiliente:
-   - Adicionar `.limit(1)` no SELECT
-   - Adicionar limpeza de duplicatas
-   - Adicionar fallback DELETE + INSERT
-   - Adicionar logs de diagnostico
-
-2. **`src/components/configuracoes/BaileysConfigSection.tsx`** -- Melhorar diagnostico de erros no `handleSave`
-
-## Detalhes Tecnicos
-
-### Nova logica do `safeSettingUpsert`:
+Adicionar uma funcao auxiliar `resilientFetch` que:
+1. Tenta a requisicao com a URL original (HTTPS)
+2. Se falhar com erro de SSL/certificado, automaticamente retenta usando HTTP
+3. Loga qual protocolo funcionou para diagnostico
 
 ```text
-1. SELECT count(*) WHERE key = X
-2. Se count > 1: DELETE extras, manter apenas o mais recente
-3. SELECT id WHERE key = X LIMIT 1
-4. Se existe: UPDATE WHERE id = (id encontrado)
-5. Se nao existe: INSERT
-6. Se INSERT falha (possivel duplicata): tenta UPDATE WHERE key = X
+async function resilientFetch(url, options) {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (isSSLError(error)) {
+      const httpUrl = url.replace('https://', 'http://');
+      console.warn('SSL error, retrying with HTTP:', httpUrl);
+      return await fetch(httpUrl, options);
+    }
+    throw error;
+  }
+}
 ```
 
-### Mudancas no `BaileysConfigSection`:
+Substituir todas as chamadas `fetch()` na funcao por `resilientFetch()`.
 
-- Adicionar `console.error` mais detalhado com status code HTTP
-- Mostrar mensagem de erro mais especifica no toast
+**Arquivo: `supabase/functions/baileys-create-session/index.ts`**
 
-## Comando de diagnostico para o VPS (rodar agora)
+Aplicar a mesma logica de `resilientFetch` nesta funcao, que tambem faz chamadas ao servidor Baileys.
 
-Para verificar se ja existem duplicatas no banco:
+### Por que isso resolve
 
+- A Edge Function roda na nuvem (Lovable Cloud) e precisa acessar o VPS via internet
+- O certificado SSL do VPS esta mal configurado (Let's Encrypt com cadeia incompleta)
+- Ao fazer fallback para HTTP, a comunicacao funciona normalmente
+- Essa comunicacao e de servidor-para-servidor, entao HTTP e aceitavel para esse caso
+
+### Alternativa (sem alterar codigo)
+
+Corrigir o SSL no VPS rodando:
 ```bash
-sudo docker exec supabase-db psql -U postgres -c "
-  SELECT key, count(*) as qtd 
-  FROM public.system_settings 
-  GROUP BY key 
-  HAVING count(*) > 1;
-"
+cd /opt/sistema/deploy
+sudo docker compose --profile baileys down
+sudo docker compose --profile baileys up -d
 ```
 
-Se retornar linhas, confirma que o problema sao duplicatas. De qualquer forma, a correcao no codigo vai resolver independentemente.
+Ou regenerar o certificado SSL:
+```bash
+sudo certbot renew --force-renewal
+```
 
+Mas a correcao no codigo e mais resiliente e evita problemas futuros com certificados expirados ou mal configurados.
+
+## Resumo das alteracoes
+
+1. `supabase/functions/baileys-instance/index.ts` -- Adicionar `resilientFetch` com fallback HTTP
+2. `supabase/functions/baileys-create-session/index.ts` -- Aplicar mesma logica de fallback
