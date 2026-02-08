@@ -756,6 +756,10 @@ start_services() {
             CREATE SCHEMA IF NOT EXISTS auth;
             GRANT ALL ON SCHEMA auth TO supabase_auth_admin;
             GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role;
+            CREATE SCHEMA IF NOT EXISTS _realtime;
+            GRANT ALL ON SCHEMA _realtime TO supabase_admin;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA _realtime GRANT ALL ON TABLES TO supabase_admin;
+            ALTER DEFAULT PRIVILEGES IN SCHEMA _realtime GRANT ALL ON SEQUENCES TO supabase_admin;
             GRANT ALL ON SCHEMA public TO supabase_admin, supabase_auth_admin;
             GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
             ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO supabase_admin, supabase_auth_admin;
