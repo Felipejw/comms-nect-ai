@@ -1,5 +1,5 @@
 import { useState, useRef } from "react";
-import { Plus, Search, Edit, Trash2, Copy, Zap, Loader2, HelpCircle } from "lucide-react";
+import { Plus, Search, Edit, Trash2, Copy, Zap, Loader2, HelpCircle, AlertCircle, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -63,7 +63,7 @@ export default function RespostasRapidas() {
     category: "",
   });
 
-  const { data: quickReplies, isLoading } = useQuickReplies();
+  const { data: quickReplies, isLoading, isError, error: quickRepliesError, refetch } = useQuickReplies();
   const createQuickReply = useCreateQuickReply();
   const deleteQuickReply = useDeleteQuickReply();
   const updateQuickReply = useUpdateQuickReply();
@@ -302,6 +302,18 @@ export default function RespostasRapidas() {
       {isLoading ? (
         <div className="flex justify-center py-12">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        </div>
+      ) : isError ? (
+        <div className="flex flex-col items-center justify-center py-12 gap-4">
+          <AlertCircle className="w-12 h-12 text-destructive" />
+          <div className="text-center">
+            <p className="font-medium">Erro ao carregar respostas rápidas</p>
+            <p className="text-sm text-muted-foreground mt-1">{(quickRepliesError as Error)?.message || "Erro de conexão com o servidor"}</p>
+          </div>
+          <Button variant="outline" onClick={() => refetch()}>
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Tentar novamente
+          </Button>
         </div>
       ) : filteredReplies.length === 0 ? (
         <div className="text-center py-16 text-muted-foreground">

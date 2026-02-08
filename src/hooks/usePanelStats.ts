@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { useEffect } from "react";
 
 export function usePanelStats() {
   const statsQuery = useQuery({
@@ -10,19 +9,23 @@ export function usePanelStats() {
         supabase
           .from("profiles")
           .select("*", { count: "exact", head: true })
-          .eq("is_online", true),
+          .eq("is_online", true)
+          .abortSignal(AbortSignal.timeout(15000)),
         supabase
           .from("conversations")
           .select("*", { count: "exact", head: true })
-          .eq("status", "in_progress"),
+          .eq("status", "in_progress")
+          .abortSignal(AbortSignal.timeout(15000)),
         supabase
           .from("conversations")
           .select("*", { count: "exact", head: true })
-          .eq("status", "new"),
+          .eq("status", "new")
+          .abortSignal(AbortSignal.timeout(15000)),
         supabase
           .from("conversations")
           .select("created_at, updated_at")
-          .eq("status", "in_progress"),
+          .eq("status", "in_progress")
+          .abortSignal(AbortSignal.timeout(15000)),
       ]);
 
       // Calculate average time for active conversations
@@ -46,12 +49,14 @@ export function usePanelStats() {
         avgTimeMinutes,
       };
     },
-    refetchInterval: 10000, // Refresh every 10 seconds
+    refetchInterval: 10000,
   });
 
   return {
     stats: statsQuery.data,
     isLoading: statsQuery.isLoading,
+    isError: statsQuery.isError,
+    error: statsQuery.error,
     refetch: statsQuery.refetch,
   };
 }
@@ -64,7 +69,8 @@ export function useActivityLog() {
         .from("activity_logs")
         .select("*")
         .order("created_at", { ascending: false })
-        .limit(20);
+        .limit(20)
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (!data || data.length === 0) return [];
 
@@ -76,7 +82,8 @@ export function useActivityLog() {
         const { data: profiles } = await supabase
           .from("profiles")
           .select("user_id, name")
-          .in("user_id", userIds);
+          .in("user_id", userIds)
+          .abortSignal(AbortSignal.timeout(15000));
 
         if (profiles) {
           profilesMap = profiles.reduce((acc, p) => {
@@ -97,6 +104,9 @@ export function useActivityLog() {
   return {
     activities: activitiesQuery.data || [],
     isLoading: activitiesQuery.isLoading,
+    isError: activitiesQuery.isError,
+    error: activitiesQuery.error,
+    refetch: activitiesQuery.refetch,
   };
 }
 
@@ -116,7 +126,8 @@ export function useRecentConversationsPanel() {
           contacts (name, phone)
         `)
         .order("updated_at", { ascending: false })
-        .limit(10);
+        .limit(10)
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (!data) return [];
 
@@ -128,7 +139,8 @@ export function useRecentConversationsPanel() {
         const { data: profiles } = await supabase
           .from("profiles")
           .select("user_id, name")
-          .in("user_id", assignedIds);
+          .in("user_id", assignedIds)
+          .abortSignal(AbortSignal.timeout(15000));
         
         if (profiles) {
           profilesMap = profiles.reduce((acc, p) => {
@@ -149,5 +161,8 @@ export function useRecentConversationsPanel() {
   return {
     conversations: conversationsQuery.data || [],
     isLoading: conversationsQuery.isLoading,
+    isError: conversationsQuery.isError,
+    error: conversationsQuery.error,
+    refetch: conversationsQuery.refetch,
   };
 }

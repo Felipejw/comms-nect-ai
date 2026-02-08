@@ -21,7 +21,8 @@ export function useQuickReplies() {
       const { data, error } = await supabase
         .from('quick_replies')
         .select('*')
-        .order('usage_count', { ascending: false });
+        .order('usage_count', { ascending: false })
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (error) throw error;
       return (data || []) as QuickReply[];

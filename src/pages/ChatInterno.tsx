@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from "react";
-import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck, Plus, MessageSquare, ArrowLeft, Menu } from "lucide-react";
+import { Search, Send, Smile, Paperclip, Loader2, Check, CheckCheck, Plus, MessageSquare, ArrowLeft, Menu, AlertCircle, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -35,7 +35,7 @@ interface TeamMember {
 
 export default function ChatInterno() {
   const { user, profile } = useAuth();
-  const { data: users = [], isLoading: usersLoading } = useUsers();
+  const { data: users = [], isLoading: usersLoading, isError: usersError, error: usersErrorObj, refetch: refetchUsers } = useUsers();
   const [selectedMember, setSelectedMember] = useState<TeamMember | null>(null);
   const [messageText, setMessageText] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -129,6 +129,22 @@ export default function ChatInterno() {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (usersError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <AlertCircle className="w-12 h-12 text-destructive" />
+        <div className="text-center">
+          <p className="font-medium">Erro ao carregar usuários</p>
+          <p className="text-sm text-muted-foreground mt-1">{(usersErrorObj as Error)?.message || "Erro de conexão com o servidor"}</p>
+        </div>
+        <Button variant="outline" onClick={() => refetchUsers()}>
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Tentar novamente
+        </Button>
       </div>
     );
   }

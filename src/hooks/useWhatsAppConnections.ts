@@ -27,14 +27,15 @@ export function useWhatsAppConnections() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
-  const { data: connections = [], isLoading, refetch } = useQuery({
+  const { data: connections = [], isLoading, isError, refetch } = useQuery({
     queryKey: ["whatsapp-connections"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("connections")
         .select("*")
         .eq("type", "whatsapp")
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .abortSignal(AbortSignal.timeout(15000));
 
       if (error) throw error;
       return data as WhatsAppConnection[];
@@ -263,6 +264,7 @@ export function useWhatsAppConnections() {
   return {
     connections,
     isLoading,
+    isError,
     refetch,
     createConnection,
     getQrCode,
