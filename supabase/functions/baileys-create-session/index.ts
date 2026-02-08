@@ -1,10 +1,38 @@
-// Baileys session creation - delegated from baileys-instance
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
+
+// Detect SSL/TLS errors and retry with HTTP fallback
+function isSSLError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const msg = error.message.toLowerCase();
+  return (
+    msg.includes("certificate") ||
+    msg.includes("ssl") ||
+    msg.includes("tls") ||
+    msg.includes("peer") ||
+    msg.includes("handshake") ||
+    msg.includes("secure connection") ||
+    (error.name === "TypeError" && msg.includes("error sending request"))
+  );
+}
+
+async function resilientFetch(url: string, options?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, options);
+  } catch (error) {
+    if (isSSLError(error)) {
+      const httpUrl = url.replace("https://", "http://");
+      console.warn(`[Baileys Session] SSL error on ${url}, retrying with HTTP: ${httpUrl}`);
+      console.warn(`[Baileys Session] Original error: ${error instanceof Error ? error.message : error}`);
+      return await fetch(httpUrl, options);
+    }
+    throw error;
+  }
+}
 
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
@@ -35,7 +63,7 @@ const handler = async (req: Request): Promise<Response> => {
     try {
       console.log(`[Baileys Session] Calling POST ${baileysUrl}/sessions`);
       
-      const response = await fetch(`${baileysUrl}/sessions`, {
+      const response = await resilientFetch(`${baileysUrl}/sessions`, {
         method: "POST",
         headers,
         body: JSON.stringify({ name: sessionName, webhookUrl }),
@@ -62,12 +90,11 @@ const handler = async (req: Request): Promise<Response> => {
         // Log activity - get tenant_id from connection
         const { data: conn } = await supabaseClient
           .from("connections")
-          .select("tenant_id")
+          .select("*")
           .eq("id", connectionId)
           .single();
 
         await supabaseClient.from("activity_logs").insert({
-          tenant_id: conn?.tenant_id,
           action: "create",
           entity_type: "session",
           entity_id: connectionId,
