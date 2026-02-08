@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard, MessageSquare, Users, Calendar, Tags, Zap, Settings,
   ChevronDown, ChevronRight, FileText, Activity, HeartPulse, Send, UserCog,
-  Bot, Plug, QrCode, Kanban, MessagesSquare, ChevronsLeft, ChevronsRight, Building2,
+  Bot, Plug, QrCode, Kanban, MessagesSquare, ChevronsLeft, ChevronsRight, Building2, LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAuth } from "@/contexts/AuthContext";
 import { type ModuleKey } from "@/hooks/usePermissions";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
+import { toast } from "@/components/ui/sonner";
 
 interface NavItem { title: string; href: string; icon: React.ElementType; module?: ModuleKey; }
 interface NavSection { title: string; items: NavItem[]; }
@@ -53,7 +55,8 @@ interface AppSidebarProps { onNavigate?: () => void; }
 
 export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const location = useLocation();
-  const { hasPermission, isAdmin } = useAuth();
+  const navigate = useNavigate();
+  const { hasPermission, isAdmin, signOut, profile } = useAuth();
   const { getSetting } = useSystemSettings();
   const [expandedSections, setExpandedSections] = useState<string[]>(["Gerência", "Atendimento", "Administração"]);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -123,11 +126,42 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
         ))}
       </nav>
 
-      <div className="p-3 border-t border-sidebar-border space-y-1">
-        <NavLink to="/configuracoes" onClick={onNavigate} className={cn("sidebar-link", isActive("/configuracoes") && "sidebar-link-active", isCollapsed && "justify-center px-2")}>
-          <Settings className="w-5 h-5" />
-          {!isCollapsed && <span>Configurações</span>}
-        </NavLink>
+      <div className="border-t border-sidebar-border">
+        {!isCollapsed && profile && (
+          <div className="flex items-center gap-3 px-4 py-3">
+            <Avatar className="h-8 w-8 flex-shrink-0">
+              <AvatarImage src={profile.avatar_url || undefined} />
+              <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                {(profile.name || profile.email || "U").charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium truncate">{profile.name}</p>
+              <p className="text-xs text-sidebar-muted truncate">{profile.email}</p>
+            </div>
+          </div>
+        )}
+        <div className="p-3 space-y-1">
+          <NavLink to="/configuracoes" onClick={onNavigate} className={cn("sidebar-link", isActive("/configuracoes") && "sidebar-link-active", isCollapsed && "justify-center px-2")}>
+            <Settings className="w-5 h-5" />
+            {!isCollapsed && <span>Configurações</span>}
+          </NavLink>
+          <button
+            onClick={async () => {
+              try {
+                await signOut();
+                onNavigate?.();
+                navigate("/login");
+              } catch {
+                toast.error("Erro ao sair. Tente novamente.");
+              }
+            }}
+            className={cn("sidebar-link w-full text-destructive hover:text-destructive", isCollapsed && "justify-center px-2")}
+          >
+            <LogOut className="w-5 h-5" />
+            {!isCollapsed && <span>Sair</span>}
+          </button>
+        </div>
       </div>
     </aside>
   );
