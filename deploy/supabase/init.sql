@@ -10,6 +10,12 @@
 -- Criar schema para extensões (necessário para self-hosted)
 CREATE SCHEMA IF NOT EXISTS extensions;
 
+-- Criar schema para Realtime (necessário para o serviço de WebSocket)
+CREATE SCHEMA IF NOT EXISTS _realtime;
+GRANT ALL ON SCHEMA _realtime TO supabase_admin;
+ALTER DEFAULT PRIVILEGES IN SCHEMA _realtime GRANT ALL ON TABLES TO supabase_admin;
+ALTER DEFAULT PRIVILEGES IN SCHEMA _realtime GRANT ALL ON SEQUENCES TO supabase_admin;
+
 -- Extensões necessárias
 CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
