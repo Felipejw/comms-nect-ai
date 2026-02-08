@@ -96,32 +96,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('user_id', userId)
         .maybeSingle();
       
-      if (roleData) {
-        const dbRole = roleData.role as string;
-        let mappedRole: AppRole;
+      const dbRole = (roleData?.role as string) ?? null;
+      let mappedRole: AppRole;
+      
+      if (!dbRole) {
+        // Fallback: se não tem role no banco, tratar como operator (menor permissão)
+        console.warn('Nenhum role encontrado para o usuário, usando fallback: operator');
+        mappedRole = 'operator';
+      } else if (dbRole === 'super_admin' || dbRole === 'admin') {
+        mappedRole = 'admin';
+      } else if (dbRole === 'manager') {
+        mappedRole = 'manager';
+      } else {
+        mappedRole = 'operator';
+      }
+      
+      setRole(mappedRole);
+      
+      if (mappedRole !== 'admin') {
+        const { data: permissionsData } = await supabase
+          .from('user_permissions')
+          .select('module, can_view, can_edit')
+          .eq('user_id', userId);
         
-        if (dbRole === 'super_admin' || dbRole === 'admin') {
-          mappedRole = 'admin';
-        } else if (dbRole === 'manager') {
-          mappedRole = 'manager';
-        } else {
-          mappedRole = 'operator';
+        if (permissionsData) {
+          setPermissions(permissionsData);
         }
-        
-        setRole(mappedRole);
-        
-        if (mappedRole !== 'admin') {
-          const { data: permissionsData } = await supabase
-            .from('user_permissions')
-            .select('module, can_view, can_edit')
-            .eq('user_id', userId);
-          
-          if (permissionsData) {
-            setPermissions(permissionsData);
-          }
-        } else {
-          setPermissions([]);
-        }
+      } else {
+        setPermissions([]);
       }
     } catch (error) {
       console.error('Error fetching user data:', error);

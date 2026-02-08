@@ -956,6 +956,7 @@ CREATE POLICY "Users can send chat messages" ON public.chat_messages FOR INSERT 
 CREATE POLICY "Users can update own chat messages" ON public.chat_messages FOR UPDATE USING ((sender_id = auth.uid()) OR (receiver_id = auth.uid()));
 
 -- ---- system_settings ----
+CREATE POLICY "Authenticated users can view system settings" ON public.system_settings FOR SELECT USING (auth.uid() IS NOT NULL);
 CREATE POLICY "Admins can manage system settings" ON public.system_settings FOR ALL USING (is_admin_or_manager(auth.uid())) WITH CHECK (is_admin_or_manager(auth.uid()));
 
 -- ============================================================
