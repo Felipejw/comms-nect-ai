@@ -1,141 +1,103 @@
 
-# Corrigir Carregamento Infinito em Todas as Telas da VPS
+# Corrigir Permissões de Escrita na VPS
 
-## Diagnostico
+## Problema Identificado
 
-O sidebar carrega corretamente (auth, role, branding funcionam), mas o conteudo de TODAS as paginas fica travado no spinner. Isso indica que as queries REST ao banco de dados estao travando sem resposta.
+Todas as operações de **leitura** funcionam, mas **escritas** falham com erro de RLS. Isso indica que o role PostgreSQL `authenticated` (usado pelo PostgREST) nao tem permissao de escrita nas tabelas, mesmo que as politicas de RLS estejam corretas.
 
-### Causa raiz provavel (VPS)
+Os erros especificos:
+- "new row violates row-level security policy for table system_settings" (ao salvar config do Baileys)
+- Excluir contato nao funciona (mesma causa)
 
-Apos a reinstalacao, o PostgREST pode nao estar conectado corretamente ao banco, ou nao recarregou o schema. Todas as chamadas REST ficam pendentes indefinidamente.
+## Causa Raiz
 
-### Problema no codigo
+O `init.sql` contem os GRANTs corretos (linhas 966-969), mas durante a instalacao eles podem nao ter sido aplicados corretamente. Sem `GRANT ALL` no role `authenticated`, o PostgREST nao consegue fazer INSERT, UPDATE ou DELETE - apenas SELECT.
 
-Mesmo que o PostgREST estivesse funcionando, varios hooks e paginas NAO tem:
-- **Timeout nas queries** - se a query travar, o spinner fica eterno
-- **Tratamento de erro** - se a query falhar, nao mostra nada util
+## Solucao
 
-Paginas COM tratamento de erro: Dashboard, Contatos, Tags, Campanhas, Agendamentos, Kanban, Usuarios
-Paginas SEM tratamento de erro: **Atendimento**, ChatInterno, Relatorios, Painel, RespostasRapidas, Conexoes, Configuracoes
+**Nao ha mudancas de codigo necessarias.** O `init.sql` ja esta correto. O problema esta no banco de dados da VPS que precisa receber os GRANTs manualmente.
 
-## Mudancas Planejadas
+### Passo 1: Diagnostico (rode na VPS)
 
-### 1. Adicionar timeout a hooks criticos que nao tem
-
-Os seguintes hooks serao atualizados para incluir `AbortSignal.timeout(15000)`:
-
-| Hook | Arquivo |
-|------|---------|
-| `useConversations` | `src/hooks/useConversations.ts` |
-| `useMessages` | `src/hooks/useConversations.ts` |
-| `useQuickReplies` | `src/hooks/useQuickReplies.ts` |
-| `usePanelStats` | `src/hooks/usePanelStats.ts` |
-| `useReportStats` | `src/hooks/useReportStats.ts` |
-| `useUsers` | `src/hooks/useUsers.ts` |
-| `useWhatsAppConnections` | `src/hooks/useWhatsAppConnections.ts` |
-
-Exemplo da mudanca no `useConversations`:
 ```text
-// Antes
-const { data, error } = await query;
-
-// Depois
-const { data, error } = await query.abortSignal(AbortSignal.timeout(15000));
+sudo docker exec supabase-db psql -U postgres -c "
+  SELECT 
+    grantee, 
+    table_name, 
+    privilege_type
+  FROM information_schema.table_privileges 
+  WHERE table_schema = 'public' 
+    AND table_name = 'system_settings'
+  ORDER BY grantee, privilege_type;
+"
 ```
 
-### 2. Adicionar tratamento de erro na pagina Atendimento
+Isso vai mostrar quais permissoes o role `authenticated` tem na tabela `system_settings`. Se nao aparecer INSERT, UPDATE, DELETE - confirma o problema.
 
-`src/pages/Atendimento.tsx` - apos o check de `conversationsLoading`, adicionar:
+### Passo 2: Verificar role do usuario admin
 
 ```text
-if (conversationsLoading) {
-  return <Spinner />;
-}
-
-// NOVO: tratamento de erro
-if (isError) {
-  return <ErrorState message={error.message} onRetry={refetch} />;
-}
+sudo docker exec supabase-db psql -U postgres -c "
+  SELECT p.email, ur.role 
+  FROM user_roles ur 
+  JOIN profiles p ON p.user_id = ur.user_id;
+"
 ```
 
-Isso substitui o spinner eterno por uma mensagem de erro com botao "Tentar novamente".
+Isso confirma se o usuario tem o role `admin` no banco de dados.
 
-### 3. Adicionar tratamento de erro nas demais paginas
-
-As seguintes paginas serao atualizadas com o mesmo padrao de erro:
-
-| Pagina | Arquivo |
-|--------|---------|
-| ChatInterno | `src/pages/ChatInterno.tsx` |
-| Relatorios | `src/pages/Relatorios.tsx` |
-| Painel | `src/pages/Painel.tsx` |
-| RespostasRapidas | `src/pages/RespostasRapidas.tsx` |
-| Conexoes | `src/pages/Conexoes.tsx` |
-| Configuracoes | `src/pages/Configuracoes.tsx` |
-
-## Resumo dos arquivos que serao modificados
-
-| Arquivo | Mudanca |
-|---------|---------|
-| `src/hooks/useConversations.ts` | Timeout de 15s em useConversations e useMessages |
-| `src/hooks/useQuickReplies.ts` | Timeout de 15s |
-| `src/hooks/usePanelStats.ts` | Timeout de 15s |
-| `src/hooks/useReportStats.ts` | Timeout de 15s |
-| `src/hooks/useUsers.ts` | Timeout de 15s |
-| `src/hooks/useWhatsAppConnections.ts` | Timeout de 15s |
-| `src/pages/Atendimento.tsx` | isError + mensagem de erro + botao retry |
-| `src/pages/ChatInterno.tsx` | isError + mensagem de erro + botao retry |
-| `src/pages/Relatorios.tsx` | isError + mensagem de erro + botao retry |
-| `src/pages/Painel.tsx` | isError + mensagem de erro + botao retry |
-| `src/pages/RespostasRapidas.tsx` | isError + mensagem de erro + botao retry |
-| `src/pages/Conexoes.tsx` | isError + mensagem de erro + botao retry |
-| `src/pages/Configuracoes.tsx` | isError + mensagem de erro + botao retry |
-
-## Apos aprovacao - Diagnostico VPS
-
-Depois de aplicar as mudancas de codigo, rode estes comandos na VPS para diagnosticar o PostgREST:
+### Passo 3: Aplicar a correcao
 
 ```text
-# 1. Ver logs do PostgREST
-sudo docker logs supabase-rest 2>&1 | tail -30
+sudo docker exec supabase-db psql -U postgres -c "
+  -- Permissoes completas para authenticated
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+  
+  -- Permissoes para service_role
+  GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+  GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+  
+  -- Permissao de leitura para anon
+  GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+  
+  -- Garantir permissoes futuras
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public 
+    GRANT ALL ON TABLES TO authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public 
+    GRANT ALL ON SEQUENCES TO authenticated, service_role;
+  ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public 
+    GRANT SELECT ON TABLES TO anon;
+"
+```
 
-# 2. Reiniciar PostgREST para forcar reload do schema
+### Passo 4: Reiniciar PostgREST
+
+```text
 cd /opt/sistema/deploy
 sudo docker restart supabase-rest
-
-# 3. Testar se a API REST responde
-curl -s http://localhost:3000/rest/v1/profiles?select=id\&limit=1 \
-  -H "apikey: SUA_ANON_KEY" \
-  -H "Authorization: Bearer SUA_ANON_KEY"
-
-# 4. Se nada funcionar, reiniciar todos os servicos
-sudo docker compose --profile baileys restart
 ```
 
-## Secao Tecnica
+### Passo 5: Testar
 
-### Por que o spinner fica eterno?
+Apos reiniciar, tente:
+1. Salvar as configuracoes do Baileys na tela de Configuracoes > Opcoes
+2. Excluir o contato "Teste"
+
+Ambas as operacoes devem funcionar sem erro de RLS.
+
+## Por que isso acontece
+
+Em instalacoes self-hosted do Supabase, o PostgreSQL tem dois niveis de controle de acesso:
 
 ```text
-useConversations() faz fetch -> PostgREST nao responde -> 
-  query fica pendente -> isLoading = true para sempre ->
-  pagina exibe <Loader2 /> eternamente
+Nivel 1: GRANTs (permissao do role PostgreSQL)
+  authenticated PRECISA de GRANT ALL para poder escrever
+
+Nivel 2: RLS Policies (controle fino por registro)
+  is_admin_or_manager() verifica se o usuario e admin
+
+Ambos precisam permitir a operacao para ela funcionar.
 ```
 
-Com o timeout de 15s:
-
-```text
-useConversations() faz fetch -> PostgREST nao responde ->
-  AbortSignal.timeout(15000) cancela apos 15s ->
-  retry 1 -> timeout -> retry 2 -> timeout ->
-  isLoading = false, isError = true ->
-  pagina exibe mensagem de erro + botao "Tentar novamente"
-```
-
-### Padrao de erro consistente
-
-Todas as paginas usarao o mesmo layout de erro:
-- Icone de alerta (AlertCircle)
-- Titulo "Erro ao carregar [nome da pagina]"
-- Mensagem tecnica do erro
-- Botao "Tentar novamente" que chama refetch()
+Se o GRANT nao existe, a operacao falha no Nivel 1 antes mesmo de chegar ao Nivel 2 (RLS). O erro reportado menciona "RLS" mas a causa real e a falta de GRANT.
