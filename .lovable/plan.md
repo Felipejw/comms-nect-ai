@@ -1,96 +1,112 @@
 
-# Solucao Definitiva: Corrigir Saves no VPS
 
-## O que esta acontecendo (explicacao simples)
+# Ajuste Completo do Sistema para VPS (Sem Super Admin, Sem Tenant)
 
-As mudancas que foram feitas ate agora so afetaram o Lovable Cloud (ambiente de teste). O seu VPS em `chatbotvital.store` tem um banco de dados SEPARADO que ainda esta com as regras antigas. Essas regras exigem um "tenant_id" (identificador de empresa) que nao existe mais no codigo -- por isso o banco rejeita tudo.
+## Resumo
 
-A prova esta na sua tela: o menu "Super Admin" ainda aparece, significando que o VPS roda o codigo antigo.
+O sistema ainda tem restos do modelo multi-tenant em 3 areas:
+1. **Scripts de deploy** (`install-unified.sh`, `repair-auth.sh`) -- criam o admin como `super_admin` e tentam criar tabela `tenants`
+2. **init.sql** -- mantem `super_admin` no enum `app_role` e funcao `is_super_admin`
+3. **Codigo frontend** (`AuthContext.tsx`) -- mapeia `super_admin` para `admin` (funcional mas desnecessario)
 
-## Duas acoes necessarias no VPS
+O `types.ts` NAO sera editado pois e gerado automaticamente pelo banco.
 
-### Acao 1: Rodar o SQL de migracao no banco do VPS
+## Mudancas Detalhadas
 
-Um unico comando que vai:
-- Remover TODAS as politicas de seguranca antigas (que checam tenant_id)
-- Criar politicas novas e simples (apenas checa se esta logado)
-- Remover a coluna tenant_id de todas as tabelas
-- Remover tabelas de tenant que nao existem mais
-- Adicionar a UNIQUE constraint em system_settings
+### 1. `deploy/scripts/install-unified.sh`
 
-### Acao 2: Reconstruir o Docker
+**Funcao `create_admin_and_tenant()` (linhas 929-1067)**
 
-Reconstruir o container para que o VPS use o codigo novo (sem tenant, sem Super Admin, com saves corrigidos).
+Problemas atuais:
+- Promove admin para `super_admin` em vez de `admin`
+- Tenta criar tabela `tenants` (que nao existe mais)
+- Tenta criar `tenant_subscriptions` e `subscription_plans`
+- Tenta atualizar `profiles.tenant_id`
 
-## Mudancas no codigo (resiliencia extra)
+Correcoes:
+- Renomear funcao para `create_admin()`
+- Promover admin para `admin` (em vez de `super_admin`)
+- Remover TODA a logica de tenant (linhas 1005-1066)
+- Manter apenas: criar usuario + promover para admin + configurar baileys_api_key
 
-### 1. useSystemSettings.ts - Parar de usar upsert
+**Verificacao de tabelas (linha 781)**
 
-O `upsert` exige uma constraint UNIQUE no banco. Se ela nao existe (caso de bancos antigos), falha. A solucao eh usar SELECT primeiro, depois INSERT ou UPDATE conforme o caso:
+Problema: Verifica se `public.tenants` existe para confirmar que init.sql rodou
+Correcao: Verificar `public.profiles` em vez de `public.tenants`
 
-```typescript
-// ANTES (depende de UNIQUE constraint):
-const { error } = await supabase
-  .from("system_settings")
-  .upsert({ key, value }, { onConflict: "key" });
+### 2. `deploy/scripts/repair-auth.sh`
 
-// DEPOIS (funciona com qualquer banco):
-const { data: existing } = await supabase
-  .from("system_settings")
-  .select("id")
-  .eq("key", key)
-  .maybeSingle();
+**Promocao do admin (linhas 258-264)**
 
-if (existing) {
-  await supabase.from("system_settings")
-    .update({ value, description, category })
-    .eq("key", key);
-} else {
-  await supabase.from("system_settings")
-    .insert({ key, value, description, category });
-}
-```
+Problema: Promove para `super_admin`
+Correcao: Promover para `admin`
 
-Tambem corrigir o `updateSetting` para que funcione quando a chave ainda nao existe.
+### 3. `deploy/supabase/init.sql`
 
-### 2. CustomizeTab.tsx - Mesmo padrao
+**Enum app_role (linha 23)**
 
-Substituir todos os `.upsert()` diretos por SELECT + INSERT/UPDATE. Sao usados em:
-- Upload de logo
-- Remocao de logo
-- Salvar cores de identidade visual (11 configuracoes)
+Problema: Inclui `super_admin` no enum
+Correcao: Manter `super_admin` no enum pois ALTER TYPE DROP VALUE nao e suportado no PostgreSQL, mas a funcao `is_super_admin` pode ser mantida para compatibilidade retroativa (bancos que ja tem usuarios com esse role). O `is_admin_or_manager` ja inclui `super_admin` na checagem, entao tudo funciona.
 
-### 3. BaileysConfigSection.tsx - Ja usa createOrUpdateSetting
+> NOTA: Nao e possivel remover um valor de um ENUM existente no PostgreSQL sem recriar o tipo inteiro e todas as colunas que o usam. Manter `super_admin` no enum nao causa nenhum problema -- o codigo trata `super_admin` e `admin` como equivalentes.
 
-Esse arquivo ja chama `createOrUpdateSetting` do hook, entao a correcao no hook resolve automaticamente.
+### 4. `src/contexts/AuthContext.tsx`
+
+Nenhuma mudanca necessaria. A linha `if (dbRole === 'super_admin' || dbRole === 'admin')` ja trata ambos corretamente. Isso garante compatibilidade com bancos VPS que ja tem usuarios `super_admin`.
 
 ## Arquivos que serao modificados
 
 | Arquivo | O que muda |
 |---------|-----------|
-| src/hooks/useSystemSettings.ts | SELECT + INSERT/UPDATE em vez de upsert |
-| src/components/configuracoes/CustomizeTab.tsx | SELECT + INSERT/UPDATE em vez de upsert direto |
+| `deploy/scripts/install-unified.sh` | Remover logica de tenant, promover admin como `admin`, verificar `profiles` em vez de `tenants` |
+| `deploy/scripts/repair-auth.sh` | Promover admin como `admin` em vez de `super_admin` |
 
-## Script SQL completo para o VPS
+## O que NAO sera alterado (e por que)
 
-Sera fornecido um comando unico para colar no terminal do VPS que faz toda a migracao do banco. O script:
-1. Remove todas as RLS policies existentes (loop automatico)
-2. Remove coluna tenant_id de todas as tabelas
-3. Remove tabelas e funcoes de tenant
-4. Recria todas as RLS policies simples (sem tenant_id)
-5. Adiciona UNIQUE constraint em system_settings
+| Arquivo | Motivo |
+|---------|--------|
+| `deploy/supabase/init.sql` | Ja esta correto -- nao tem tabelas de tenant, RLS esta limpo, funcoes auxiliares estao ok |
+| `src/contexts/AuthContext.tsx` | Ja trata `super_admin` como `admin` (compatibilidade) |
+| `src/integrations/supabase/types.ts` | Gerado automaticamente, nao pode ser editado |
+| `src/components/layout/AppSidebar.tsx` | Ja NAO tem nenhuma referencia a Super Admin |
 
-## Instrucoes para o usuario
+## Apos aprovacao
 
-Depois de aprovado o plano, serao fornecidas:
-1. As mudancas no codigo (automaticas pelo Lovable)
-2. O script SQL completo para colar no terminal do VPS
-3. O comando docker para reconstruir
+Depois que o codigo for atualizado, voce precisara:
 
-## Resultado final
+1. **Atualizar o repositorio na VPS**: `cd /opt/sistema && sudo git pull`
+2. **Reinstalar**: `cd deploy && sudo bash scripts/install-unified.sh`
 
-- Salvar configuracoes do Baileys funciona
-- Salvar identidade visual funciona
-- Alterar opcoes do sistema funciona
-- Funciona mesmo se o banco nao tiver UNIQUE constraint
-- Funciona mesmo se o banco ainda tiver coluna tenant_id
+O script de instalacao agora vai:
+- Criar o admin como `admin` (nao `super_admin`)
+- NAO tentar criar tabelas de tenant
+- Funcionar perfeitamente na primeira execucao
+
+## Secao Tecnica
+
+### Por que manter `super_admin` no enum?
+
+PostgreSQL nao suporta `ALTER TYPE ... DROP VALUE`. Para remover um valor de enum, seria necessario:
+1. Criar novo tipo
+2. Alterar todas as colunas que usam o tipo
+3. Remover tipo antigo
+4. Renomear novo tipo
+
+Isso e arriscado em producao e desnecessario pois o codigo ja trata `super_admin === admin`.
+
+### Fluxo da instalacao corrigida
+
+```text
+install-unified.sh
+  |
+  +-- create_admin()          (antes: create_admin_and_tenant)
+  |     |
+  |     +-- Criar usuario via GoTrue API
+  |     +-- Promover para 'admin'     (antes: 'super_admin')
+  |     +-- Configurar baileys_api_key
+  |     +-- (SEM tenant, SEM subscription)
+  |
+  +-- verify_installation()
+  +-- show_summary()
+```
+
