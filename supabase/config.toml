@@ -65,3 +65,6 @@ verify_jwt = false
 
 [functions.baileys-create-session]
 verify_jwt = false
+
+[functions.save-system-setting]
+verify_jwt = false
