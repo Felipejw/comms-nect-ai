@@ -1,7 +1,6 @@
 // ===========================================
 // Edge Functions Router (Self-Hosted VPS Only)
-// This file is the entry point for --main-service /home/deno/functions
-// It is NOT deployed to Cloud (only subdirectories are deployed)
+// Uses dynamic imports to avoid Cloud bundler errors
 // ===========================================
 
 console.log("[main-router] Booting...");
@@ -12,58 +11,47 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 };
 
-// Static imports using ./ paths (within sandbox scope)
-import adminWriteHandler from './admin-write/index.ts';
-import baileysCreateSessionHandler from './baileys-create-session/index.ts';
-import baileysInstanceHandler from './baileys-instance/index.ts';
-import baileysWebhookHandler from './baileys-webhook/index.ts';
-import checkConnectionsHandler from './check-connections/index.ts';
-import createUserHandler from './create-user/index.ts';
-import deleteUserHandler from './delete-user/index.ts';
-import downloadWhatsappMediaHandler from './download-whatsapp-media/index.ts';
-import executeCampaignHandler from './execute-campaign/index.ts';
-import executeFlowHandler from './execute-flow/index.ts';
-import fetchWhatsappProfileHandler from './fetch-whatsapp-profile/index.ts';
-import googleAuthHandler from './google-auth/index.ts';
-import googleCalendarHandler from './google-calendar/index.ts';
-import mergeDuplicateContactsHandler from './merge-duplicate-contacts/index.ts';
-import metaApiWebhookHandler from './meta-api-webhook/index.ts';
-import processSchedulesHandler from './process-schedules/index.ts';
-import resetUserPasswordHandler from './reset-user-password/index.ts';
-import resolveLidContactHandler from './resolve-lid-contact/index.ts';
-import saveSystemSettingHandler from './save-system-setting/index.ts';
-import sendMetaMessageHandler from './send-meta-message/index.ts';
-import sendWhatsappHandler from './send-whatsapp/index.ts';
-import syncContactsHandler from './sync-contacts/index.ts';
-import updateLidContactsHandler from './update-lid-contacts/index.ts';
-import updateUserEmailHandler from './update-user-email/index.ts';
+// Whitelist of valid function names (security: prevents loading arbitrary files)
+const VALID_FUNCTIONS = new Set([
+  'admin-write',
+  'baileys-create-session',
+  'baileys-instance',
+  'baileys-webhook',
+  'check-connections',
+  'create-user',
+  'delete-user',
+  'download-whatsapp-media',
+  'execute-campaign',
+  'execute-flow',
+  'fetch-whatsapp-profile',
+  'google-auth',
+  'google-calendar',
+  'merge-duplicate-contacts',
+  'meta-api-webhook',
+  'process-schedules',
+  'reset-user-password',
+  'resolve-lid-contact',
+  'save-system-setting',
+  'send-meta-message',
+  'send-whatsapp',
+  'sync-contacts',
+  'update-lid-contacts',
+  'update-user-email',
+]);
 
-const FUNCTION_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
-  'admin-write': adminWriteHandler,
-  'baileys-create-session': baileysCreateSessionHandler,
-  'baileys-instance': baileysInstanceHandler,
-  'baileys-webhook': baileysWebhookHandler,
-  'check-connections': checkConnectionsHandler,
-  'create-user': createUserHandler,
-  'delete-user': deleteUserHandler,
-  'download-whatsapp-media': downloadWhatsappMediaHandler,
-  'execute-campaign': executeCampaignHandler,
-  'execute-flow': executeFlowHandler,
-  'fetch-whatsapp-profile': fetchWhatsappProfileHandler,
-  'google-auth': googleAuthHandler,
-  'google-calendar': googleCalendarHandler,
-  'merge-duplicate-contacts': mergeDuplicateContactsHandler,
-  'meta-api-webhook': metaApiWebhookHandler,
-  'process-schedules': processSchedulesHandler,
-  'reset-user-password': resetUserPasswordHandler,
-  'resolve-lid-contact': resolveLidContactHandler,
-  'save-system-setting': saveSystemSettingHandler,
-  'send-meta-message': sendMetaMessageHandler,
-  'send-whatsapp': sendWhatsappHandler,
-  'sync-contacts': syncContactsHandler,
-  'update-lid-contacts': updateLidContactsHandler,
-  'update-user-email': updateUserEmailHandler,
-};
+// Module cache: each function is imported only once
+const moduleCache = new Map<string, (req: Request) => Promise<Response>>();
+
+async function loadFunction(name: string): Promise<(req: Request) => Promise<Response>> {
+  const cached = moduleCache.get(name);
+  if (cached) return cached;
+
+  console.log(`[main-router] Loading function: ${name}`);
+  const module = await import(`./${name}/index.ts`);
+  const handler = module.default;
+  moduleCache.set(name, handler);
+  return handler;
+}
 
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
@@ -82,27 +70,28 @@ const handler = async (req: Request): Promise<Response> => {
 
   if (!functionName) {
     return new Response(
-      JSON.stringify({ error: 'Function name required', available: Object.keys(FUNCTION_HANDLERS) }),
+      JSON.stringify({ error: 'Function name required', available: [...VALID_FUNCTIONS] }),
       { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 
   if (functionName === 'health' || functionName === '_health') {
     return new Response(
-      JSON.stringify({ status: 'ok', functions: Object.keys(FUNCTION_HANDLERS).length }),
+      JSON.stringify({ status: 'ok', functions: VALID_FUNCTIONS.size }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 
-  const fnHandler = FUNCTION_HANDLERS[functionName];
-  if (!fnHandler) {
+  if (!VALID_FUNCTIONS.has(functionName)) {
     return new Response(
-      JSON.stringify({ error: `Function '${functionName}' not found`, available: Object.keys(FUNCTION_HANDLERS) }),
+      JSON.stringify({ error: `Function '${functionName}' not found`, available: [...VALID_FUNCTIONS] }),
       { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 
   try {
+    const fnHandler = await loadFunction(functionName);
+
     const functionUrl = new URL(req.url);
     const remainingPath = pathParts.slice(pathParts[0] === 'functions' ? 3 : 1).join('/');
     functionUrl.pathname = remainingPath ? `/${remainingPath}` : '/';
@@ -136,6 +125,6 @@ const handler = async (req: Request): Promise<Response> => {
   }
 };
 
-console.log(`[main-router] Ready. ${Object.keys(FUNCTION_HANDLERS).length} functions registered.`);
+console.log(`[main-router] Ready. ${VALID_FUNCTIONS.size} functions registered.`);
 
 Deno.serve(handler);
