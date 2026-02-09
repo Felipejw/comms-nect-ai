@@ -3,6 +3,8 @@
 // Roteador principal para o Supabase Edge Runtime
 // ===========================================
 
+console.log("[main-router] Booting...");
+
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
@@ -32,7 +34,6 @@ const FUNCTION_HANDLERS: Record<string, string> = {
   'save-system-setting': '../save-system-setting/index.ts',
   'send-meta-message': '../send-meta-message/index.ts',
   'send-whatsapp': '../send-whatsapp/index.ts',
-  'setup-tenant': '../setup-tenant/index.ts',
   'sync-contacts': '../sync-contacts/index.ts',
   'update-lid-contacts': '../update-lid-contacts/index.ts',
   'update-user-email': '../update-user-email/index.ts',
@@ -52,14 +53,29 @@ async function loadFunction(name: string): Promise<((req: Request) => Promise<Re
   }
 
   try {
+    // Neutralize Deno.serve before importing sub-functions
+    // to prevent them from hijacking the main router's handler
+    const originalServe = Deno.serve;
+    (Deno as any).serve = () => {};
+
     const module = await import(modulePath);
+
+    // Restore original Deno.serve
+    (Deno as any).serve = originalServe;
+
     // Edge functions export a default handler
     if (typeof module.default === 'function') {
       moduleCache.set(name, module.default);
+      console.log(`[main-router] Loaded function: ${name}`);
       return module.default;
     }
+    console.warn(`[main-router] Function '${name}' has no default export`);
     return null;
   } catch (error) {
+    // Ensure Deno.serve is restored even on error
+    if (typeof Deno.serve !== 'function') {
+      console.error(`[main-router] Deno.serve was corrupted, cannot restore`);
+    }
     console.error(`[main-router] Error loading function '${name}':`, error);
     return null;
   }
@@ -175,6 +191,8 @@ const handler = async (req: Request): Promise<Response> => {
     );
   }
 };
+
+console.log(`[main-router] Ready. ${Object.keys(FUNCTION_HANDLERS).length} functions registered.`);
 
 export default handler;
 Deno.serve(handler);

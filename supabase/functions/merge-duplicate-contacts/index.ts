@@ -295,4 +295,4 @@ function scoreContact(contact: any): number {
 }
 
 export default handler;
-Deno.serve(handler);
+if (import.meta.main) Deno.serve(handler);
