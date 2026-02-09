@@ -283,6 +283,8 @@ services:
       - start
       - --main-service
       - /home/deno/functions/main
+      - --port
+      - "8000"
     networks:
       - supabase-network
 
