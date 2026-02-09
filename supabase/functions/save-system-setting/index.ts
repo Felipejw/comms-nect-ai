@@ -30,16 +30,16 @@ const handler = async (req: Request): Promise<Response> => {
     });
 
     const token = authHeader.replace("Bearer ", "");
-    const { data: claimsData, error: claimsError } = await anonClient.auth.getClaims(token);
-    if (claimsError || !claimsData?.claims) {
-      console.error("[save-system-setting] Auth error:", claimsError);
+    const { data: userData, error: authError } = await anonClient.auth.getUser(token);
+    if (authError || !userData?.user) {
+      console.error("[save-system-setting] Auth error:", authError);
       return new Response(
         JSON.stringify({ error: "Unauthorized" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const userId = claimsData.claims.sub as string;
+    const userId = userData.user.id;
     console.log(`[save-system-setting] Authenticated user: ${userId}`);
 
     // --- 2. Verify admin/manager role using service role (bypasses RLS) ---
@@ -184,5 +184,5 @@ const handler = async (req: Request): Promise<Response> => {
   }
 };
 
-Deno.serve(handler);
 export default handler;
+Deno.serve(handler);
