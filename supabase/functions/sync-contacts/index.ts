@@ -45,14 +45,17 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
-    // 2. Buscar URL do Baileys
-    const { data: baileysSettings } = await supabase
+    // 2. Buscar URL e API Key do Baileys
+    const { data: baileysSettingsList } = await supabase
       .from("system_settings")
-      .select("value")
-      .eq("key", "baileys_api_url")
-      .maybeSingle();
+      .select("key, value")
+      .in("key", ["baileys_server_url", "baileys_api_key"]);
 
-    const baileysUrl = baileysSettings?.value || "http://baileys:3001";
+    const settingsMap = Object.fromEntries((baileysSettingsList || []).map((s: any) => [s.key, s.value]));
+    const baileysUrl = settingsMap["baileys_server_url"] || "http://baileys:3001";
+    const baileysApiKey = settingsMap["baileys_api_key"] || "";
+    const baileysHeaders: Record<string, string> = { "Content-Type": "application/json" };
+    if (baileysApiKey) baileysHeaders["X-API-Key"] = baileysApiKey;
 
     let totalSynced = 0;
     let totalUpdated = 0;
@@ -67,7 +70,7 @@ const handler = async (req: Request): Promise<Response> => {
       try {
         const response = await fetch(`${baileysUrl}/api/contacts/${sessionName}`, {
           method: "GET",
-          headers: { "Content-Type": "application/json" },
+          headers: baileysHeaders,
         });
 
         if (!response.ok) {

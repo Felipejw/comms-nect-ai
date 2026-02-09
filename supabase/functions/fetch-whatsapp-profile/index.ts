@@ -90,14 +90,17 @@ const handler = async (req: Request): Promise<Response> => {
     const connection = connections[0];
     const sessionName = connection.name || connection.id;
 
-    // 3. Buscar URL do Baileys
-    const { data: baileysSettings } = await supabase
+    // 3. Buscar URL e API Key do Baileys
+    const { data: baileysSettingsList } = await supabase
       .from("system_settings")
-      .select("value")
-      .eq("key", "baileys_api_url")
-      .maybeSingle();
+      .select("key, value")
+      .in("key", ["baileys_server_url", "baileys_api_key"]);
 
-    const baileysUrl = baileysSettings?.value || "http://baileys:3001";
+    const settingsMap = Object.fromEntries((baileysSettingsList || []).map((s: any) => [s.key, s.value]));
+    const baileysUrl = settingsMap["baileys_server_url"] || "http://baileys:3001";
+    const baileysApiKey = settingsMap["baileys_api_key"] || "";
+    const baileysHeaders: Record<string, string> = { "Content-Type": "application/json" };
+    if (baileysApiKey) baileysHeaders["X-API-Key"] = baileysApiKey;
 
     // 4. Montar o JID
     const jid = targetPhone
@@ -119,7 +122,7 @@ const handler = async (req: Request): Promise<Response> => {
         `${baileysUrl}/api/profile/${sessionName}/${encodeURIComponent(jid)}`,
         {
           method: "GET",
-          headers: { "Content-Type": "application/json" },
+          headers: baileysHeaders,
         }
       );
 

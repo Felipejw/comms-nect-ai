@@ -47,14 +47,17 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`[check-connections] Checking ${connections.length} connections`);
 
-    // 2. Buscar URL do Baileys
-    const { data: baileysSettings } = await supabaseAdmin
+    // 2. Buscar URL e API Key do Baileys
+    const { data: baileysSettingsList } = await supabaseAdmin
       .from("system_settings")
-      .select("value")
-      .eq("key", "baileys_api_url")
-      .maybeSingle();
+      .select("key, value")
+      .in("key", ["baileys_server_url", "baileys_api_key"]);
 
-    const baileysUrl = baileysSettings?.value || "http://baileys:3001";
+    const settingsMap = Object.fromEntries((baileysSettingsList || []).map((s: any) => [s.key, s.value]));
+    const baileysUrl = settingsMap["baileys_server_url"] || "http://baileys:3001";
+    const baileysApiKey = settingsMap["baileys_api_key"] || "";
+    const baileysHeaders: Record<string, string> = { "Content-Type": "application/json" };
+    if (baileysApiKey) baileysHeaders["X-API-Key"] = baileysApiKey;
 
     const results: Array<{
       id: string;
@@ -78,7 +81,7 @@ const handler = async (req: Request): Promise<Response> => {
           try {
             await fetch(`${baileysUrl}/api/session/${sessionName}/disconnect`, {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: baileysHeaders,
             });
           } catch (e) {
             console.warn(`[check-connections] Failed to send disconnect to Baileys: ${e}`);
@@ -110,7 +113,7 @@ const handler = async (req: Request): Promise<Response> => {
           `${baileysUrl}/api/session/${sessionName}/status`,
           {
             method: "GET",
-            headers: { "Content-Type": "application/json" },
+            headers: baileysHeaders,
           }
         );
 
