@@ -5,7 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Detect SSL/TLS errors and retry with HTTP fallback
+// Detect SSL/TLS errors
 function isSSLError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   const msg = error.message.toLowerCase();
@@ -20,16 +20,52 @@ function isSSLError(error: unknown): boolean {
   );
 }
 
+// Build internal Docker URL removing /baileys prefix
+function buildInternalUrl(originalUrl: string, internalBase: string): string | null {
+  try {
+    const parsed = new URL(originalUrl);
+    let path = parsed.pathname;
+    if (path.startsWith("/baileys/")) {
+      path = path.substring("/baileys".length);
+    } else if (path.startsWith("/baileys")) {
+      path = path.substring("/baileys".length) || "/";
+    }
+    return `${internalBase.replace(/\/$/, "")}${path}${parsed.search}`;
+  } catch {
+    return null;
+  }
+}
+
+// Resilient fetch: HTTPS -> HTTP -> Docker internal
 async function resilientFetch(url: string, options?: RequestInit): Promise<Response> {
   try {
     return await fetch(url, options);
   } catch (error) {
-    if (isSSLError(error)) {
-      const httpUrl = url.replace("https://", "http://");
-      console.warn(`[Baileys Session] SSL error on ${url}, retrying with HTTP: ${httpUrl}`);
-      console.warn(`[Baileys Session] Original error: ${error instanceof Error ? error.message : error}`);
-      return await fetch(httpUrl, options);
+    if (!isSSLError(error)) throw error;
+
+    console.warn(`[Baileys Session] SSL error on ${url}, trying HTTP fallback`);
+    console.warn(`[Baileys Session] Original error: ${error instanceof Error ? error.message : error}`);
+
+    const httpUrl = url.replace("https://", "http://");
+    try {
+      const httpResponse = await fetch(httpUrl, options);
+      const contentType = httpResponse.headers.get("content-type") || "";
+      if (httpResponse.status === 404 || (contentType.includes("text/html") && !contentType.includes("json"))) {
+        console.warn(`[Baileys Session] HTTP fallback returned HTML/404, trying internal URL`);
+      } else {
+        return httpResponse;
+      }
+    } catch (httpError) {
+      console.warn(`[Baileys Session] HTTP fallback also failed: ${httpError instanceof Error ? httpError.message : httpError}`);
     }
+
+    // Tier 3: Docker internal
+    const dockerUrl = buildInternalUrl(url, "http://baileys:3000");
+    if (dockerUrl) {
+      console.log(`[Baileys Session] Trying Docker internal URL: ${dockerUrl}`);
+      return await fetch(dockerUrl, options);
+    }
+
     throw error;
   }
 }
@@ -56,7 +92,6 @@ const handler = async (req: Request): Promise<Response> => {
       headers["X-API-Key"] = baileysApiKey;
     }
 
-    // Timeout de 55 segundos para permitir que o servidor Baileys inicialize a sessão
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 55000);
 
@@ -87,13 +122,6 @@ const handler = async (req: Request): Promise<Response> => {
       } else {
         console.log(`[Baileys Session] Session created successfully`);
         
-        // Log activity - get tenant_id from connection
-        const { data: conn } = await supabaseClient
-          .from("connections")
-          .select("*")
-          .eq("id", connectionId)
-          .single();
-
         await supabaseClient.from("activity_logs").insert({
           action: "create",
           entity_type: "session",
