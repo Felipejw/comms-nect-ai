@@ -134,7 +134,7 @@ export default function Conexoes() {
       }
 
       // If connecting but no QR code, try to fetch it actively
-      if (connection.status === "connecting" && !connection.qr_code) {
+      if ((connection.status === "connecting" || connection.status === "waiting_qr") && !connection.qr_code) {
         const attempts = recreateAttempts[pollingConnection] || 0;
         
         // Try to fetch QR code from server
@@ -246,7 +246,7 @@ export default function Conexoes() {
   const handleViewQr = (connection: WhatsAppConnection) => {
     setSelectedConnection(connection);
     setIsQrModalOpen(true);
-    if (connection.status === "connecting") {
+    if (connection.status === "connecting" || connection.status === "waiting_qr") {
       setPollingConnection(connection.id);
     }
   };

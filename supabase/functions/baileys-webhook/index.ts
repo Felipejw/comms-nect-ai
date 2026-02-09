@@ -236,7 +236,7 @@ const handler = async (req: Request): Promise<Response> => {
     // deno-lint-ignore no-explicit-any
     const connection = connections?.find((c: any) => {
       const sessionData = c.session_data;
-      return sessionData?.sessionName === session && sessionData?.engine === "baileys";
+      return sessionData?.sessionName === session;
     });
 
     if (!connection) {
