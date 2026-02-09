@@ -41,4 +41,4 @@ const handler = async (req: Request): Promise<Response> => {
 };
 
 export default handler;
-Deno.serve(handler);
+if (import.meta.main) Deno.serve(handler);

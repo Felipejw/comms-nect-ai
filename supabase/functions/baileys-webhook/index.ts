@@ -615,4 +615,4 @@ const handler = async (req: Request): Promise<Response> => {
 declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void } | undefined;
 
 export default handler;
-Deno.serve(handler);
+if (import.meta.main) Deno.serve(handler);
