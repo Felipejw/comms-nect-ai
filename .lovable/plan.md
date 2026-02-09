@@ -1,123 +1,144 @@
 
 
-# Correcao de Bug + Guia de Atualizacao do VPS
+# Reescrita Completa das 13 Edge Functions Corrompidas
 
-## Causa Raiz dos Erros
+## Diagnostico Confirmado
 
-Os erros persistem por uma razao simples: **o VPS nao foi atualizado com o novo codigo**. As mudancas feitas no Lovable Cloud (criar admin-write, save-system-setting, atualizar hooks) existem apenas aqui. O VPS em `chatbotvital.store` continua rodando a versao antiga.
+13 funcoes backend tiveram sua logica principal substituida por comentarios placeholder (`// ... keep existing code`), o que faz com que elas iniciem, facam o setup, e depois **travem sem retornar resposta**. Isso causa o erro repetitivo nos logs:
 
 ```text
-Lovable Cloud (onde editamos)     VPS (chatbotvital.store)
--------------------------------   ---------------------------
-admin-write/index.ts [NOVO]       [NAO EXISTE]
-save-system-setting/index.ts      [NAO EXISTE]
-main/index.ts [ATUALIZADO]        [VERSAO ANTIGA]
-adminWrite.ts [NOVO]              [NAO EXISTE]
-safeSettingUpsert.ts [ATUALIZADO] [VERSAO ANTIGA]
-useQueues.ts [ATUALIZADO]         [VERSAO ANTIGA]
+TypeError: First argument to 'respondWith' must be a Response 
+or a promise resolving to a Response
 ```
 
-Alem disso, ha um **bug** no `save-system-setting/index.ts`:
-- Usa `auth.getClaims(token)` que NAO existe no Supabase JS v2
-- O metodo correto e `auth.getUser(token)`
-- Isso causaria um crash 500 mesmo se o arquivo estivesse no VPS
+## Funcoes que serao reescritas
 
-## Correcoes de Codigo Necessarias
+O trabalho sera dividido em 3 lotes por prioridade:
 
-### 1. Corrigir `supabase/functions/save-system-setting/index.ts`
+### Lote 1 - Funcoes Criticas (WhatsApp e Mensagens)
 
-Substituir `auth.getClaims(token)` por `auth.getUser(token)` e ajustar a leitura do userId:
+| # | Funcao | Responsabilidade |
+|---|--------|-----------------|
+| 1 | send-whatsapp | Envia mensagens via Baileys ou Meta API |
+| 2 | baileys-webhook | Recebe mensagens e eventos do WhatsApp |
+| 3 | meta-api-webhook | Recebe webhooks da API Meta/Facebook |
+| 4 | download-whatsapp-media | Baixa e armazena midias recebidas |
 
-```typescript
-// ANTES (bugado):
-const { data: claimsData, error: claimsError } = await anonClient.auth.getClaims(token);
-const userId = claimsData.claims.sub as string;
+Estas sao as mais criticas porque sem elas o WhatsApp nao funciona (nao envia nem recebe mensagens).
 
-// DEPOIS (correto):
-const { data: userData, error: authError } = await anonClient.auth.getUser(token);
-const userId = userData.user.id;
-```
+### Lote 2 - Funcoes de Gestao (Usuarios e Contatos)
 
-### 2. Corrigir ordem de export no mesmo arquivo
+| # | Funcao | Responsabilidade |
+|---|--------|-----------------|
+| 5 | create-user | Cria usuarios com role e permissoes |
+| 6 | delete-user | Remove usuarios do sistema |
+| 7 | reset-user-password | Reseta senha de usuarios |
+| 8 | sync-contacts | Sincroniza contatos do WhatsApp |
+| 9 | fetch-whatsapp-profile | Busca foto e status do perfil |
 
-```typescript
-// ANTES (pode causar conflito no router VPS):
-Deno.serve(handler);
-export default handler;
+### Lote 3 - Funcoes de Automacao (Campanhas e Agendamentos)
 
-// DEPOIS (padrao correto - export primeiro):
-export default handler;
-Deno.serve(handler);
-```
+| # | Funcao | Responsabilidade |
+|---|--------|-----------------|
+| 10 | check-connections | Health check periodico das conexoes |
+| 11 | merge-duplicate-contacts | Limpeza de contatos duplicados |
+| 12 | execute-campaign | Disparo de campanhas em massa |
+| 13 | process-schedules | Processamento de agendamentos |
 
-## Guia de Atualizacao do VPS
+## Como sera feito
 
-Apos aprovar essas correcoes, voce precisara rodar estes comandos no VPS para aplicar as mudancas:
+Para cada funcao, o codigo sera reescrito completo baseado em:
 
-### Passo 1: Baixar o codigo atualizado
+- Estrutura do banco de dados (tabelas, colunas, tipos)
+- Padroes ja estabelecidos nas funcoes que funcionam (admin-write, baileys-instance, execute-flow)
+- Contexto de memoria sobre a arquitetura (Baileys engine, LID handling, etc.)
 
-```bash
-cd /opt/sistema
-git pull origin main
-```
+Cada funcao incluira:
+- Tratamento CORS completo
+- Logging detalhado para debugging
+- Retorno de Response em TODOS os caminhos do codigo
+- Tratamento de erros robusto
+- Export padrao compativel com o router VPS
 
-Se nao estiver usando git, sera necessario copiar os arquivos manualmente (via SCP ou similar).
+## Detalhes Tecnicos
 
-### Passo 2: Reiniciar o container de Edge Functions
+### send-whatsapp
+- Recebe `conversationId`, `content`, `messageType`, `mediaUrl`
+- Autentica o usuario via token JWT
+- Busca a conversa e o contato associado
+- Detecta se o contato usa LID ou telefone normal
+- Roteia para Baileys (via fetch para servidor Baileys) ou Meta API
+- Salva a mensagem no banco apos envio
 
-As Edge Functions sao montadas via volume Docker (`../supabase/functions`), entao basta reiniciar:
+### baileys-webhook
+- Recebe eventos do servidor Baileys: `qr.update`, `session.status`, `message`
+- Encontra a conexao pelo session name
+- Para `qr.update`: salva o QR code na tabela connections
+- Para `session.status`: atualiza status da conexao
+- Para `message`: cria/encontra contato, cria/atualiza conversa, salva mensagem, dispara execute-flow se chatbot ativo
+- Suporta midia (imagem, audio, video, documento) via base64
+- Resolve LID para telefone real em background
 
-```bash
-cd /opt/sistema/deploy
-sudo docker compose --profile baileys restart functions
-```
+### meta-api-webhook
+- Suporta GET (verificacao do webhook pela Meta) e POST (recebimento de mensagens)
+- Processa mensagens de texto, imagem, audio, video, documento
+- Processa status updates (sent, delivered, read) com metricas de campanha
 
-### Passo 3: Reconstruir o frontend
+### download-whatsapp-media
+- Recebe base64 da midia ou mediaId
+- Armazena no bucket `whatsapp-media` do Storage
+- Retorna URL publica
 
-O frontend precisa ser recompilado para incluir os novos helpers (`adminWrite.ts`, `safeSettingUpsert.ts` atualizado, etc.):
+### create-user
+- Autentica chamador e verifica role admin
+- Cria usuario via `supabase.auth.admin.createUser`
+- Atribui role e permissoes
 
-```bash
-cd /opt/sistema
+### delete-user
+- Autentica e verifica admin
+- Remove usuario via `supabase.auth.admin.deleteUser`
+- Limpa dados relacionados
 
-# Instalar dependencias e compilar
-npm install
-VITE_SUPABASE_URL="https://placeholder.supabase.co" \
-VITE_SUPABASE_PUBLISHABLE_KEY="placeholder" \
-npm run build
+### reset-user-password
+- Autentica e verifica admin
+- Reseta senha via `supabase.auth.admin.updateUserById`
 
-# Copiar build para o diretorio servido pelo Nginx
-rm -rf deploy/frontend/dist/*
-cp -r dist/* deploy/frontend/dist/
+### sync-contacts
+- Busca contatos do servidor Baileys
+- Sincroniza com a tabela contacts do banco
+- Trata duplicatas
 
-# Reinjetar config.js
-cat > deploy/frontend/dist/config.js << 'EOF'
-window.__SUPABASE_CONFIG__ = {
-  url: window.location.origin,
-  anonKey: "SUA_ANON_KEY_AQUI"
-};
-EOF
+### fetch-whatsapp-profile
+- Busca info de perfil via Baileys API
+- Retorna foto, status, ultimo visto
 
-# Injetar script tag no index.html
-sed -i 's|</head>|<script src="/config.js"></script>\n</head>|' deploy/frontend/dist/index.html
+### check-connections
+- Verifica cada conexao WhatsApp ativa
+- Consulta status no servidor Baileys
+- Atualiza status no banco
 
-# Reiniciar nginx para servir o novo frontend
-sudo docker compose --profile baileys restart nginx
-```
+### merge-duplicate-contacts
+- Identifica contatos com mesmo telefone
+- Mescla conversas e tags
+- Remove duplicatas
 
-(Substitua `SUA_ANON_KEY_AQUI` pela sua ANON_KEY real do arquivo `deploy/.env`)
+### execute-campaign
+- Busca campanhas com status `sending` ou agendadas
+- Para cada contato da campanha, envia mensagem via send-whatsapp
+- Respeita intervalos min/max entre envios
+- Atualiza contadores (sent, delivered, failed)
+- Suporta retry com backoff exponencial
 
-### Passo 4 (alternativo): Reinstalacao completa
+### process-schedules
+- Busca agendamentos pendentes com horario passado
+- Envia mensagem programada
+- Atualiza status do agendamento
 
-Se preferir, rode o script de instalacao unificada que faz tudo automaticamente:
+## AVISO IMPORTANTE SOBRE O VPS
 
-```bash
-cd /opt/sistema/deploy
-sudo DOMAIN=chatbotvital.store ./scripts/install-unified.sh
-```
+**NAO faca `git pull` no VPS** ate que todas as funcoes estejam reescritas aqui. O VPS ainda tem as versoes antigas funcionais. Se puxar agora, vai substituir pelas versoes quebradas.
 
-**ATENCAO**: Esse script recria o banco de dados. Faca backup antes!
+## Estimativa
 
-## Arquivos Afetados (apenas correcao do bug)
-
-1. `supabase/functions/save-system-setting/index.ts` - Corrigir getClaims para getUser e ordem do export
+Devido ao volume (13 funcoes completas), a implementacao sera feita em 3-4 mensagens, uma por lote.
 
