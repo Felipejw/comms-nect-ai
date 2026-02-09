@@ -1,70 +1,38 @@
 
+# Corrigir chave inconsistente nas Edge Functions
 
-# Corrigir o apontamento do Edge Runtime na VPS
+## Problema
 
-## O que esta acontecendo
+Tres edge functions estao lendo a configuracao do Baileys com a chave **errada** (`baileys_api_url`) ao inves da chave correta (`baileys_server_url`). Como `baileys_api_url` nao existe no banco, elas caem no fallback `http://baileys:3001`, que so funciona dentro da rede Docker do VPS e nao resolve no Cloud.
 
-Os logs mostram claramente que o container continua executando `main/index.ts` (o arquivo antigo com `../` imports):
+Funcoes afetadas:
+- `supabase/functions/check-connections/index.ts` (linha 54)
+- `supabase/functions/sync-contacts/index.ts` (linha 52)
+- `supabase/functions/fetch-whatsapp-profile/index.ts` (linha 97)
 
-```
-file:///home/deno/functions/main/index.ts:54:20
-Importing admin-write from ../admin-write/index.ts...
-FAILED: Module not found
-```
+Funcoes que ja usam a chave correta (nao precisam de alteracao):
+- `baileys-instance`, `send-whatsapp`, `execute-flow`, `download-whatsapp-media`, `baileys-webhook`
 
-Dois problemas causam isso:
+## Alteracoes
 
-1. **`--main-service /home/deno/functions`** (diretorio) -- O Edge Runtime, ao receber um diretorio como main-service, busca automaticamente `main/index.ts` dentro dele. Ele nunca leu o `index.ts` na raiz.
+### 1. `supabase/functions/check-connections/index.ts`
 
-2. **Container nao foi recriado** -- `docker compose up -d` viu o container como "Running" e nao aplicou a mudanca de configuracao. Precisa de `--force-recreate`.
+Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 54.
 
-## Solucao
+Tambem adicionar a leitura da `baileys_api_key` e incluir o header `X-API-Key` nas chamadas fetch, pois atualmente essa funcao nao envia autenticacao.
 
-### 1. Alterar `deploy/docker-compose.yml`
+### 2. `supabase/functions/sync-contacts/index.ts`
 
-Apontar `--main-service` diretamente para o arquivo correto:
+Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 52.
 
-De:
-```yaml
-command:
-  - start
-  - --main-service
-  - /home/deno/functions
-  - --port
-  - "8000"
-```
+Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
 
-Para:
-```yaml
-command:
-  - start
-  - --main-service
-  - /home/deno/functions/index.ts
-  - --port
-  - "8000"
-```
+### 3. `supabase/functions/fetch-whatsapp-profile/index.ts`
 
-### 2. Nenhuma outra alteracao de codigo
+Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 97.
 
-O arquivo `supabase/functions/index.ts` ja esta correto com imports dinamicos (`await import(./${name}/index.ts)`). O `main/index.ts` continua como health-check simples para o Cloud.
+Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
 
-### 3. Comandos para aplicar na VPS
+## Resultado esperado
 
-Apos o deploy:
-
-```bash
-cd /opt/sistema && git pull origin main
-cd deploy
-sudo docker compose up -d --force-recreate functions
-sleep 5
-sudo docker logs supabase-functions --tail 15
-```
-
-O `--force-recreate` garante que o container seja destruido e recriado com o novo `command`, mesmo que a imagem nao tenha mudado.
-
-## Por que vai funcionar agora
-
-- O Edge Runtime recebe o caminho exato `/home/deno/functions/index.ts` como ponto de entrada
-- Esse arquivo usa `await import(./${name}/index.ts)` que resolve para `/home/deno/functions/admin-write/index.ts` -- dentro do sandbox
-- O Cloud ignora `index.ts` na raiz (nao esta em subpasta de funcao) e continua deployando cada funcao isoladamente
-
+Apos a correcao, todas as edge functions lerao a URL do `system_settings` com a chave `baileys_server_url` (que contem `https://chatbotvital.store/baileys`), garantindo que funcionem tanto no Cloud quanto na VPS.
