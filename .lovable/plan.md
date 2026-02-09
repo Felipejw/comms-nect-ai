@@ -24,15 +24,15 @@ O trabalho sera dividido em 3 lotes por prioridade:
 | 3 | meta-api-webhook | ✅ Reescrita completa |
 | 4 | download-whatsapp-media | ✅ Reescrita completa |
 
-### Lote 2 - Funcoes de Gestao (Usuarios e Contatos)
+### Lote 2 - Funcoes de Gestao (Usuarios e Contatos) ✅ CONCLUÍDO
 
-| # | Funcao | Responsabilidade |
-|---|--------|-----------------|
-| 5 | create-user | Cria usuarios com role e permissoes |
-| 6 | delete-user | Remove usuarios do sistema |
-| 7 | reset-user-password | Reseta senha de usuarios |
-| 8 | sync-contacts | Sincroniza contatos do WhatsApp |
-| 9 | fetch-whatsapp-profile | Busca foto e status do perfil |
+| # | Funcao | Status |
+|---|--------|--------|
+| 5 | create-user | ✅ Reescrita completa |
+| 6 | delete-user | ✅ Reescrita completa |
+| 7 | reset-user-password | ✅ Reescrita completa |
+| 8 | sync-contacts | ✅ Reescrita completa |
+| 9 | fetch-whatsapp-profile | ✅ Reescrita completa |
 
 ### Lote 3 - Funcoes de Automacao (Campanhas e Agendamentos)
 
