@@ -1,59 +1,111 @@
 
-# Corrigir Salvamento de Configuracoes - Solucao Definitiva
+# Correcao Definitiva: Operacoes Admin no VPS
 
-## Diagnostico Preciso
+## Diagnostico Completo
 
-O erro **"new row violates row-level security policy for table system_settings"** acontece porque:
+Existem **dois problemas distintos**:
 
-1. O codigo atual (`safeSettingUpsert.ts`) tenta salvar diretamente no banco usando o **cliente do navegador** (anon key)
-2. A politica RLS da tabela `system_settings` exige que o usuario tenha role 'admin' ou 'manager' verificado pela funcao `is_admin_or_manager()`
-3. No VPS self-hosted, essa verificacao falha -- provavelmente porque a funcao `is_admin_or_manager` ou a tabela `user_roles` nao estao sincronizadas corretamente
+### Problema 1: Edge Function "save-system-setting" nao funciona no VPS
+O erro "Edge Function returned a non-2xx status code" acontece porque a funcao `save-system-setting` **nao esta registrada no roteador do VPS** (`supabase/functions/main/index.ts`). O VPS usa um roteador central que lista todas as funcoes disponiveis, e a nova funcao nao foi adicionada la.
 
-Isso afeta **apenas o VPS**. No Lovable Cloud funciona porque o banco esta configurado corretamente.
+### Problema 2: RLS bloqueia escrita em tabelas admin no VPS  
+O erro "new row violates row-level security policy for table queues" acontece porque as tabelas com restricao admin (`queues`, `tags`, `campaigns`, etc.) usam a funcao `is_admin_or_manager(auth.uid())` nas politicas RLS. No VPS, essa verificacao falha -- provavelmente porque as permissoes do PostgreSQL ou os grants para o role `authenticated` nao estao sincronizados corretamente.
 
-## Solucao: Backend Function para Salvar Configuracoes
+**Tabelas afetadas**: `queues`, `tags`, `campaigns`, `campaign_contacts`, `chatbot_rules`, `kanban_columns`, `connections`, `queue_agents`, `system_settings`
 
-Em vez de tentar corrigir permissoes do PostgreSQL no VPS (que quebra a cada atualizacao), a solucao e **mover a logica de salvamento para uma funcao backend** que roda na nuvem com permissoes privilegiadas.
+## Solucao: Edge Function Generica para Escrita Admin
 
-### Como funciona
+Em vez de corrigir permissoes do PostgreSQL no VPS (que quebram a cada atualizacao), a solucao e criar uma **funcao backend generica** que lida com todas as operacoes de escrita em tabelas restritas a admin.
 
 ```text
 Antes (quebra no VPS):
-  Navegador --> Client Supabase (anon key) --> RLS Policy --> BLOQUEADO
+  Frontend --> Supabase Client (anon key) --> RLS Policy --> BLOQUEADO
 
 Depois (funciona sempre):
-  Navegador --> Edge Function --> Service Role Key --> Salva direto (sem RLS)
+  Frontend --> Edge Function (admin-write) --> Service Role Key --> OK
 ```
 
-### Mudancas necessarias
+## Mudancas Necessarias
 
-**1. Criar nova funcao backend: `supabase/functions/save-system-setting/index.ts`**
+### 1. Criar funcao backend generica: `supabase/functions/admin-write/index.ts`
 
-- Recebe: `key`, `value`, `description`, `category`
-- Valida que o usuario esta autenticado (via Authorization header)
-- Verifica se o usuario tem role admin/manager (consultando `user_roles` com service role)
-- Salva a configuracao usando service role key (que ignora RLS)
-- Lida com duplicatas e upsert de forma segura
+Funcao unica que lida com INSERT, UPDATE e DELETE em qualquer tabela admin-restrita:
+- Recebe: `table`, `operation` (insert/update/delete), `data`, `filters`
+- Valida autenticacao via Authorization header
+- Verifica role admin/manager usando service_role
+- Executa a operacao com service_role key (ignora RLS)
+- Whitelist de tabelas permitidas (seguranca contra injecao)
 
-**2. Atualizar `src/lib/safeSettingUpsert.ts`**
+### 2. Criar helper frontend: `src/lib/adminWrite.ts`
 
-- Em vez de fazer operacoes diretas no banco, chamar a nova funcao backend via `supabase.functions.invoke("save-system-setting", ...)`
-- Manter a mesma interface para que `useSystemSettings.ts` e `BaileysConfigSection.tsx` continuem funcionando sem alteracao
+Funcao utilitaria que:
+- Chama a Edge Function `admin-write`
+- Se falhar, faz fallback para operacao direta no banco (para ambientes onde RLS funciona normalmente)
+- Mantem a mesma interface para os hooks existentes
 
-**3. Registrar a funcao no `supabase/config.toml`**
+### 3. Atualizar roteador VPS: `supabase/functions/main/index.ts`
 
-- Adicionar `[functions.save-system-setting]` com `verify_jwt = false` (a validacao e feita no codigo)
+Adicionar `save-system-setting` e `admin-write` na lista de funcoes disponiveis no roteador do VPS.
 
-### Por que essa solucao e definitiva
+### 4. Adicionar fallback no `src/lib/safeSettingUpsert.ts`
 
-- A funcao backend roda na **nuvem**, nao depende do VPS
-- Usa **service role key** que ignora todas as politicas RLS
-- A seguranca e mantida pela **validacao de role no codigo** da funcao
-- Nenhuma mudanca necessaria no VPS -- funciona imediatamente apos deploy
-- Os componentes existentes (`BaileysConfigSection`, `OptionsTab`, `CustomizeTab`) continuam funcionando sem alteracao
+Tentar Edge Function primeiro, se falhar, tentar operacao direta no banco como fallback.
 
-### Arquivos afetados
+### 5. Atualizar hooks que escrevem em tabelas admin
 
-1. `supabase/functions/save-system-setting/index.ts` -- Nova funcao backend
-2. `src/lib/safeSettingUpsert.ts` -- Atualizar para chamar a funcao backend
-3. `supabase/config.toml` -- Registrar nova funcao
+- **`src/hooks/useQueues.ts`**: Usar `adminWrite` para create/update/delete de filas e agentes
+- **`src/hooks/useTags.ts`**: Usar `adminWrite` para create/update/delete de tags
+
+### 6. Registrar funcao no `supabase/config.toml`
+
+Adicionar `[functions.admin-write]` com `verify_jwt = false`.
+
+## Detalhes Tecnicos
+
+### Whitelist de tabelas permitidas no admin-write
+
+```text
+queues, queue_agents, tags, campaigns, campaign_contacts,
+chatbot_rules, kanban_columns, connections, integrations,
+ai_settings, api_keys, system_settings
+```
+
+### Operacoes suportadas
+
+- **insert**: Insere registro e retorna o dado criado
+- **update**: Atualiza registros com base nos filtros (obrigatorios)
+- **delete**: Remove registros com base nos filtros (obrigatorios)
+
+### Seguranca
+
+- Autenticacao obrigatoria (verifica JWT)
+- Verificacao de role admin/manager no codigo
+- Whitelist de tabelas (rejeita tabelas nao permitidas)
+- Filtros obrigatorios para update/delete (previne alteracoes em massa acidentais)
+
+### Fluxo de fallback no frontend
+
+```text
+1. Tentar Edge Function (admin-write ou save-system-setting)
+2. Se falhar (VPS desatualizado ou funcao indisponivel):
+   2a. Tentar operacao direta via Supabase client
+   2b. Se tambem falhar (RLS): mostrar erro ao usuario
+```
+
+## Arquivos Afetados
+
+1. `supabase/functions/admin-write/index.ts` -- Nova funcao backend generica
+2. `supabase/functions/main/index.ts` -- Adicionar rotas no VPS
+3. `src/lib/adminWrite.ts` -- Novo helper frontend
+4. `src/lib/safeSettingUpsert.ts` -- Adicionar fallback
+5. `src/hooks/useQueues.ts` -- Usar adminWrite para escrita
+6. `src/hooks/useTags.ts` -- Usar adminWrite para escrita
+7. `supabase/config.toml` -- Registrar nova funcao
+
+## Por que essa solucao e definitiva
+
+- **Uma funcao resolve tudo**: qualquer nova tabela admin-restrita so precisa ser adicionada na whitelist
+- **Funciona no VPS e no Cloud**: Edge Function com service_role ignora RLS
+- **Fallback inteligente**: se a Edge Function nao estiver disponivel, tenta direto (para Cloud onde RLS funciona)
+- **Nenhuma mudanca no banco do VPS**: nao precisa rodar SQL nem reiniciar containers
+- **Seguranca mantida**: validacao de role no codigo + whitelist de tabelas
