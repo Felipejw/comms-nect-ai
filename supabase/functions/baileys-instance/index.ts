@@ -222,12 +222,13 @@ const handler = async (req: Request): Promise<Response> => {
 
           const result = await safeParseResponse(response);
 
-          if (result.success && result.qr) {
+          const qrValue = (result.data as Record<string, unknown>)?.qrCode || result.qr;
+          if (result.success && qrValue) {
             // Update QR code in database
             await supabaseClient
               .from("connections")
               .update({
-                qr_code: result.qr as string,
+                qr_code: qrValue as string,
                 status: "waiting_qr",
                 updated_at: new Date().toISOString(),
               })
