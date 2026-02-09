@@ -52,16 +52,16 @@ async function loadFunction(name: string): Promise<((req: Request) => Promise<Re
     return null;
   }
 
+  // Save and neutralize Deno.serve before import to prevent sub-functions
+  // from hijacking the main router (belt-and-suspenders with import.meta.main guard)
+  const originalServe = Deno.serve;
+
   try {
-    // Neutralize Deno.serve before importing sub-functions
-    // to prevent them from hijacking the main router's handler
-    const originalServe = Deno.serve;
     (Deno as any).serve = () => {};
 
+    console.log(`[main-router] Importing ${name} from ${modulePath}...`);
     const module = await import(modulePath);
-
-    // Restore original Deno.serve
-    (Deno as any).serve = originalServe;
+    console.log(`[main-router] Import OK for ${name}, default export type: ${typeof module.default}`);
 
     // Edge functions export a default handler
     if (typeof module.default === 'function') {
@@ -69,15 +69,17 @@ async function loadFunction(name: string): Promise<((req: Request) => Promise<Re
       console.log(`[main-router] Loaded function: ${name}`);
       return module.default;
     }
-    console.warn(`[main-router] Function '${name}' has no default export`);
+    console.warn(`[main-router] Function '${name}' has no default export. Keys: ${Object.keys(module).join(', ')}`);
     return null;
   } catch (error) {
-    // Ensure Deno.serve is restored even on error
-    if (typeof Deno.serve !== 'function') {
-      console.error(`[main-router] Deno.serve was corrupted, cannot restore`);
-    }
-    console.error(`[main-router] Error loading function '${name}':`, error);
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStack = error instanceof Error ? error.stack : '';
+    console.error(`[main-router] FAILED to load '${name}': ${errMsg}`);
+    if (errStack) console.error(`[main-router] Stack: ${errStack}`);
     return null;
+  } finally {
+    // Always restore Deno.serve
+    (Deno as any).serve = originalServe;
   }
 }
 
