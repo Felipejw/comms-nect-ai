@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { adminWrite } from '@/lib/adminWrite';
 
 export interface Queue {
   id: string;
@@ -53,7 +54,6 @@ export function useQueueAgents(queueId: string) {
 
       if (error) throw error;
       
-      // Fetch profiles separately
       const userIds = [...new Set((data || []).map(a => a.user_id))];
       
       let profileMap = new Map();
@@ -86,14 +86,12 @@ export function useCreateQueue() {
       auto_assign?: boolean;
       max_concurrent?: number;
     }) => {
-      const { data, error } = await supabase
-        .from('queues')
-        .insert(input)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const result = await adminWrite<Queue>({
+        table: 'queues',
+        operation: 'insert',
+        data: input,
+      });
+      return result?.[0] || null;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queues'] });
@@ -121,15 +119,13 @@ export function useUpdateQueue() {
       auto_assign?: boolean;
       max_concurrent?: number;
     }) => {
-      const { data, error } = await supabase
-        .from('queues')
-        .update(input)
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const result = await adminWrite<Queue>({
+        table: 'queues',
+        operation: 'update',
+        data: input,
+        filters: { id },
+      });
+      return result?.[0] || null;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queues'] });
@@ -146,12 +142,11 @@ export function useDeleteQueue() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('queues')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
+      await adminWrite({
+        table: 'queues',
+        operation: 'delete',
+        filters: { id },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['queues'] });
@@ -168,11 +163,11 @@ export function useAddAgentToQueue() {
 
   return useMutation({
     mutationFn: async ({ queueId, userId }: { queueId: string; userId: string }) => {
-      const { error } = await supabase
-        .from('queue_agents')
-        .insert({ queue_id: queueId, user_id: userId });
-
-      if (error) throw error;
+      await adminWrite({
+        table: 'queue_agents',
+        operation: 'insert',
+        data: { queue_id: queueId, user_id: userId },
+      });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['queue-agents', variables.queueId] });
@@ -189,13 +184,11 @@ export function useRemoveAgentFromQueue() {
 
   return useMutation({
     mutationFn: async ({ queueId, userId }: { queueId: string; userId: string }) => {
-      const { error } = await supabase
-        .from('queue_agents')
-        .delete()
-        .eq('queue_id', queueId)
-        .eq('user_id', userId);
-
-      if (error) throw error;
+      await adminWrite({
+        table: 'queue_agents',
+        operation: 'delete',
+        filters: { queue_id: queueId, user_id: userId },
+      });
     },
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['queue-agents', variables.queueId] });
