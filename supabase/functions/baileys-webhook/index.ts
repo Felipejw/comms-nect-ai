@@ -20,9 +20,7 @@ function mapBaileysStatus(status: string): string {
 }
 
 // Detect if a "from" address is a WhatsApp LID
-// Now also checks rawJid from the payload for more reliable detection
 function parseFromAddress(rawFrom: string, rawJid?: string): { identifier: string; isLid: boolean } {
-  // If rawJid is provided, use it for more reliable LID detection
   const jidToCheck = rawJid || rawFrom;
   const isLid = jidToCheck.endsWith("@lid");
   const identifier = rawFrom
@@ -41,12 +39,10 @@ async function storeMediaFromBase64(
   base64Data: string
 ): Promise<string | null> {
   try {
-    // Regex that handles mimetypes with parameters like "audio/ogg; codecs=opus"
     const matches = base64Data.match(/^data:([\w\/\-\+\.]+(?:;\s*[\w\-]+=[\w\-]+)*);base64,(.+)$/);
     if (!matches) return null;
 
     const fullMimetype = matches[1];
-    // Extract only the base mimetype (before parameters) for storage
     const mimetype = fullMimetype.split(';')[0].trim();
     const base64 = matches[2];
     const buffer = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
@@ -102,7 +98,6 @@ async function resolveLidInBackground(
   try {
     console.log(`[LID Resolution] Starting background resolution for contact ${contactId}, LID: ${lidIdentifier}`);
 
-    // Get Baileys server URL from settings
     const { data: settings } = await supabaseClient
       .from("system_settings")
       .select("value")
@@ -131,7 +126,6 @@ async function resolveLidInBackground(
       headers["X-API-Key"] = baileysApiKey;
     }
 
-    // Try to resolve LID via Baileys contacts endpoint
     const contactsResponse = await fetch(
       `${baileysUrl}/sessions/${sessionName}/contacts/${lidIdentifier}@lid`,
       { method: "GET", headers }
@@ -141,7 +135,6 @@ async function resolveLidInBackground(
       const contactData = await contactsResponse.json();
       console.log(`[LID Resolution] Baileys response:`, JSON.stringify(contactData).substring(0, 300));
 
-      // Extract the real phone number if available
       const realPhone = contactData?.phone || contactData?.jid?.replace("@s.whatsapp.net", "") || null;
 
       if (realPhone && !realPhone.includes("@lid")) {
@@ -171,24 +164,18 @@ async function mergeLidContactByPushName(
   // deno-lint-ignore no-explicit-any
   supabaseClient: any,
   realPhone: string,
-  pushName: string,
-  tenantId: string | null
+  pushName: string
 // deno-lint-ignore no-explicit-any
 ): Promise<any | null> {
   try {
     console.log(`[LID Merge] Checking for LID contacts with pushName "${pushName}" to merge with phone ${realPhone}`);
 
-    // Build query - search for LID-only contacts with the same pushName
-    let query = supabaseClient
+    const query = supabaseClient
       .from("contacts")
       .select("id, whatsapp_lid, phone, name")
       .eq("name", pushName)
       .is("phone", null)
       .not("whatsapp_lid", "is", null);
-
-    if (tenantId) {
-      query = query.eq("tenant_id", tenantId);
-    }
 
     const { data: lidContacts } = await query;
 
@@ -202,7 +189,6 @@ async function mergeLidContactByPushName(
       return null;
     }
 
-    // Exactly one match - merge
     const lidContact = lidContacts[0];
     console.log(`[LID Merge] ✅ Merging LID contact ${lidContact.id} (LID: ${lidContact.whatsapp_lid}) with phone: ${realPhone}`);
 
@@ -247,7 +233,8 @@ const handler = async (req: Request): Promise<Response> => {
       .select("*")
       .eq("type", "whatsapp");
 
-    const connection = connections?.find((c: { session_data: { sessionName?: string; engine?: string } | null }) => {
+    // deno-lint-ignore no-explicit-any
+    const connection = connections?.find((c: any) => {
       const sessionData = c.session_data;
       return sessionData?.sessionName === session && sessionData?.engine === "baileys";
     });
@@ -261,7 +248,357 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`[Baileys Webhook] Found connection: ${connection.id} (${connection.name})`);
 
-    // ... keep existing code (all event handlers: qr.update, session.status, message)
+    // ========== Handle QR Code Update ==========
+    if (event === "qr.update") {
+      const qrCode = eventPayload?.qr || eventPayload;
+      console.log("[Baileys Webhook] QR code received, length:", typeof qrCode === "string" ? qrCode.length : "N/A");
+
+      await supabaseClient
+        .from("connections")
+        .update({
+          qr_code: typeof qrCode === "string" ? qrCode : JSON.stringify(qrCode),
+          status: "waiting_qr",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", connection.id);
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ========== Handle Session Status ==========
+    if (event === "session.status") {
+      const status = eventPayload?.status || eventPayload;
+      const mappedStatus = mapBaileysStatus(typeof status === "string" ? status : String(status));
+      console.log(`[Baileys Webhook] Session status: ${status} -> ${mappedStatus}`);
+
+      const updates: Record<string, unknown> = {
+        status: mappedStatus,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (mappedStatus === "connected") {
+        updates.qr_code = null;
+        // Try to get phone number from payload
+        if (eventPayload?.phoneNumber) {
+          updates.phone_number = eventPayload.phoneNumber;
+        }
+      }
+
+      if (mappedStatus === "disconnected" && connection.disconnect_requested) {
+        updates.disconnect_requested = false;
+      }
+
+      await supabaseClient
+        .from("connections")
+        .update(updates)
+        .eq("id", connection.id);
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // ========== Handle Incoming Message ==========
+    if (event === "message") {
+      const msgPayload = eventPayload || {};
+      const rawFrom = msgPayload.from || "";
+      const rawJid = msgPayload.rawJid || msgPayload.jid || "";
+      const pushName = msgPayload.pushName || msgPayload.senderName || "";
+      const messageId = msgPayload.messageId || msgPayload.id || `msg_${Date.now()}`;
+      const isFromMe = msgPayload.fromMe === true;
+
+      // Skip group messages
+      if (rawFrom.endsWith("@g.us")) {
+        console.log("[Baileys Webhook] Skipping group message");
+        return new Response(JSON.stringify({ success: true }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const { identifier, isLid } = parseFromAddress(rawFrom, rawJid);
+      console.log(`[Baileys Webhook] Message from: ${identifier}, isLid: ${isLid}, fromMe: ${isFromMe}, pushName: ${pushName}`);
+
+      // Determine message content and type
+      let messageContent = "";
+      let msgType: "text" | "image" | "audio" | "video" | "document" = "text";
+      let mediaUrl: string | null = null;
+
+      if (msgPayload.message || msgPayload.text || msgPayload.body) {
+        messageContent = msgPayload.message || msgPayload.text || msgPayload.body || "";
+      }
+
+      // Handle media types
+      if (msgPayload.hasMedia || msgPayload.mediaData || msgPayload.base64) {
+        const base64Data = msgPayload.base64 || msgPayload.mediaData;
+        if (msgPayload.mediaType === "image" || msgPayload.type === "image") {
+          msgType = "image";
+          messageContent = msgPayload.caption || messageContent || "[Imagem]";
+        } else if (msgPayload.mediaType === "audio" || msgPayload.type === "audio" || msgPayload.type === "ptt") {
+          msgType = "audio";
+          messageContent = messageContent || "[Áudio]";
+        } else if (msgPayload.mediaType === "video" || msgPayload.type === "video") {
+          msgType = "video";
+          messageContent = msgPayload.caption || messageContent || "[Vídeo]";
+        } else if (msgPayload.mediaType === "document" || msgPayload.type === "document") {
+          msgType = "document";
+          messageContent = msgPayload.caption || msgPayload.fileName || messageContent || "[Documento]";
+        }
+
+        // Store media if base64 is available
+        if (base64Data) {
+          const sessionData = connection.session_data as { sessionName?: string } | null;
+          const sessName = sessionData?.sessionName || session;
+          mediaUrl = await storeMediaFromBase64(supabaseClient, sessName, messageId, base64Data);
+        }
+      }
+
+      // If no content at all, use a fallback
+      if (!messageContent) {
+        messageContent = msgPayload.type ? `[${msgPayload.type}]` : "[Mensagem]";
+      }
+
+      // ---- Find or create contact ----
+      // deno-lint-ignore no-explicit-any
+      let contact: any = null;
+
+      if (isLid) {
+        // Search by LID
+        const { data: lidContacts } = await supabaseClient
+          .from("contacts")
+          .select("*")
+          .eq("whatsapp_lid", identifier)
+          .limit(1);
+
+        contact = lidContacts?.[0] || null;
+
+        if (!contact) {
+          // Try merge by pushName if we have a real phone
+          if (pushName) {
+            contact = await mergeLidContactByPushName(supabaseClient, "", pushName);
+          }
+
+          if (!contact) {
+            // Create new LID contact
+            const contactName = pushName || `LID ${identifier.substring(0, 8)}`;
+            const { data: newContact, error: createError } = await supabaseClient
+              .from("contacts")
+              .insert({
+                name: contactName,
+                whatsapp_lid: identifier,
+                name_source: pushName ? "push_name" : "auto",
+                status: "active",
+              })
+              .select()
+              .single();
+
+            if (createError) {
+              // May have been created concurrently - try to find again
+              console.error("[Baileys Webhook] Error creating LID contact:", createError.message);
+              const { data: retryContacts } = await supabaseClient
+                .from("contacts")
+                .select("*")
+                .eq("whatsapp_lid", identifier)
+                .limit(1);
+              contact = retryContacts?.[0] || null;
+            } else {
+              contact = newContact;
+              console.log(`[Baileys Webhook] Created new LID contact: ${contact.id}`);
+            }
+          }
+        } else {
+          // Update name from pushName if current name is generic
+          if (pushName && contact.name_source !== "manual") {
+            const isGenericName = contact.name.startsWith("LID ") || contact.name === "Contato Desconhecido" || /^\d{14,}$/.test(contact.name);
+            if (isGenericName) {
+              await supabaseClient
+                .from("contacts")
+                .update({ name: pushName, name_source: "push_name", updated_at: new Date().toISOString() })
+                .eq("id", contact.id);
+              contact.name = pushName;
+            }
+          }
+        }
+      } else {
+        // Search by phone
+        const cleanPhone = identifier.replace(/\D/g, "");
+        const { data: phoneContacts } = await supabaseClient
+          .from("contacts")
+          .select("*")
+          .eq("phone", cleanPhone)
+          .limit(1);
+
+        contact = phoneContacts?.[0] || null;
+
+        if (!contact) {
+          // Try merge by pushName
+          if (pushName) {
+            contact = await mergeLidContactByPushName(supabaseClient, cleanPhone, pushName);
+          }
+
+          if (!contact) {
+            const contactName = pushName || cleanPhone;
+            const { data: newContact, error: createError } = await supabaseClient
+              .from("contacts")
+              .insert({
+                name: contactName,
+                phone: cleanPhone,
+                name_source: pushName ? "push_name" : "auto",
+                status: "active",
+              })
+              .select()
+              .single();
+
+            if (createError) {
+              console.error("[Baileys Webhook] Error creating phone contact:", createError.message);
+              const { data: retryContacts } = await supabaseClient
+                .from("contacts")
+                .select("*")
+                .eq("phone", cleanPhone)
+                .limit(1);
+              contact = retryContacts?.[0] || null;
+            } else {
+              contact = newContact;
+              console.log(`[Baileys Webhook] Created new phone contact: ${contact.id}`);
+            }
+          }
+        } else {
+          // Update name from pushName
+          if (pushName && contact.name_source !== "manual") {
+            const isGenericName = /^\d+$/.test(contact.name) || contact.name === "Contato Desconhecido";
+            if (isGenericName) {
+              await supabaseClient
+                .from("contacts")
+                .update({ name: pushName, name_source: "push_name", updated_at: new Date().toISOString() })
+                .eq("id", contact.id);
+              contact.name = pushName;
+            }
+          }
+        }
+      }
+
+      if (!contact) {
+        console.error("[Baileys Webhook] Could not find or create contact for:", identifier);
+        return new Response(JSON.stringify({ success: false, error: "Contact creation failed" }), {
+          status: 500,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ---- Find or create conversation ----
+      const { data: existingConversations } = await supabaseClient
+        .from("conversations")
+        .select("*")
+        .eq("contact_id", contact.id)
+        .in("status", ["new", "in_progress"])
+        .order("last_message_at", { ascending: false })
+        .limit(1);
+
+      // deno-lint-ignore no-explicit-any
+      let conversation: any = existingConversations?.[0] || null;
+      let isNewConversation = false;
+
+      if (!conversation) {
+        const { data: newConv, error: convError } = await supabaseClient
+          .from("conversations")
+          .insert({
+            contact_id: contact.id,
+            connection_id: connection.id,
+            status: "new",
+            channel: "whatsapp",
+            is_bot_active: true,
+            last_message_at: new Date().toISOString(),
+          })
+          .select()
+          .single();
+
+        if (convError) {
+          console.error("[Baileys Webhook] Error creating conversation:", convError.message);
+          return new Response(JSON.stringify({ success: false, error: "Conversation creation failed" }), {
+            status: 500,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        conversation = newConv;
+        isNewConversation = true;
+        console.log(`[Baileys Webhook] Created new conversation: ${conversation.id}`);
+      }
+
+      // ---- Save message ----
+      const { error: msgError } = await supabaseClient
+        .from("messages")
+        .insert({
+          conversation_id: conversation.id,
+          content: messageContent,
+          sender_type: isFromMe ? "agent" : "contact",
+          sender_id: isFromMe ? null : null,
+          message_type: msgType,
+          media_url: mediaUrl,
+          is_read: isFromMe,
+        });
+
+      if (msgError) {
+        console.error("[Baileys Webhook] Error saving message:", msgError.message);
+      } else {
+        console.log(`[Baileys Webhook] Message saved to conversation ${conversation.id}`);
+      }
+
+      // Update contact last_contact_at
+      await supabaseClient
+        .from("contacts")
+        .update({ last_contact_at: new Date().toISOString() })
+        .eq("id", contact.id);
+
+      // ---- Trigger chatbot flow (only for incoming messages, not fromMe) ----
+      if (!isFromMe && conversation.is_bot_active) {
+        try {
+          console.log("[Baileys Webhook] Triggering execute-flow for conversation:", conversation.id);
+          const flowUrl = `${supabaseUrl}/functions/v1/execute-flow`;
+          await fetch(flowUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseKey}`,
+            },
+            body: JSON.stringify({
+              conversationId: conversation.id,
+              contactId: contact.id,
+              message: messageContent,
+              connectionId: connection.id,
+              isNewConversation,
+            }),
+          });
+        } catch (flowError) {
+          console.error("[Baileys Webhook] Error triggering flow:", flowError);
+          // Don't fail the webhook because of flow errors
+        }
+      }
+
+      // ---- Background LID resolution ----
+      if (isLid && !contact.phone) {
+        // Use EdgeRuntime.waitUntil for background processing
+        try {
+          const lidPromise = resolveLidInBackground(supabaseClient, contact.id, identifier, connection);
+          if (typeof EdgeRuntime !== "undefined" && EdgeRuntime.waitUntil) {
+            EdgeRuntime.waitUntil(lidPromise);
+          }
+        } catch (e) {
+          console.error("[Baileys Webhook] Error starting LID resolution:", e);
+        }
+      }
+
+      return new Response(JSON.stringify({ success: true, contactId: contact.id, conversationId: conversation.id }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Unknown event - just acknowledge
+    console.log(`[Baileys Webhook] Unknown event: ${event}, ignoring`);
+    return new Response(JSON.stringify({ success: true }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
   } catch (error) {
     console.error("[Baileys Webhook] Error:", error);
     return new Response(
@@ -273,6 +610,9 @@ const handler = async (req: Request): Promise<Response> => {
     );
   }
 };
+
+// Declare EdgeRuntime for TypeScript
+declare const EdgeRuntime: { waitUntil: (promise: Promise<unknown>) => void } | undefined;
 
 export default handler;
 Deno.serve(handler);

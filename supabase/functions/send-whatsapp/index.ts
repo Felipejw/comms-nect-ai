@@ -19,7 +19,6 @@ interface SessionData {
   token?: string;
   instanceName?: string;
   engine?: string;
-  // Meta API fields
   access_token?: string;
   phone_number_id?: string;
 }
@@ -31,9 +30,9 @@ interface Connection {
   session_data: SessionData | null;
   name: string;
   is_default: boolean;
-  tenant_id: string;
 }
 
+// ========== Baileys Send ==========
 async function sendViaBaileys(
   connection: Connection,
   phoneToSend: string,
@@ -44,7 +43,6 @@ async function sendViaBaileys(
   supabaseAdmin: any,
   isLidSend: boolean = false
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
-  // Get Baileys server URL from settings
   const { data: settings } = await supabaseAdmin
     .from("system_settings")
     .select("value")
@@ -76,10 +74,8 @@ async function sendViaBaileys(
     headers["X-API-Key"] = baileysApiKey;
   }
 
-  // Format the destination - LID uses @lid suffix, phone uses @s.whatsapp.net
   let formattedNumber: string;
   if (isLidSend) {
-    // For LID contacts, send with @lid suffix so Baileys uses the LID protocol
     formattedNumber = `${phoneToSend.replace(/\D/g, "")}@lid`;
     console.log(`[Baileys] Sending to LID: ${formattedNumber}`);
   } else {
@@ -124,6 +120,7 @@ async function sendViaBaileys(
   return { success: true, messageId: result.data?.messageId };
 }
 
+// ========== Meta API Send ==========
 async function sendViaMetaAPI(
   connection: Connection,
   phoneToSend: string,
@@ -132,7 +129,7 @@ async function sendViaMetaAPI(
   mediaUrl?: string
 ): Promise<{ success: boolean; messageId?: string; error?: string }> {
   const sessionData = connection.session_data;
-  
+
   if (!sessionData?.access_token || !sessionData?.phone_number_id) {
     return { success: false, error: "Meta API credentials not configured" };
   }
@@ -188,6 +185,7 @@ async function sendViaMetaAPI(
   return { success: true, messageId: result.messages?.[0]?.id };
 }
 
+// ========== Main Handler ==========
 const handler = async (req: Request): Promise<Response> => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -198,13 +196,199 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") || Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!;
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-    // ... keep existing code (auth validation, message routing to Baileys or Meta API)
+    // 1. Authenticate user
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader?.startsWith("Bearer ")) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized: missing token" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const token = authHeader.replace("Bearer ", "");
+    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: userData, error: authError } = await supabaseUser.auth.getUser(token);
+    if (authError || !userData?.user) {
+      console.error("[send-whatsapp] Auth error:", authError?.message);
+      return new Response(
+        JSON.stringify({ success: false, error: "Unauthorized" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const userId = userData.user.id;
+    console.log(`[send-whatsapp] Authenticated user: ${userId}`);
+
+    // 2. Parse payload
+    const payload: SendMessagePayload = await req.json();
+    const { conversationId, content, messageType = "text", mediaUrl } = payload;
+
+    if (!conversationId || !content) {
+      return new Response(
+        JSON.stringify({ success: false, error: "conversationId and content are required" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[send-whatsapp] Sending to conversation: ${conversationId}, type: ${messageType}`);
+
+    // 3. Get conversation with contact
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+    const { data: conversation, error: convError } = await supabaseAdmin
+      .from("conversations")
+      .select("*, contacts(*)")
+      .eq("id", conversationId)
+      .single();
+
+    if (convError || !conversation) {
+      console.error("[send-whatsapp] Conversation not found:", convError?.message);
+      return new Response(
+        JSON.stringify({ success: false, error: "Conversation not found" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // deno-lint-ignore no-explicit-any
+    const contact = (conversation as any).contacts;
+    if (!contact) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Contact not found for conversation" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[send-whatsapp] Contact: ${contact.name} | Phone: ${contact.phone} | LID: ${contact.whatsapp_lid}`);
+
+    // 4. Determine connection
+    let connection: Connection | null = null;
+
+    // Try conversation's connection first
+    if (conversation.connection_id) {
+      const { data: connData } = await supabaseAdmin
+        .from("connections")
+        .select("*")
+        .eq("id", conversation.connection_id)
+        .single();
+      if (connData) connection = connData as Connection;
+    }
+
+    // Fall back to default connection
+    if (!connection) {
+      const { data: defaultConn } = await supabaseAdmin
+        .from("connections")
+        .select("*")
+        .eq("is_default", true)
+        .eq("status", "connected")
+        .limit(1)
+        .single();
+      if (defaultConn) connection = defaultConn as Connection;
+    }
+
+    // Fall back to any connected connection
+    if (!connection) {
+      const { data: anyConn } = await supabaseAdmin
+        .from("connections")
+        .select("*")
+        .eq("status", "connected")
+        .limit(1)
+        .single();
+      if (anyConn) connection = anyConn as Connection;
+    }
+
+    if (!connection) {
+      return new Response(
+        JSON.stringify({ success: false, error: "No active WhatsApp connection available" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[send-whatsapp] Using connection: ${connection.id} (${connection.name})`);
+
+    // 5. Determine phone/LID to send to
+    const contactPhone = contact.phone;
+    const contactLid = contact.whatsapp_lid;
+    const isLidSend = !contactPhone && !!contactLid;
+    const phoneToSend = contactPhone || contactLid;
+
+    if (!phoneToSend) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Contact has no phone number or WhatsApp LID" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // 6. Route to appropriate engine
+    let sendResult: { success: boolean; messageId?: string; error?: string };
+
+    const engine = connection.session_data?.engine || "baileys";
+    const isMeta = engine === "meta" || !!connection.session_data?.access_token;
+
+    if (isMeta) {
+      sendResult = await sendViaMetaAPI(connection, phoneToSend, content, messageType, mediaUrl);
+    } else {
+      sendResult = await sendViaBaileys(connection, phoneToSend, content, messageType, mediaUrl, supabaseAdmin, isLidSend);
+    }
+
+    if (!sendResult.success) {
+      console.error("[send-whatsapp] Send failed:", sendResult.error);
+      return new Response(
+        JSON.stringify({ success: false, error: sendResult.error }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[send-whatsapp] Message sent successfully, ID: ${sendResult.messageId}`);
+
+    // 7. Save message to database
+    const { data: savedMessage, error: msgError } = await supabaseAdmin
+      .from("messages")
+      .insert({
+        conversation_id: conversationId,
+        content: content,
+        sender_id: userId,
+        sender_type: "agent",
+        message_type: messageType,
+        media_url: mediaUrl || null,
+        is_read: true,
+      })
+      .select()
+      .single();
+
+    if (msgError) {
+      console.error("[send-whatsapp] Error saving message:", msgError.message);
+      // Message was sent but not saved - still return success
+    } else {
+      console.log(`[send-whatsapp] Message saved: ${savedMessage.id}`);
+    }
+
+    // 8. Update conversation
+    await supabaseAdmin
+      .from("conversations")
+      .update({
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        is_bot_active: false,
+      })
+      .eq("id", conversationId);
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        messageId: sendResult.messageId,
+        savedMessageId: savedMessage?.id,
+      }),
+      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   } catch (error) {
     console.error("Error in send-whatsapp:", error);
     return new Response(
-      JSON.stringify({ 
-        success: false, 
-        error: error instanceof Error ? error.message : "Unknown error" 
+      JSON.stringify({
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
