@@ -11,77 +11,59 @@ const corsHeaders = {
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
 };
 
+// Import all function handlers statically (edge-runtime sandbox blocks dynamic imports)
+import adminWriteHandler from '../admin-write/index.ts';
+import baileysCreateSessionHandler from '../baileys-create-session/index.ts';
+import baileysInstanceHandler from '../baileys-instance/index.ts';
+import baileysWebhookHandler from '../baileys-webhook/index.ts';
+import checkConnectionsHandler from '../check-connections/index.ts';
+import createUserHandler from '../create-user/index.ts';
+import deleteUserHandler from '../delete-user/index.ts';
+import downloadWhatsappMediaHandler from '../download-whatsapp-media/index.ts';
+import executeCampaignHandler from '../execute-campaign/index.ts';
+import executeFlowHandler from '../execute-flow/index.ts';
+import fetchWhatsappProfileHandler from '../fetch-whatsapp-profile/index.ts';
+import googleAuthHandler from '../google-auth/index.ts';
+import googleCalendarHandler from '../google-calendar/index.ts';
+import mergeDuplicateContactsHandler from '../merge-duplicate-contacts/index.ts';
+import metaApiWebhookHandler from '../meta-api-webhook/index.ts';
+import processSchedulesHandler from '../process-schedules/index.ts';
+import resetUserPasswordHandler from '../reset-user-password/index.ts';
+import resolveLidContactHandler from '../resolve-lid-contact/index.ts';
+import saveSystemSettingHandler from '../save-system-setting/index.ts';
+import sendMetaMessageHandler from '../send-meta-message/index.ts';
+import sendWhatsappHandler from '../send-whatsapp/index.ts';
+import syncContactsHandler from '../sync-contacts/index.ts';
+import updateLidContactsHandler from '../update-lid-contacts/index.ts';
+import updateUserEmailHandler from '../update-user-email/index.ts';
+
 // Mapeamento de funções disponíveis
-const FUNCTION_HANDLERS: Record<string, string> = {
-  'admin-write': '../admin-write/index.ts',
-  'baileys-create-session': '../baileys-create-session/index.ts',
-  'baileys-instance': '../baileys-instance/index.ts',
-  'baileys-webhook': '../baileys-webhook/index.ts',
-  'check-connections': '../check-connections/index.ts',
-  'create-user': '../create-user/index.ts',
-  'delete-user': '../delete-user/index.ts',
-  'download-whatsapp-media': '../download-whatsapp-media/index.ts',
-  'execute-campaign': '../execute-campaign/index.ts',
-  'execute-flow': '../execute-flow/index.ts',
-  'fetch-whatsapp-profile': '../fetch-whatsapp-profile/index.ts',
-  'google-auth': '../google-auth/index.ts',
-  'google-calendar': '../google-calendar/index.ts',
-  'merge-duplicate-contacts': '../merge-duplicate-contacts/index.ts',
-  'meta-api-webhook': '../meta-api-webhook/index.ts',
-  'process-schedules': '../process-schedules/index.ts',
-  'reset-user-password': '../reset-user-password/index.ts',
-  'resolve-lid-contact': '../resolve-lid-contact/index.ts',
-  'save-system-setting': '../save-system-setting/index.ts',
-  'send-meta-message': '../send-meta-message/index.ts',
-  'send-whatsapp': '../send-whatsapp/index.ts',
-  'sync-contacts': '../sync-contacts/index.ts',
-  'update-lid-contacts': '../update-lid-contacts/index.ts',
-  'update-user-email': '../update-user-email/index.ts',
+const FUNCTION_HANDLERS: Record<string, (req: Request) => Promise<Response>> = {
+  'admin-write': adminWriteHandler,
+  'baileys-create-session': baileysCreateSessionHandler,
+  'baileys-instance': baileysInstanceHandler,
+  'baileys-webhook': baileysWebhookHandler,
+  'check-connections': checkConnectionsHandler,
+  'create-user': createUserHandler,
+  'delete-user': deleteUserHandler,
+  'download-whatsapp-media': downloadWhatsappMediaHandler,
+  'execute-campaign': executeCampaignHandler,
+  'execute-flow': executeFlowHandler,
+  'fetch-whatsapp-profile': fetchWhatsappProfileHandler,
+  'google-auth': googleAuthHandler,
+  'google-calendar': googleCalendarHandler,
+  'merge-duplicate-contacts': mergeDuplicateContactsHandler,
+  'meta-api-webhook': metaApiWebhookHandler,
+  'process-schedules': processSchedulesHandler,
+  'reset-user-password': resetUserPasswordHandler,
+  'resolve-lid-contact': resolveLidContactHandler,
+  'save-system-setting': saveSystemSettingHandler,
+  'send-meta-message': sendMetaMessageHandler,
+  'send-whatsapp': sendWhatsappHandler,
+  'sync-contacts': syncContactsHandler,
+  'update-lid-contacts': updateLidContactsHandler,
+  'update-user-email': updateUserEmailHandler,
 };
-
-// Cache de módulos importados
-const moduleCache = new Map<string, (req: Request) => Promise<Response>>();
-
-async function loadFunction(name: string): Promise<((req: Request) => Promise<Response>) | null> {
-  if (moduleCache.has(name)) {
-    return moduleCache.get(name)!;
-  }
-
-  const modulePath = FUNCTION_HANDLERS[name];
-  if (!modulePath) {
-    return null;
-  }
-
-  // Save and neutralize Deno.serve before import to prevent sub-functions
-  // from hijacking the main router (belt-and-suspenders with import.meta.main guard)
-  const originalServe = Deno.serve;
-
-  try {
-    (Deno as any).serve = () => {};
-
-    console.log(`[main-router] Importing ${name} from ${modulePath}...`);
-    const module = await import(modulePath);
-    console.log(`[main-router] Import OK for ${name}, default export type: ${typeof module.default}`);
-
-    // Edge functions export a default handler
-    if (typeof module.default === 'function') {
-      moduleCache.set(name, module.default);
-      console.log(`[main-router] Loaded function: ${name}`);
-      return module.default;
-    }
-    console.warn(`[main-router] Function '${name}' has no default export. Keys: ${Object.keys(module).join(', ')}`);
-    return null;
-  } catch (error) {
-    const errMsg = error instanceof Error ? error.message : String(error);
-    const errStack = error instanceof Error ? error.stack : '';
-    console.error(`[main-router] FAILED to load '${name}': ${errMsg}`);
-    if (errStack) console.error(`[main-router] Stack: ${errStack}`);
-    return null;
-  } finally {
-    // Always restore Deno.serve
-    (Deno as any).serve = originalServe;
-  }
-}
 
 const handler = async (req: Request): Promise<Response> => {
   // Handle CORS preflight
@@ -93,7 +75,6 @@ const handler = async (req: Request): Promise<Response> => {
   const pathParts = url.pathname.split('/').filter(Boolean);
 
   // Extract function name from path
-  // Expected paths: /<function-name> or /functions/v1/<function-name>
   let functionName: string | undefined;
 
   if (pathParts.length >= 3 && pathParts[0] === 'functions' && pathParts[1] === 'v1') {
@@ -104,14 +85,8 @@ const handler = async (req: Request): Promise<Response> => {
 
   if (!functionName) {
     return new Response(
-      JSON.stringify({ 
-        error: 'Function name required',
-        available: Object.keys(FUNCTION_HANDLERS),
-      }),
-      { 
-        status: 400, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
+      JSON.stringify({ error: 'Function name required', available: Object.keys(FUNCTION_HANDLERS) }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 
@@ -123,73 +98,48 @@ const handler = async (req: Request): Promise<Response> => {
     );
   }
 
-  // Check if function exists
-  if (!FUNCTION_HANDLERS[functionName]) {
+  // Get handler directly from static map
+  const fnHandler = FUNCTION_HANDLERS[functionName];
+  if (!fnHandler) {
     return new Response(
-      JSON.stringify({ 
-        error: `Function '${functionName}' not found`,
-        available: Object.keys(FUNCTION_HANDLERS),
-      }),
-      { 
-        status: 404, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
+      JSON.stringify({ error: `Function '${functionName}' not found`, available: Object.keys(FUNCTION_HANDLERS) }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 
   try {
     // Build the internal URL for the function
     const functionUrl = new URL(req.url);
-    
-    // Remove the function name prefix from the path for the handler
-    const remainingPath = pathParts.slice(
-      pathParts[0] === 'functions' ? 3 : 1
-    ).join('/');
-    
+    const remainingPath = pathParts.slice(pathParts[0] === 'functions' ? 3 : 1).join('/');
     functionUrl.pathname = remainingPath ? `/${remainingPath}` : '/';
 
-    // Create a new request with the adjusted URL
     const proxyReq = new Request(functionUrl.toString(), {
       method: req.method,
       headers: req.headers,
       body: req.body,
     });
 
-    // Try to dynamically import and call the function
-    const fnHandler = await loadFunction(functionName);
-    if (fnHandler) {
-      const response = await fnHandler(proxyReq);
-      // Add CORS headers to response
-      const newHeaders = new Headers(response.headers);
-      Object.entries(corsHeaders).forEach(([key, value]) => {
-        newHeaders.set(key, value);
-      });
-      return new Response(response.body, {
-        status: response.status,
-        statusText: response.statusText,
-        headers: newHeaders,
-      });
-    }
+    const response = await fnHandler(proxyReq);
 
-    return new Response(
-      JSON.stringify({ error: `Function '${functionName}' could not be loaded` }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    );
+    // Add CORS headers to response
+    const newHeaders = new Headers(response.headers);
+    Object.entries(corsHeaders).forEach(([key, value]) => {
+      newHeaders.set(key, value);
+    });
+    return new Response(response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: newHeaders,
+    });
   } catch (error) {
     console.error(`[main-router] Error executing '${functionName}':`, error);
     return new Response(
-      JSON.stringify({ 
+      JSON.stringify({
         error: 'Internal server error',
         function: functionName,
         message: error instanceof Error ? error.message : 'Unknown error',
       }),
-      { 
-        status: 500, 
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
 };
