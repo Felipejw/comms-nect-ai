@@ -1,38 +1,47 @@
 
-# Corrigir chave inconsistente nas Edge Functions
+# Corrigir status do servidor e QR Code na pagina Conexoes
 
-## Problema
+## Problema 1: Servidor mostra "Offline" mesmo estando Online
 
-Tres edge functions estao lendo a configuracao do Baileys com a chave **errada** (`baileys_api_url`) ao inves da chave correta (`baileys_server_url`). Como `baileys_api_url` nao existe no banco, elas caem no fallback `http://baileys:3001`, que so funciona dentro da rede Docker do VPS e nao resolve no Cloud.
+Na pagina `src/pages/Conexoes.tsx`, a funcao `fetchServerInfo` (linha ~63) faz:
 
-Funcoes afetadas:
-- `supabase/functions/check-connections/index.ts` (linha 54)
-- `supabase/functions/sync-contacts/index.ts` (linha 52)
-- `supabase/functions/fetch-whatsapp-profile/index.ts` (linha 97)
+```
+result.data?.status === 'ok'
+```
 
-Funcoes que ja usam a chave correta (nao precisam de alteracao):
-- `baileys-instance`, `send-whatsapp`, `execute-flow`, `download-whatsapp-media`, `baileys-webhook`
+Porem a Edge Function `serverHealth` retorna os campos na raiz do objeto (ex: `{ success: true, status: "ok", sessions: 0 }`), sem uma propriedade `data` aninhada. Resultado: `result.data` e sempre `undefined`, entao o status e sempre "offline".
 
-## Alteracoes
+### Correcao
 
-### 1. `supabase/functions/check-connections/index.ts`
+Alterar `fetchServerInfo` em `src/pages/Conexoes.tsx` para ler da raiz:
 
-Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 54.
+- `result.data?.status` -> `result.status`
+- `result.data?.version` -> `result.version`
+- `result.data?.sessions` -> `result.sessions`
 
-Tambem adicionar a leitura da `baileys_api_key` e incluir o header `X-API-Key` nas chamadas fetch, pois atualmente essa funcao nao envia autenticacao.
+## Problema 2: API Key desalinhada (acao manual)
 
-### 2. `supabase/functions/sync-contacts/index.ts`
+A chave salva na interface (`9c23d1af...`) nao corresponde a chave ativa no container Baileys (`3d2e0ed8...`). Todas as chamadas autenticadas (QR, status, etc.) retornam 401.
 
-Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 52.
+Comando para alinhar no VPS:
 
-Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
+```bash
+cat > /opt/sistema/deploy/baileys/.env << 'EOF'
+API_KEY=9c23d1af8df0df397b2c776b1db712d63314d24be907c60152438e54d5405d39
+PORT=3000
+EOF
 
-### 3. `supabase/functions/fetch-whatsapp-profile/index.ts`
+cd /opt/sistema/deploy
+sudo docker compose --profile baileys down
+sudo docker compose --profile baileys up -d
+```
 
-Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 97.
+Ou, alternativamente, atualizar a interface com a chave do container (`3d2e0ed8...`).
 
-Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
+## Resumo das alteracoes de codigo
 
-## Resultado esperado
+| Arquivo | Alteracao |
+|---|---|
+| `src/pages/Conexoes.tsx` | Corrigir leitura de `result.data?.X` para `result.X` na funcao `fetchServerInfo` |
 
-Apos a correcao, todas as edge functions lerao a URL do `system_settings` com a chave `baileys_server_url` (que contem `https://chatbotvital.store/baileys`), garantindo que funcionem tanto no Cloud quanto na VPS.
+Nenhuma alteracao de banco de dados necessaria.
