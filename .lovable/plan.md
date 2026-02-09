@@ -1,65 +1,70 @@
 
 
-# Implementar Import Dinamico no Router VPS
+# Corrigir o apontamento do Edge Runtime na VPS
 
-## Problema
-O arquivo `supabase/functions/index.ts` usa **imports estaticos** (`import X from './admin-write/index.ts'`). O bundler do Lovable Cloud tenta resolver esses imports durante o empacotamento e falha com `SUPABASE_CODEGEN_ERROR` porque trata cada funcao como isolada.
+## O que esta acontecendo
 
-## Solucao
-Trocar todos os 24 imports estaticos por **`await import()` dinamico** dentro do handler. O bundler do Cloud ignora imports dinamicos (sao resolvidos apenas em runtime), enquanto na VPS o Deno consegue acessar `./nome-da-funcao/index.ts` porque o `--main-service` aponta para `/home/deno/functions` (a raiz).
+Os logs mostram claramente que o container continua executando `main/index.ts` (o arquivo antigo com `../` imports):
 
-## Alteracoes
-
-### 1. `supabase/functions/index.ts` (reescrever)
-
-Remover todas as 24 linhas de `import ... from` e o mapeamento estatico `FUNCTION_HANDLERS`. Substituir por:
-
-- Uma lista (whitelist) de nomes de funcoes validas (para seguranca, evitando carregar arquivos arbitrarios)
-- Um cache de modulos carregados (para nao re-importar a cada requisicao)
-- `await import(./${functionName}/index.ts)` dentro do handler, chamando `module.default(req)`
-
-Logica do handler permanece identica (parse do path, CORS, health check, proxy da request).
-
-### 2. `supabase/functions/main/index.ts` (sem alteracao)
-
-Ja esta simplificado como health-check para o Cloud. Nenhuma mudanca necessaria.
-
-### 3. `deploy/docker-compose.yml` (sem alteracao)
-
-Ja aponta `--main-service` para `/home/deno/functions`, que e o necessario para que os imports dinamicos `./` funcionem. Nenhuma mudanca necessaria.
-
-## Detalhes Tecnicos
-
-A whitelist de funcoes validas sera:
-
-```text
-admin-write, baileys-create-session, baileys-instance, baileys-webhook,
-check-connections, create-user, delete-user, download-whatsapp-media,
-execute-campaign, execute-flow, fetch-whatsapp-profile, google-auth,
-google-calendar, merge-duplicate-contacts, meta-api-webhook,
-process-schedules, reset-user-password, resolve-lid-contact,
-save-system-setting, send-meta-message, send-whatsapp, sync-contacts,
-update-lid-contacts, update-user-email
+```
+file:///home/deno/functions/main/index.ts:54:20
+Importing admin-write from ../admin-write/index.ts...
+FAILED: Module not found
 ```
 
-O cache (`Map<string, Function>`) garante que cada funcao e importada apenas uma vez -- nas chamadas seguintes o modulo ja esta em memoria.
+Dois problemas causam isso:
 
-Todas as 24 sub-funcoes ja possuem `export default handler` e a guarda `if (import.meta.main)`, portanto nao precisam de nenhuma alteracao.
+1. **`--main-service /home/deno/functions`** (diretorio) -- O Edge Runtime, ao receber um diretorio como main-service, busca automaticamente `main/index.ts` dentro dele. Ele nunca leu o `index.ts` na raiz.
 
-## Por que funciona
+2. **Container nao foi recriado** -- `docker compose up -d` viu o container como "Running" e nao aplicou a mudanca de configuracao. Precisa de `--force-recreate`.
 
-- **Cloud**: O bundler ve `supabase/functions/index.ts` mas como nao esta dentro de uma subpasta com nome de funcao, ele o ignora. Cada funcao continua sendo deployada isoladamente pela sua propria pasta.
-- **VPS**: O Deno inicia em `/home/deno/functions`, e `await import('./admin-write/index.ts')` resolve para `/home/deno/functions/admin-write/index.ts` -- dentro do sandbox, sem violacao.
+## Solucao
 
-## Apos implementar
+### 1. Alterar `deploy/docker-compose.yml`
 
-No VPS, rode:
+Apontar `--main-service` diretamente para o arquivo correto:
+
+De:
+```yaml
+command:
+  - start
+  - --main-service
+  - /home/deno/functions
+  - --port
+  - "8000"
+```
+
+Para:
+```yaml
+command:
+  - start
+  - --main-service
+  - /home/deno/functions/index.ts
+  - --port
+  - "8000"
+```
+
+### 2. Nenhuma outra alteracao de codigo
+
+O arquivo `supabase/functions/index.ts` ja esta correto com imports dinamicos (`await import(./${name}/index.ts)`). O `main/index.ts` continua como health-check simples para o Cloud.
+
+### 3. Comandos para aplicar na VPS
+
+Apos o deploy:
 
 ```bash
 cd /opt/sistema && git pull origin main
 cd deploy
-sudo docker compose up -d functions
+sudo docker compose up -d --force-recreate functions
 sleep 5
 sudo docker logs supabase-functions --tail 15
 ```
+
+O `--force-recreate` garante que o container seja destruido e recriado com o novo `command`, mesmo que a imagem nao tenha mudado.
+
+## Por que vai funcionar agora
+
+- O Edge Runtime recebe o caminho exato `/home/deno/functions/index.ts` como ponto de entrada
+- Esse arquivo usa `await import(./${name}/index.ts)` que resolve para `/home/deno/functions/admin-write/index.ts` -- dentro do sandbox
+- O Cloud ignora `index.ts` na raiz (nao esta em subpasta de funcao) e continua deployando cada funcao isoladamente
 
