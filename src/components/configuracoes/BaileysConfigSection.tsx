@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
+import { safeSettingUpsert } from "@/lib/safeSettingUpsert";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -82,7 +83,7 @@ export function BaileysConfigSection() {
     setIsSaving(true);
     try {
       console.log("[BaileysConfig] Saving server URL...");
-      await createOrUpdateSetting.mutateAsync({
+      await safeSettingUpsert({
         key: "baileys_server_url",
         value: normalizedUrl,
         description: "URL do servidor Baileys WhatsApp",
@@ -90,21 +91,19 @@ export function BaileysConfigSection() {
       });
       console.log("[BaileysConfig] Server URL saved. Saving API key...");
       
-      await createOrUpdateSetting.mutateAsync({
+      await safeSettingUpsert({
         key: "baileys_api_key",
         value: apiKey,
         description: "API Key do servidor Baileys",
         category: "whatsapp",
       });
-      console.log("[BaileysConfig] API key saved successfully.");
+      console.log("[BaileysConfig] API key saved and verified.");
 
-      toast.success("Configurações do Baileys salvas!");
+      toast.success("Configurações do Baileys salvas e verificadas!");
     } catch (error: any) {
-      const code = error?.code || error?.status || 'N/A';
       const msg = error?.message || error?.toString() || 'Erro desconhecido';
-      const details = error?.details || error?.hint || '';
-      console.error("[BaileysConfig] Save failed:", { code, msg, details, fullError: error });
-      toast.error(`Erro ao salvar (${code}): ${msg}`);
+      console.error("[BaileysConfig] Save failed:", msg);
+      toast.error(msg);
     } finally {
       setIsSaving(false);
     }
