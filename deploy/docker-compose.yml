@@ -281,8 +281,6 @@ services:
       - ../supabase/functions:/home/deno/functions:Z
     command:
       - start
-      - --main-service
-      - /home/deno/functions/main
       - --port
       - "8000"
     networks:
