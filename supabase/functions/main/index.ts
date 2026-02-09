@@ -11,6 +11,7 @@ const corsHeaders = {
 
 // Mapeamento de funções disponíveis
 const FUNCTION_HANDLERS: Record<string, string> = {
+  'admin-write': '../admin-write/index.ts',
   'baileys-create-session': '../baileys-create-session/index.ts',
   'baileys-instance': '../baileys-instance/index.ts',
   'baileys-webhook': '../baileys-webhook/index.ts',
@@ -28,6 +29,7 @@ const FUNCTION_HANDLERS: Record<string, string> = {
   'process-schedules': '../process-schedules/index.ts',
   'reset-user-password': '../reset-user-password/index.ts',
   'resolve-lid-contact': '../resolve-lid-contact/index.ts',
+  'save-system-setting': '../save-system-setting/index.ts',
   'send-meta-message': '../send-meta-message/index.ts',
   'send-whatsapp': '../send-whatsapp/index.ts',
   'setup-tenant': '../setup-tenant/index.ts',

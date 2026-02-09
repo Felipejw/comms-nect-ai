@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
+import { adminWrite } from '@/lib/adminWrite';
 
 export interface Tag {
   id: string;
@@ -30,14 +31,12 @@ export function useCreateTag() {
 
   return useMutation({
     mutationFn: async (input: { name: string; color: string; description?: string }) => {
-      const { data, error } = await supabase
-        .from('tags')
-        .insert(input)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const result = await adminWrite<Tag>({
+        table: 'tags',
+        operation: 'insert',
+        data: input,
+      });
+      return result?.[0] || null;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
@@ -54,15 +53,13 @@ export function useUpdateTag() {
 
   return useMutation({
     mutationFn: async ({ id, ...input }: { id: string; name?: string; color?: string; description?: string }) => {
-      const { data, error } = await supabase
-        .from('tags')
-        .update(input)
-        .eq('id', id)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return data;
+      const result = await adminWrite<Tag>({
+        table: 'tags',
+        operation: 'update',
+        data: input,
+        filters: { id },
+      });
+      return result?.[0] || null;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
@@ -79,12 +76,11 @@ export function useDeleteTag() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('tags')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
+      await adminWrite({
+        table: 'tags',
+        operation: 'delete',
+        filters: { id },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tags'] });
@@ -101,11 +97,11 @@ export function useAddTagToContact() {
 
   return useMutation({
     mutationFn: async ({ contactId, tagId }: { contactId: string; tagId: string }) => {
-      const { error } = await supabase
-        .from('contact_tags')
-        .insert({ contact_id: contactId, tag_id: tagId });
-
-      if (error) throw error;
+      await adminWrite({
+        table: 'contact_tags',
+        operation: 'insert',
+        data: { contact_id: contactId, tag_id: tagId },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contacts'] });
@@ -121,13 +117,11 @@ export function useRemoveTagFromContact() {
 
   return useMutation({
     mutationFn: async ({ contactId, tagId }: { contactId: string; tagId: string }) => {
-      const { error } = await supabase
-        .from('contact_tags')
-        .delete()
-        .eq('contact_id', contactId)
-        .eq('tag_id', tagId);
-
-      if (error) throw error;
+      await adminWrite({
+        table: 'contact_tags',
+        operation: 'delete',
+        filters: { contact_id: contactId, tag_id: tagId },
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['contacts'] });
