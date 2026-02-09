@@ -282,7 +282,7 @@ services:
     command:
       - start
       - --main-service
-      - /home/deno/functions
+      - /home/deno/functions/index.ts
       - --port
       - "8000"
     networks:
