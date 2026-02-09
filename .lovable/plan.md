@@ -1,37 +1,132 @@
 
 
-# Reescrita Completa das 13 Edge Functions Corrompidas
+# Plano: Corrigir Edge Functions no VPS (Edge Runtime 502)
 
-## ✅ TODAS AS 13 FUNÇÕES REESCRITAS COM SUCESSO
+## Problema Identificado
 
-### Lote 1 - Funções Críticas (WhatsApp e Mensagens) ✅ CONCLUÍDO
+O Edge Runtime retorna **502 Bad Gateway** para todas as requisicoes. Os logs do container estao vazios, indicando crash silencioso ou conflito interno.
 
-| # | Função | Status |
-|---|--------|--------|
-| 1 | send-whatsapp | ✅ Reescrita completa |
-| 2 | baileys-webhook | ✅ Reescrita completa |
-| 3 | meta-api-webhook | ✅ Reescrita completa |
-| 4 | download-whatsapp-media | ✅ Reescrita completa |
+### Causa Raiz
 
-### Lote 2 - Funções de Gestão (Usuários e Contatos) ✅ CONCLUÍDO
+O arquivo `main/index.ts` (router principal) usa `await import()` para carregar sub-funcoes dinamicamente. Cada sub-funcao (ex: `admin-write/index.ts`) tem `Deno.serve(handler)` no final do arquivo. Quando essa linha executa durante o `import()`, ela **substitui** o handler do router principal, quebrando todo o roteamento.
 
-| # | Função | Status |
-|---|--------|--------|
-| 5 | create-user | ✅ Reescrita completa |
-| 6 | delete-user | ✅ Reescrita completa |
-| 7 | reset-user-password | ✅ Reescrita completa |
-| 8 | sync-contacts | ✅ Reescrita completa |
-| 9 | fetch-whatsapp-profile | ✅ Reescrita completa |
+```text
+Fluxo do problema:
 
-### Lote 3 - Funções de Automação (Campanhas e Agendamentos) ✅ CONCLUÍDO
+1. Edge Runtime inicia main/index.ts
+2. main chama Deno.serve(routerHandler) -- OK, router registrado
+3. Requisicao chega para /admin-write
+4. main faz: await import('../admin-write/index.ts')
+5. admin-write/index.ts executa Deno.serve(adminHandler) -- CONFLITO!
+6. O handler do router e SUBSTITUIDO pelo handler do admin-write
+7. Todas as proximas requisicoes vao direto para admin-write
+8. Nenhuma outra funcao funciona mais
+```
 
-| # | Função | Status |
-|---|--------|--------|
-| 10 | check-connections | ✅ Reescrita completa |
-| 11 | merge-duplicate-contacts | ✅ Reescrita completa |
-| 12 | execute-campaign | ✅ Reescrita completa |
-| 13 | process-schedules | ✅ Reescrita completa |
+Alem disso, `setup-tenant` esta no mapeamento do router mas o diretorio **nao existe** no repositorio.
 
-## Próximos passos
+## Solucao
 
-Agora que todas as 13 funções estão reescritas, é seguro fazer `git pull` no VPS para atualizar o código. As funções reescritas substituirão as versões corrompidas com lógica completa e funcional.
+### 1. Corrigir `main/index.ts` - Neutralizar `Deno.serve` durante imports
+
+Modificar a funcao `loadFunction` para temporariamente desabilitar `Deno.serve` antes de importar sub-funcoes, evitando que elas substituam o handler principal:
+
+```typescript
+async function loadFunction(name: string) {
+  if (moduleCache.has(name)) {
+    return moduleCache.get(name)!;
+  }
+
+  const modulePath = FUNCTION_HANDLERS[name];
+  if (!modulePath) return null;
+
+  try {
+    // Salvar Deno.serve original e substituir por no-op
+    const originalServe = Deno.serve;
+    (Deno as any).serve = () => {};
+
+    const module = await import(modulePath);
+
+    // Restaurar Deno.serve original
+    (Deno as any).serve = originalServe;
+
+    if (typeof module.default === 'function') {
+      moduleCache.set(name, module.default);
+      return module.default;
+    }
+    return null;
+  } catch (error) {
+    console.error(`[main-router] Error loading function '${name}':`, error);
+    return null;
+  }
+}
+```
+
+Tambem remover `setup-tenant` do mapeamento (diretorio inexistente) e adicionar logging de boot.
+
+### 2. Adicionar guarda `import.meta.main` em TODAS as sub-funcoes
+
+Em cada uma das 24 sub-funcoes, substituir:
+
+```typescript
+// ANTES (quebra quando importado pelo router):
+Deno.serve(handler);
+
+// DEPOIS (funciona tanto standalone quanto importado):
+if (import.meta.main) {
+  Deno.serve(handler);
+}
+```
+
+Funcoes afetadas:
+- admin-write
+- baileys-create-session
+- baileys-instance
+- baileys-webhook
+- check-connections
+- create-user
+- delete-user
+- download-whatsapp-media
+- execute-campaign
+- execute-flow
+- fetch-whatsapp-profile
+- google-auth
+- google-calendar
+- merge-duplicate-contacts
+- meta-api-webhook
+- process-schedules
+- reset-user-password
+- resolve-lid-contact
+- save-system-setting
+- send-meta-message
+- send-whatsapp
+- sync-contacts
+- update-lid-contacts
+- update-user-email
+
+### 3. Atualizar `deploy/supabase/init.sql`
+
+Copiar as mesmas correcoes para o init.sql do pacote de deploy, garantindo que novas instalacoes VPS ja tenham as funcoes corretas.
+
+## Resumo das Alteracoes
+
+| Arquivo | Alteracao |
+|---|---|
+| `supabase/functions/main/index.ts` | Neutralizar Deno.serve durante imports, remover setup-tenant, adicionar logging |
+| 24 sub-funcoes em `supabase/functions/*/index.ts` | Adicionar guarda `import.meta.main` no `Deno.serve` |
+
+## Apos Aprovacao
+
+Depois de implementar, no VPS execute:
+
+```bash
+cd /opt/sistema
+git pull origin main
+cd deploy
+sudo docker compose restart functions
+sleep 5
+sudo docker logs supabase-functions --tail 30
+```
+
+Isso deve mostrar o log `[main-router] Ready` e as funcoes passarao a responder corretamente.
+
