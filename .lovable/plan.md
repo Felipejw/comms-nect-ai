@@ -1,65 +1,38 @@
 
-
-# Correção: QR Code não aparece na tela
+# Corrigir chave inconsistente nas Edge Functions
 
 ## Problema
-O servidor Baileys gera o QR Code corretamente, mas as Edge Functions usam nomes de campos diferentes dos que o servidor envia. Por isso o QR Code nunca chega à tela.
 
-## O que será corrigido
+Tres edge functions estao lendo a configuracao do Baileys com a chave **errada** (`baileys_api_url`) ao inves da chave correta (`baileys_server_url`). Como `baileys_api_url` nao existe no banco, elas caem no fallback `http://baileys:3001`, que so funciona dentro da rede Docker do VPS e nao resolve no Cloud.
 
-### 1. Arquivo `supabase/functions/baileys-instance/index.ts`
-O código atual procura o QR Code no campo `result.qr`, mas o servidor Baileys retorna no campo `result.data.qrCode`.
+Funcoes afetadas:
+- `supabase/functions/check-connections/index.ts` (linha 54)
+- `supabase/functions/sync-contacts/index.ts` (linha 52)
+- `supabase/functions/fetch-whatsapp-profile/index.ts` (linha 97)
 
-**Antes:**
-```text
-if (result.success && result.qr) {
-  // salva result.qr no banco
-}
-```
+Funcoes que ja usam a chave correta (nao precisam de alteracao):
+- `baileys-instance`, `send-whatsapp`, `execute-flow`, `download-whatsapp-media`, `baileys-webhook`
 
-**Depois:**
-```text
-const qrValue = (result.data as any)?.qrCode || result.qr;
-if (result.success && qrValue) {
-  // salva qrValue no banco
-}
-```
+## Alteracoes
 
-### 2. Arquivo `supabase/functions/baileys-webhook/index.ts`
-O webhook recebe o campo `qrCode` do servidor, mas o código procura por `qr`.
+### 1. `supabase/functions/check-connections/index.ts`
 
-**Antes:**
-```text
-const qrCode = eventPayload?.qr || eventPayload;
-```
+Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 54.
 
-**Depois:**
-```text
-const qrCode = eventPayload?.qrCode || eventPayload?.qr || eventPayload;
-```
+Tambem adicionar a leitura da `baileys_api_key` e incluir o header `X-API-Key` nas chamadas fetch, pois atualmente essa funcao nao envia autenticacao.
 
-## Por que isso resolve
-Os logs do servidor mostram que:
-- O QR Code é gerado com sucesso (`"QR Code generated"`)
-- O webhook é enviado com sucesso (`"Webhook sent successfully"`)
-- Mas os nomes dos campos não batem entre servidor e funções
+### 2. `supabase/functions/sync-contacts/index.ts`
 
-Com a correção, as funções aceitam ambos os formatos de campo, garantindo compatibilidade.
+Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 52.
 
-## Detalhes Técnicos
+Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
 
-Formato real do servidor Baileys:
+### 3. `supabase/functions/fetch-whatsapp-profile/index.ts`
 
-Endpoint QR (`GET /sessions/{name}/qr`):
-```text
-{ "success": true, "data": { "qrCode": "data:image/png;base64,..." } }
-```
+Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 97.
 
-Webhook (`qr.update`):
-```text
-{ "event": "qr.update", "payload": { "qrCode": "data:image/png;base64,..." } }
-```
+Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
 
-## Após a correção
-Será necessário fazer o rebuild e deploy na VPS para que as alterações entrem em vigor.
+## Resultado esperado
 
+Apos a correcao, todas as edge functions lerao a URL do `system_settings` com a chave `baileys_server_url` (que contem `https://chatbotvital.store/baileys`), garantindo que funcionem tanto no Cloud quanto na VPS.

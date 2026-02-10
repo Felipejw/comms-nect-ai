@@ -20,58 +20,16 @@ function isSSLError(error: unknown): boolean {
   );
 }
 
-// Extract path from URL and build internal Docker URL (removes /baileys prefix)
-function buildInternalUrl(originalUrl: string, internalBase: string): string | null {
-  try {
-    const parsed = new URL(originalUrl);
-    let path = parsed.pathname;
-    // Remove /baileys prefix if present
-    if (path.startsWith("/baileys/")) {
-      path = path.substring("/baileys".length);
-    } else if (path.startsWith("/baileys")) {
-      path = path.substring("/baileys".length) || "/";
-    }
-    return `${internalBase.replace(/\/$/, "")}${path}${parsed.search}`;
-  } catch {
-    return null;
-  }
-}
-
-// Resilient fetch with 3-tier fallback: HTTPS -> HTTP -> Docker internal
-async function resilientFetch(url: string, options?: RequestInit, internalUrl?: string): Promise<Response> {
-  // Tier 1: Try original URL
+async function resilientFetch(url: string, options?: RequestInit): Promise<Response> {
   try {
     return await fetch(url, options);
   } catch (error) {
-    if (!isSSLError(error)) throw error;
-
-    console.warn(`[Baileys Instance] SSL error on ${url}, trying HTTP fallback`);
-    console.warn(`[Baileys Instance] Original error: ${error instanceof Error ? error.message : error}`);
-
-    // Tier 2: Try HTTP
-    const httpUrl = url.replace("https://", "http://");
-    try {
-      const httpResponse = await fetch(httpUrl, options);
-      // Check if we got a real response (not an HTML 404 from Nginx)
-      const contentType = httpResponse.headers.get("content-type") || "";
-      if (httpResponse.status === 404 || (contentType.includes("text/html") && !contentType.includes("json"))) {
-        console.warn(`[Baileys Instance] HTTP fallback returned ${httpResponse.status} HTML, trying internal URL`);
-        // Fall through to Tier 3
-      } else {
-        return httpResponse;
-      }
-    } catch (httpError) {
-      console.warn(`[Baileys Instance] HTTP fallback also failed: ${httpError instanceof Error ? httpError.message : httpError}`);
-      // Fall through to Tier 3
+    if (isSSLError(error)) {
+      const httpUrl = url.replace("https://", "http://");
+      console.warn(`[Baileys Instance] SSL error on ${url}, retrying with HTTP: ${httpUrl}`);
+      console.warn(`[Baileys Instance] Original error: ${error instanceof Error ? error.message : error}`);
+      return await fetch(httpUrl, options);
     }
-
-    // Tier 3: Try Docker internal URL
-    const dockerUrl = internalUrl || buildInternalUrl(url, "http://baileys:3000");
-    if (dockerUrl) {
-      console.log(`[Baileys Instance] Trying Docker internal URL: ${dockerUrl}`);
-      return await fetch(dockerUrl, options);
-    }
-
     throw error;
   }
 }
@@ -222,13 +180,12 @@ const handler = async (req: Request): Promise<Response> => {
 
           const result = await safeParseResponse(response);
 
-          const qrValue = (result.data as Record<string, unknown>)?.qrCode || result.qr;
-          if (result.success && qrValue) {
+          if (result.success && result.qr) {
             // Update QR code in database
             await supabaseClient
               .from("connections")
               .update({
-                qr_code: qrValue as string,
+                qr_code: result.qr as string,
                 status: "waiting_qr",
                 updated_at: new Date().toISOString(),
               })
@@ -277,7 +234,7 @@ const handler = async (req: Request): Promise<Response> => {
         const sessionName = sessionData?.sessionName || conn.name.toLowerCase().replace(/\s+/g, "_");
 
         try {
-          const response = await resilientFetch(`${baileysUrl}/sessions/${sessionName}`, {
+          const response = await resilientFetch(`${baileysUrl}/sessions/${sessionName}/status`, {
             method: "GET",
             headers,
           });

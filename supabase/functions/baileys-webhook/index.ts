@@ -250,7 +250,7 @@ const handler = async (req: Request): Promise<Response> => {
 
     // ========== Handle QR Code Update ==========
     if (event === "qr.update") {
-      const qrCode = eventPayload?.qrCode || eventPayload?.qr || eventPayload;
+      const qrCode = eventPayload?.qr || eventPayload;
       console.log("[Baileys Webhook] QR code received, length:", typeof qrCode === "string" ? qrCode.length : "N/A");
 
       await supabaseClient
