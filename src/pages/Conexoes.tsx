@@ -61,10 +61,10 @@ export default function Conexoes() {
     try {
       const result = await checkServerHealth.mutateAsync();
       setServerInfo({
-        status: result.data?.status === 'ok' ? "online" : "offline",
-        version: result.data?.version || "Baileys",
+        status: result.status === 'ok' ? "online" : "offline",
+        version: result.version || "Baileys",
         engine: "Baileys",
-        sessionsCount: result.data?.sessions ?? 0,
+        sessionsCount: result.sessions ?? 0,
       });
     } catch (error) {
       console.error("[Conexoes] Error fetching server info:", error);

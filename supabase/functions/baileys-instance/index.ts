@@ -180,12 +180,12 @@ const handler = async (req: Request): Promise<Response> => {
 
           const result = await safeParseResponse(response);
 
-          if (result.success && result.qr) {
+          if (result.success && result.data?.qrCode) {
             // Update QR code in database
             await supabaseClient
               .from("connections")
               .update({
-                qr_code: result.qr as string,
+                qr_code: result.data.qrCode as string,
                 status: "waiting_qr",
                 updated_at: new Date().toISOString(),
               })
@@ -234,7 +234,7 @@ const handler = async (req: Request): Promise<Response> => {
         const sessionName = sessionData?.sessionName || conn.name.toLowerCase().replace(/\s+/g, "_");
 
         try {
-          const response = await resilientFetch(`${baileysUrl}/sessions/${sessionName}/status`, {
+          const response = await resilientFetch(`${baileysUrl}/sessions/${sessionName}`, {
             method: "GET",
             headers,
           });
@@ -242,15 +242,16 @@ const handler = async (req: Request): Promise<Response> => {
           const result = await safeParseResponse(response);
 
           // Update connection status based on Baileys response
-          if (result.success) {
-            const newStatus = result.status === "connected" ? "connected" : (result.status as string) || conn.status;
+          if (result.success && result.data) {
+            const sessionData = result.data;
+            const newStatus = sessionData.status === "connected" ? "connected" : (sessionData.status as string) || conn.status;
             const updates: Record<string, unknown> = {
               status: newStatus,
               updated_at: new Date().toISOString(),
             };
 
-            if (result.phoneNumber) {
-              updates.phone_number = result.phoneNumber;
+            if (sessionData.phoneNumber) {
+              updates.phone_number = sessionData.phoneNumber;
             }
             if (newStatus === "connected") {
               updates.qr_code = null;
