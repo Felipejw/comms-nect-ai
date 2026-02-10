@@ -1,34 +1,89 @@
 
 
-## Corrigir input interativo no bootstrap via pipe
+## Hospedar sistema completo na VPS com chatbotvital.store
 
-### Problema
-Quando o script e executado via `curl ... | sudo bash`, o stdin do bash vem do pipe (conteudo do script), nao do teclado. Isso faz com que qualquer `read -p` dentro do `install-simple.sh` receba vazio imediatamente.
+### Situacao atual
 
-### Solucao
+- A VPS tem apenas o **Baileys standalone** instalado em `/opt/baileys` (motor WhatsApp, sem frontend)
+- O sistema completo (frontend + banco + auth + Baileys integrado) requer a instalacao via `deploy/scripts/install-unified.sh`, que instala tudo em `/opt/sistema`
+- O `bootstrap.sh` do sistema completo tem o **mesmo bug de stdin** que ja corrigimos no Baileys
 
-Modificar **`deploy/baileys/scripts/bootstrap.sh`** para redirecionar `/dev/tty` ao chamar o `install-simple.sh`:
+### Pre-requisitos na VPS (antes de rodar)
 
-Trocar:
+O usuario precisa parar o Baileys standalone para liberar as portas 80/443:
+
 ```text
-./scripts/install-simple.sh
+cd /opt/baileys && sudo docker compose down
+sudo systemctl stop nginx
 ```
 
-Por:
+### Alteracoes necessarias
+
+#### 1. `deploy/scripts/bootstrap.sh` -- Corrigir stdin do pipe
+
+Adicionar `< /dev/tty` na chamada do `install-unified.sh` (linha 135), identico ao fix ja aplicado no Baileys bootstrap:
+
 ```text
-./scripts/install-simple.sh < /dev/tty
+./scripts/install-unified.sh < /dev/tty
 ```
 
-O `/dev/tty` conecta diretamente ao terminal do usuario, ignorando o pipe.
+#### 2. `deploy/scripts/install-unified.sh` -- Adicionar prompt de dominio
 
-### Arquivos a modificar
-- `deploy/baileys/scripts/bootstrap.sh` -- uma unica linha: adicionar `< /dev/tty` na chamada do install-simple.sh
+A funcao `collect_user_info()` (linha 166) atualmente detecta o IP automaticamente sem perguntar o dominio. Precisa ser modificada para:
+
+- Perguntar o dominio ao usuario interativamente (`read -p`)
+- Usar o IP publico como fallback caso o usuario nao informe nada
+- Perguntar o email para SSL
+
+Trecho a modificar na funcao `collect_user_info()` (linhas 170-175):
+
+Substituir a logica de auto-deteccao por:
+
+```text
+# Dominio: perguntar ao usuario
+echo ""
+echo -e "  Digite o dominio do servidor (ex: meudominio.com.br)"
+echo -e "  Deixe vazio para usar o IP publico"
+read -p "  Dominio: " DOMAIN
+
+if [ -z "$DOMAIN" ]; then
+    DOMAIN=$(curl -s ifconfig.me 2>/dev/null || echo "localhost")
+fi
+
+echo ""
+read -p "  Email para certificado SSL: " SSL_EMAIL
+if [ -z "$SSL_EMAIL" ]; then
+    SSL_EMAIL="admin@${DOMAIN}"
+fi
+```
 
 ### Nenhuma outra alteracao necessaria
-O `install-simple.sh` ja esta correto com os prompts interativos. O problema e exclusivamente no redirecionamento de stdin pelo bootstrap.
 
-### Workaround imediato (na VPS)
-Enquanto a correcao nao e publicada no GitHub, o usuario pode rodar:
+O restante do `install-unified.sh` (JWT, Kong, SSL, frontend build, banco, admin) ja esta funcional. O Nginx conf ja suporta frontend SPA + todas as APIs + Baileys integrado.
+
+### Comando que o usuario vai rodar na VPS
+
+Apos as alteracoes serem publicadas no GitHub:
+
 ```text
-cd /opt/baileys && sudo ./scripts/install-simple.sh
+cd /opt/baileys && sudo docker compose down
+sudo systemctl stop nginx
+cd /tmp && sudo rm -rf /opt/baileys
+curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/scripts/bootstrap.sh | sudo bash
 ```
+
+### Resultado esperado
+
+O sistema completo estara acessivel em `https://chatbotvital.store` com:
+- Frontend (tela de login, dashboard, atendimento)
+- Backend completo (banco PostgreSQL, auth, storage, realtime)
+- Baileys integrado em `https://chatbotvital.store/baileys`
+- SSL configurado automaticamente
+- Admin: admin@admin.com / 123456
+
+### Secao tecnica
+
+Arquivos modificados:
+1. `deploy/scripts/bootstrap.sh` -- 1 linha: `< /dev/tty`
+2. `deploy/scripts/install-unified.sh` -- ~10 linhas na funcao `collect_user_info()`
+
