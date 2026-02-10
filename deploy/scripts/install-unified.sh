@@ -167,16 +167,27 @@ stop_existing_baileys() {
 collect_user_info() {
     log_step "Configuração Automática do Sistema"
     
-    # Domínio: usar variável de ambiente ou detectar IP público
+    # Domínio: perguntar ao usuário ou usar variável de ambiente
     if [ -z "$DOMAIN" ]; then
-        log_info "Detectando IP público do servidor..."
-        DOMAIN=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "localhost")
+        echo ""
+        echo -e "  ${CYAN}Digite o domínio do servidor (ex: meudominio.com.br)${NC}"
+        echo -e "  Deixe vazio para usar o IP público"
+        read -p "  Domínio: " DOMAIN
+        
+        if [ -z "$DOMAIN" ]; then
+            log_info "Detectando IP público do servidor..."
+            DOMAIN=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || curl -s ipinfo.io/ip 2>/dev/null || echo "localhost")
+        fi
     fi
     log_success "Domínio/IP: $DOMAIN"
     
     # Email SSL
     if [ -z "$SSL_EMAIL" ]; then
-        SSL_EMAIL="admin@${DOMAIN}"
+        echo ""
+        read -p "  Email para certificado SSL (Enter para admin@${DOMAIN}): " SSL_EMAIL
+        if [ -z "$SSL_EMAIL" ]; then
+            SSL_EMAIL="admin@${DOMAIN}"
+        fi
     fi
     log_success "Email SSL: $SSL_EMAIL"
     
