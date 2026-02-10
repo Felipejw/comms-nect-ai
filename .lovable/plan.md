@@ -1,38 +1,44 @@
 
-# Corrigir chave inconsistente nas Edge Functions
 
-## Problema
+## Corrigir instalacao standalone do Baileys
 
-Tres edge functions estao lendo a configuracao do Baileys com a chave **errada** (`baileys_api_url`) ao inves da chave correta (`baileys_server_url`). Como `baileys_api_url` nao existe no banco, elas caem no fallback `http://baileys:3001`, que so funciona dentro da rede Docker do VPS e nao resolve no Cloud.
+### Problema
+O `docker-compose.yml` do Baileys referencia a rede `deploy_supabase-network` como `external: true`. Quando o Baileys e instalado de forma standalone (sem o sistema completo), essa rede nao existe, causando falha no `docker compose up`.
 
-Funcoes afetadas:
-- `supabase/functions/check-connections/index.ts` (linha 54)
-- `supabase/functions/sync-contacts/index.ts` (linha 52)
-- `supabase/functions/fetch-whatsapp-profile/index.ts` (linha 97)
+### Solucao
 
-Funcoes que ja usam a chave correta (nao precisam de alteracao):
-- `baileys-instance`, `send-whatsapp`, `execute-flow`, `download-whatsapp-media`, `baileys-webhook`
+**1. Atualizar `deploy/baileys/docker-compose.yml`**
+- Remover a dependencia de rede externa
+- Usar uma rede propria ou a rede bridge padrao
+- O Baileys standalone nao precisa de rede compartilhada com Supabase
 
-## Alteracoes
+Antes:
+```text
+networks:
+  supabase-network:
+    name: deploy_supabase-network
+    external: true
+```
 
-### 1. `supabase/functions/check-connections/index.ts`
+Depois:
+```text
+networks:
+  baileys-network:
+    driver: bridge
+```
 
-Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 54.
+E no servico `baileys`, trocar `supabase-network` por `baileys-network`.
 
-Tambem adicionar a leitura da `baileys_api_key` e incluir o header `X-API-Key` nas chamadas fetch, pois atualmente essa funcao nao envia autenticacao.
+**2. Atualizar `deploy/baileys/scripts/install-simple.sh`**
+- Adicionar criacao automatica da rede caso o docker-compose ainda dependa dela (fallback)
+- Ou simplesmente confiar no novo docker-compose corrigido
 
-### 2. `supabase/functions/sync-contacts/index.ts`
+### Arquivos a modificar
+- `deploy/baileys/docker-compose.yml` -- trocar rede externa por rede local
+- `deploy/baileys/scripts/install-simple.sh` -- nenhuma mudanca necessaria apos correcao do compose
 
-Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 52.
+### Secao tecnica
+- A rede `deploy_supabase-network` so existe quando o sistema completo (deploy/docker-compose.yml) esta rodando
+- Para instalacao standalone do Baileys, uma rede bridge propria e suficiente
+- A comunicacao com o Supabase/Cloud acontece via HTTPS (webhook), nao via rede Docker interna
 
-Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
-
-### 3. `supabase/functions/fetch-whatsapp-profile/index.ts`
-
-Trocar a query de `baileys_api_url` para `baileys_server_url` na linha 97.
-
-Tambem adicionar leitura da `baileys_api_key` e header de autenticacao.
-
-## Resultado esperado
-
-Apos a correcao, todas as edge functions lerao a URL do `system_settings` com a chave `baileys_server_url` (que contem `https://chatbotvital.store/baileys`), garantindo que funcionem tanto no Cloud quanto na VPS.
