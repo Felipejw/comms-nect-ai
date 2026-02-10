@@ -3,7 +3,7 @@ set -e
 
 # ============================================
 # Baileys WhatsApp Server - Instalação Simplificada
-# Zero-config: gera tudo automaticamente
+# Com configuração automática de Nginx + SSL
 # ============================================
 
 # Cores
@@ -28,10 +28,38 @@ fi
 # Banner
 echo -e "${CYAN}"
 echo "╔════════════════════════════════════════════════════════════╗"
-echo "║       BAILEYS WHATSAPP SERVER - INSTALAÇÃO SIMPLES         ║"
-echo "║       Zero-config: API Key e Webhook automáticos           ║"
+echo "║       BAILEYS WHATSAPP SERVER - INSTALAÇÃO COMPLETA        ║"
+echo "║       Docker + Nginx + SSL automáticos                     ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
+
+# ==========================================
+# Perguntar domínio e email
+# ==========================================
+echo -e "${CYAN}Configuração inicial:${NC}"
+echo ""
+read -p "  Digite o domínio do servidor (ex: chatbotvital.store): " USER_DOMAIN
+echo ""
+
+if [ -z "$USER_DOMAIN" ]; then
+    log_error "Domínio não pode ser vazio!"
+    exit 1
+fi
+
+# Remover protocolo se o usuário digitou com https://
+USER_DOMAIN=$(echo "$USER_DOMAIN" | sed 's|https\?://||' | sed 's|/.*||')
+
+read -p "  Digite seu email (para certificado SSL): " SSL_EMAIL
+echo ""
+
+if [ -z "$SSL_EMAIL" ]; then
+    log_warning "Email não informado. Usando email genérico para SSL."
+    SSL_EMAIL="admin@${USER_DOMAIN}"
+fi
+
+log_success "Domínio: $USER_DOMAIN"
+log_success "Email SSL: $SSL_EMAIL"
+echo ""
 
 # ==========================================
 # Verificar/Instalar Docker
@@ -66,6 +94,22 @@ else
 fi
 
 # ==========================================
+# Instalar Nginx
+# ==========================================
+log_info "Verificando Nginx..."
+
+if ! command -v nginx &> /dev/null; then
+    log_info "Nginx não encontrado. Instalando..."
+    apt-get update -qq
+    apt-get install -y nginx
+    systemctl enable nginx
+    systemctl start nginx
+    log_success "Nginx instalado"
+else
+    log_success "Nginx já instalado"
+fi
+
+# ==========================================
 # Diretório de instalação
 # ==========================================
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -97,6 +141,9 @@ cat > .env << EOF
 # Baileys WhatsApp Server - Configuração
 # Gerado automaticamente em $(date)
 # ============================================
+
+# Domínio
+DOMAIN=$USER_DOMAIN
 
 # API Key para autenticação
 API_KEY=$API_KEY
@@ -165,29 +212,75 @@ if [ "$HEALTH_CHECK" != "200" ]; then
 fi
 
 # ==========================================
-# Gerar snippet Nginx
+# Configurar Nginx com proxy reverso
 # ==========================================
-cat > nginx-snippet.conf << 'NGINX_EOF'
-# ============================================
-# Baileys WhatsApp Server - Snippet Nginx
-# Adicione este bloco dentro do seu server {} que escuta 443
-# ============================================
+log_info "Configurando Nginx para $USER_DOMAIN..."
 
-location /baileys/ {
-    proxy_pass http://127.0.0.1:3000/;
-    proxy_http_version 1.1;
-    proxy_set_header Upgrade $http_upgrade;
-    proxy_set_header Connection "upgrade";
-    proxy_set_header Host $host;
-    proxy_set_header X-Real-IP $remote_addr;
-    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_read_timeout 300s;
-    proxy_connect_timeout 60s;
+# Remover config anterior do baileys se existir
+rm -f /etc/nginx/sites-enabled/baileys
+rm -f /etc/nginx/sites-available/baileys
+
+cat > /etc/nginx/sites-available/baileys << NGINX_EOF
+server {
+    listen 80;
+    server_name $USER_DOMAIN;
+
+    location /baileys/ {
+        rewrite ^/baileys/(.*)\$ /\$1 break;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 300s;
+        proxy_connect_timeout 60s;
+    }
 }
 NGINX_EOF
 
-log_success "Snippet Nginx gerado: nginx-snippet.conf"
+ln -sf /etc/nginx/sites-available/baileys /etc/nginx/sites-enabled/baileys
+
+# Testar e recarregar Nginx
+if nginx -t 2>/dev/null; then
+    systemctl reload nginx
+    log_success "Nginx configurado e recarregado"
+else
+    log_error "Erro na configuração do Nginx. Verifique manualmente."
+    nginx -t
+fi
+
+# ==========================================
+# Obter certificado SSL com Certbot
+# ==========================================
+log_info "Configurando SSL com Let's Encrypt..."
+
+# Instalar Certbot se necessário
+if ! command -v certbot &> /dev/null; then
+    log_info "Instalando Certbot..."
+    apt-get update -qq
+    apt-get install -y certbot python3-certbot-nginx
+    log_success "Certbot instalado"
+fi
+
+# Obter certificado SSL
+log_info "Obtendo certificado SSL para $USER_DOMAIN..."
+if certbot --nginx -d "$USER_DOMAIN" --non-interactive --agree-tos -m "$SSL_EMAIL" --redirect 2>/dev/null; then
+    log_success "Certificado SSL obtido e configurado!"
+    BAILEYS_URL="https://$USER_DOMAIN/baileys"
+else
+    log_warning "Não foi possível obter certificado SSL automaticamente."
+    log_warning "Possíveis causas:"
+    echo "  - DNS do domínio $USER_DOMAIN não aponta para este servidor ($SERVER_IP)"
+    echo "  - Porta 80 bloqueada no firewall"
+    echo ""
+    log_info "Você pode tentar manualmente depois:"
+    echo "  sudo certbot --nginx -d $USER_DOMAIN"
+    echo ""
+    BAILEYS_URL="http://$USER_DOMAIN/baileys"
+fi
 
 # ==========================================
 # Salvar credenciais
@@ -198,54 +291,40 @@ BAILEYS WHATSAPP SERVER - CREDENCIAIS
 Gerado em: $(date)
 ============================================
 
+DOMÍNIO: $USER_DOMAIN
+URL DO BAILEYS: $BAILEYS_URL
 API KEY: $API_KEY
-
 WEBHOOK URL: $WEBHOOK_URL
-
 SERVER IP: $SERVER_IP
 
 ============================================
-PRÓXIMOS PASSOS:
+CREDENCIAIS DE ACESSO AO PAINEL
 ============================================
 
-1. Configure o Nginx do seu VPS para fazer proxy:
+Email:  admin@admin.com
+Senha:  123456
 
-   Edite seu arquivo de configuração Nginx:
-   sudo nano /etc/nginx/sites-available/default
-   (ou o arquivo do seu domínio)
+⚠️  IMPORTANTE: Troque a senha após o primeiro login!
 
-   Adicione DENTRO do bloco server {} que escuta 443:
+============================================
+COMO CONFIGURAR NO SISTEMA
+============================================
 
-   location /baileys/ {
-       proxy_pass http://127.0.0.1:3000/;
-       proxy_http_version 1.1;
-       proxy_set_header Upgrade \$http_upgrade;
-       proxy_set_header Connection "upgrade";
-       proxy_set_header Host \$host;
-       proxy_set_header X-Real-IP \$remote_addr;
-       proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-       proxy_set_header X-Forwarded-Proto \$scheme;
-       proxy_read_timeout 300s;
-   }
-
-2. Teste e recarregue o Nginx:
-   sudo nginx -t && sudo systemctl reload nginx
-
-3. Teste a conexão:
-   curl -H "X-API-Key: $API_KEY" https://SEU_DOMINIO/baileys/health
-
-4. Configure no sistema:
-   - URL do Baileys: https://SEU_DOMINIO/baileys
+1. Acesse o painel do sistema
+2. Vá em Configurações > Baileys
+3. Preencha:
+   - URL do Baileys: $BAILEYS_URL
    - API Key: $API_KEY
 
 ============================================
-COMANDOS ÚTEIS:
+COMANDOS ÚTEIS
 ============================================
 
-Ver logs:        $DOCKER_COMPOSE logs -f
-Reiniciar:       $DOCKER_COMPOSE restart
-Parar:           $DOCKER_COMPOSE down
-Diagnóstico:     ./scripts/diagnostico.sh
+Ver logs:        cd $INSTALL_DIR && $DOCKER_COMPOSE logs -f
+Reiniciar:       cd $INSTALL_DIR && $DOCKER_COMPOSE restart
+Parar:           cd $INSTALL_DIR && $DOCKER_COMPOSE down
+Diagnóstico:     cd $INSTALL_DIR && ./scripts/diagnostico.sh
+Renovar SSL:     sudo certbot renew
 
 ============================================
 EOF
@@ -260,36 +339,30 @@ echo -e "${GREEN}╔════════════════════
 echo -e "${GREEN}║       INSTALAÇÃO CONCLUÍDA COM SUCESSO!                    ║${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo -e "${CYAN}Informações importantes:${NC}"
+echo -e "${CYAN}Informações do Baileys:${NC}"
 echo ""
-echo "  Container Baileys: rodando na porta 3000"
-echo "  API Key: ${API_KEY:0:16}..."
-echo "  Webhook: $WEBHOOK_URL"
+echo "  URL do Baileys:  $BAILEYS_URL"
+echo "  API Key:         $API_KEY"
+echo "  Webhook:         $WEBHOOK_URL"
 echo ""
-echo -e "${YELLOW}╔════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${YELLOW}║  AÇÃO NECESSÁRIA: Configure o proxy no Nginx do host       ║${NC}"
-echo -e "${YELLOW}╚════════════════════════════════════════════════════════════╝${NC}"
+echo -e "${CYAN}╔════════════════════════════════════════════════════════════╗${NC}"
+echo -e "${CYAN}║  CREDENCIAIS DE ACESSO AO PAINEL                          ║${NC}"
+echo -e "${CYAN}╠════════════════════════════════════════════════════════════╣${NC}"
+echo -e "${CYAN}║                                                            ║${NC}"
+echo -e "${CYAN}║  Email:  ${GREEN}admin@admin.com${CYAN}                                  ║${NC}"
+echo -e "${CYAN}║  Senha:  ${GREEN}123456${CYAN}                                           ║${NC}"
+echo -e "${CYAN}║                                                            ║${NC}"
+echo -e "${CYAN}║  ${YELLOW}⚠️  Troque a senha após o primeiro login!${CYAN}                ║${NC}"
+echo -e "${CYAN}║                                                            ║${NC}"
+echo -e "${CYAN}╚════════════════════════════════════════════════════════════╝${NC}"
 echo ""
-echo "  1. Edite o Nginx do seu VPS:"
-echo "     sudo nano /etc/nginx/sites-available/default"
+echo -e "${CYAN}Como configurar no sistema:${NC}"
 echo ""
-echo "  2. Adicione dentro do bloco server {} que escuta 443:"
-echo ""
-echo -e "${CYAN}     location /baileys/ {"
-echo "         proxy_pass http://127.0.0.1:3000/;"
-echo "         proxy_http_version 1.1;"
-echo "         proxy_set_header Host \$host;"
-echo "         proxy_set_header X-Real-IP \$remote_addr;"
-echo "         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;"
-echo "         proxy_set_header X-Forwarded-Proto \$scheme;"
-echo "         proxy_read_timeout 300s;"
-echo -e "     }${NC}"
-echo ""
-echo "  3. Teste e recarregue:"
-echo "     sudo nginx -t && sudo systemctl reload nginx"
-echo ""
-echo "  4. Verifique se funciona:"
-echo "     curl https://SEU_DOMINIO/baileys/health"
+echo "  1. Acesse o painel do sistema"
+echo "  2. Vá em Configurações > Baileys"
+echo "  3. Preencha:"
+echo "     - URL do Baileys: $BAILEYS_URL"
+echo "     - API Key: $API_KEY"
 echo ""
 echo -e "${GREEN}Credenciais completas salvas em: CREDENCIAIS.txt${NC}"
 echo ""
