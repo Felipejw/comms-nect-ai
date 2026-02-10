@@ -1,89 +1,75 @@
 
 
-## Hospedar sistema completo na VPS com chatbotvital.store
+## Corrigir status "Offline" e QR Code na pagina de Conexoes
 
-### Situacao atual
+### Problemas identificados
 
-- A VPS tem apenas o **Baileys standalone** instalado em `/opt/baileys` (motor WhatsApp, sem frontend)
-- O sistema completo (frontend + banco + auth + Baileys integrado) requer a instalacao via `deploy/scripts/install-unified.sh`, que instala tudo em `/opt/sistema`
-- O `bootstrap.sh` do sistema completo tem o **mesmo bug de stdin** que ja corrigimos no Baileys
+Tres bugs na integracao entre o frontend, a Edge Function e o servidor Baileys:
 
-### Pre-requisitos na VPS (antes de rodar)
+---
 
-O usuario precisa parar o Baileys standalone para liberar as portas 80/443:
+### Bug 1: Servidor mostra "Offline" mesmo estando online
 
-```text
-cd /opt/baileys && sudo docker compose down
-sudo systemctl stop nginx
-```
+**Arquivo:** `src/pages/Conexoes.tsx` (linha 64)
 
-### Alteracoes necessarias
+O frontend acessa `result.data?.status` mas o `checkServerHealth` retorna os campos diretamente na raiz (sem wrapper `data`). A Edge Function `serverHealth` retorna `{ success: true, status: "ok", sessions: 0 }`, entao o acesso correto e `result.status`.
 
-#### 1. `deploy/scripts/bootstrap.sh` -- Corrigir stdin do pipe
+**Correcao:** Trocar `result.data?.status` por `result.status`, e ajustar `result.data?.version` e `result.data?.sessions` da mesma forma.
 
-Adicionar `< /dev/tty` na chamada do `install-unified.sh` (linha 135), identico ao fix ja aplicado no Baileys bootstrap:
+---
 
-```text
-./scripts/install-unified.sh < /dev/tty
-```
+### Bug 2: Endpoint de status usa URL incorreta (404)
 
-#### 2. `deploy/scripts/install-unified.sh` -- Adicionar prompt de dominio
+**Arquivo:** `supabase/functions/baileys-instance/index.ts` (linha 237)
 
-A funcao `collect_user_info()` (linha 166) atualmente detecta o IP automaticamente sem perguntar o dominio. Precisa ser modificada para:
+A Edge Function chama `GET /sessions/{name}/status` mas o servidor Baileys nao tem esse sufixo `/status`. O endpoint correto e `GET /sessions/{name}`.
 
-- Perguntar o dominio ao usuario interativamente (`read -p`)
-- Usar o IP publico como fallback caso o usuario nao informe nada
-- Perguntar o email para SSL
+**Correcao:** Trocar `/sessions/${sessionName}/status` por `/sessions/${sessionName}`.
 
-Trecho a modificar na funcao `collect_user_info()` (linhas 170-175):
+Alem disso, a resposta do servidor retorna `{ success: true, data: { name, status, phoneNumber, hasQrCode } }`. O campo de status esta em `result.data.status`, nao em `result.status`. Ajustar o mapeamento nas linhas 245-257.
 
-Substituir a logica de auto-deteccao por:
+---
 
-```text
-# Dominio: perguntar ao usuario
-echo ""
-echo -e "  Digite o dominio do servidor (ex: meudominio.com.br)"
-echo -e "  Deixe vazio para usar o IP publico"
-read -p "  Dominio: " DOMAIN
+### Bug 3: QR Code nao e capturado corretamente
 
-if [ -z "$DOMAIN" ]; then
-    DOMAIN=$(curl -s ifconfig.me 2>/dev/null || echo "localhost")
-fi
+**Arquivo:** `supabase/functions/baileys-instance/index.ts` (linha 183)
 
-echo ""
-read -p "  Email para certificado SSL: " SSL_EMAIL
-if [ -z "$SSL_EMAIL" ]; then
-    SSL_EMAIL="admin@${DOMAIN}"
-fi
-```
+A Edge Function verifica `result.qr` mas o servidor Baileys retorna o QR dentro de `result.data.qrCode` (formato: `{ success: true, data: { qrCode: "base64...", format: "base64" } }`).
 
-### Nenhuma outra alteracao necessaria
+**Correcao:** Trocar `result.qr` por `result.data?.qrCode` na verificacao e no update do banco.
 
-O restante do `install-unified.sh` (JWT, Kong, SSL, frontend build, banco, admin) ja esta funcional. O Nginx conf ja suporta frontend SPA + todas as APIs + Baileys integrado.
+---
 
-### Comando que o usuario vai rodar na VPS
+### Secao tecnica - Alteracoes
 
-Apos as alteracoes serem publicadas no GitHub:
+#### 1. `src/pages/Conexoes.tsx` - funcao `fetchServerInfo` (~5 linhas)
 
 ```text
-cd /opt/baileys && sudo docker compose down
-sudo systemctl stop nginx
-cd /tmp && sudo rm -rf /opt/baileys
-curl -fsSL https://raw.githubusercontent.com/Felipejw/comms-nect-ai/main/deploy/scripts/bootstrap.sh | sudo bash
+// De:
+status: result.data?.status === 'ok' ? "online" : "offline",
+version: result.data?.version || "Baileys",
+sessionsCount: result.data?.sessions ?? 0,
+
+// Para:
+status: result.status === 'ok' ? "online" : "offline",
+version: result.version || "Baileys",
+sessionsCount: result.sessions ?? 0,
 ```
+
+#### 2. `supabase/functions/baileys-instance/index.ts` - action "status" (~2 linhas)
+
+Linha 237: Trocar URL de `/sessions/${sessionName}/status` para `/sessions/${sessionName}`
+
+Linhas 245-257: Ajustar mapeamento para ler de `result.data` (ex: `result.data?.status` em vez de `result.status`)
+
+#### 3. `supabase/functions/baileys-instance/index.ts` - action "getQrCode" (~2 linhas)
+
+Linha 183: Trocar `result.qr` por `result.data?.qrCode`
+Linha 188: Trocar `result.qr as string` por `result.data.qrCode as string`
 
 ### Resultado esperado
 
-O sistema completo estara acessivel em `https://chatbotvital.store` com:
-- Frontend (tela de login, dashboard, atendimento)
-- Backend completo (banco PostgreSQL, auth, storage, realtime)
-- Baileys integrado em `https://chatbotvital.store/baileys`
-- SSL configurado automaticamente
-- Admin: admin@admin.com / 123456
-
-### Secao tecnica
-
-Arquivos modificados:
-1. `deploy/scripts/bootstrap.sh` -- 1 linha: `< /dev/tty`
-2. `deploy/scripts/install-unified.sh` -- ~10 linhas na funcao `collect_user_info()`
+- Servidor Baileys aparece como **Online** na pagina de Conexoes
+- Ao clicar em QR Code, o codigo e exibido corretamente
+- Polling detecta quando o WhatsApp e escaneado e atualiza para "Conectado"
 
