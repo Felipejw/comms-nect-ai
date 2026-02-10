@@ -132,7 +132,7 @@ echo -e "${BLUE}[INFO]${NC} Iniciando instalação unificada..."
 echo ""
 
 cd "$INSTALL_DIR/deploy"
-./scripts/install-unified.sh
+./scripts/install-unified.sh < /dev/tty
 
 echo -e "${GREEN}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
