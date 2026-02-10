@@ -165,7 +165,7 @@ log_info "Iniciando instalação..."
 echo ""
 
 cd "$INSTALL_DIR"
-./scripts/install-simple.sh
+./scripts/install-simple.sh < /dev/tty
 
 # Mensagem final
 echo ""
