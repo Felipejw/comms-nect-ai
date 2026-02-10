@@ -1,55 +1,65 @@
 
 
-# Corrigir Frontend para Priorizar Configuracao Dinamica
+# Correção: QR Code não aparece na tela
 
 ## Problema
+O servidor Baileys gera o QR Code corretamente, mas as Edge Functions usam nomes de campos diferentes dos que o servidor envia. Por isso o QR Code nunca chega à tela.
 
-O arquivo `client.ts` verifica se a URL compilada contem "placeholder" para decidir se usa o `window.__SUPABASE_CONFIG__`. Quando o build nao usa placeholders (por qualquer motivo), o frontend tenta conectar ao Lovable Cloud em vez do servidor local, causando "Failed to fetch".
+## O que será corrigido
 
-## Solucao
+### 1. Arquivo `supabase/functions/baileys-instance/index.ts`
+O código atual procura o QR Code no campo `result.qr`, mas o servidor Baileys retorna no campo `result.data.qrCode`.
 
-Inverter a logica: se `window.__SUPABASE_CONFIG__` existir, **sempre** usa-lo, independente das variaveis de ambiente compiladas. Isso garante que o `config.js` injetado no VPS sempre tenha prioridade.
-
-## Mudanca Tecnica
-
-**Arquivo:** `src/integrations/supabase/client.ts`
-
-Alterar a funcao `getRuntimeConfig()` de:
-
+**Antes:**
 ```text
-// Atual: so usa runtime config se env tem "placeholder"
-if (!envUrl || envUrl.includes('placeholder') || envUrl === 'undefined') {
-    const runtimeConfig = window.__SUPABASE_CONFIG__;
-    if (runtimeConfig) { ... }
+if (result.success && result.qr) {
+  // salva result.qr no banco
 }
 ```
 
-Para:
-
+**Depois:**
 ```text
-// Novo: runtime config SEMPRE tem prioridade
-const runtimeConfig = window.__SUPABASE_CONFIG__;
-if (runtimeConfig?.url && runtimeConfig?.anonKey) {
-    return { url: runtimeConfig.url, key: runtimeConfig.anonKey };
+const qrValue = (result.data as any)?.qrCode || result.qr;
+if (result.success && qrValue) {
+  // salva qrValue no banco
 }
-// Fallback: usar variaveis de ambiente (Lovable Cloud)
-return { url: envUrl, key: envKey };
 ```
 
-## Impacto
+### 2. Arquivo `supabase/functions/baileys-webhook/index.ts`
+O webhook recebe o campo `qrCode` do servidor, mas o código procura por `qr`.
 
-- **VPS/Self-hosted**: Funciona sempre, pois o `config.js` define `window.__SUPABASE_CONFIG__`
-- **Lovable Cloud**: Continua funcionando, pois nao tem `config.js` e usa as env vars normais
-- **Elimina a necessidade** de rebuild com placeholders no futuro
-
-## Apos Aprovacao
-
-Depois de implementar, o usuario precisara apenas rodar na VPS:
-
-```bash
-cd /opt/sistema/deploy
-sudo docker compose --profile baileys restart nginx
+**Antes:**
+```text
+const qrCode = eventPayload?.qr || eventPayload;
 ```
 
-E fazer hard refresh no navegador (Cmd+Shift+R).
+**Depois:**
+```text
+const qrCode = eventPayload?.qrCode || eventPayload?.qr || eventPayload;
+```
+
+## Por que isso resolve
+Os logs do servidor mostram que:
+- O QR Code é gerado com sucesso (`"QR Code generated"`)
+- O webhook é enviado com sucesso (`"Webhook sent successfully"`)
+- Mas os nomes dos campos não batem entre servidor e funções
+
+Com a correção, as funções aceitam ambos os formatos de campo, garantindo compatibilidade.
+
+## Detalhes Técnicos
+
+Formato real do servidor Baileys:
+
+Endpoint QR (`GET /sessions/{name}/qr`):
+```text
+{ "success": true, "data": { "qrCode": "data:image/png;base64,..." } }
+```
+
+Webhook (`qr.update`):
+```text
+{ "event": "qr.update", "payload": { "qrCode": "data:image/png;base64,..." } }
+```
+
+## Após a correção
+Será necessário fazer o rebuild e deploy na VPS para que as alterações entrem em vigor.
 
