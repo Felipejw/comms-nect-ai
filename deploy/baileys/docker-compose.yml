@@ -30,14 +30,8 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - supabase-network
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+      - baileys-network
 
 networks:
-  supabase-network:
-    name: deploy_supabase-network
-    external: true
+  baileys-network:
+    driver: bridge
