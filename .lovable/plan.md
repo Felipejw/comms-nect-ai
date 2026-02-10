@@ -1,44 +1,86 @@
 
 
-## Corrigir instalacao standalone do Baileys
+## Melhorar script de instalacao do Baileys
 
 ### Problema
-O `docker-compose.yml` do Baileys referencia a rede `deploy_supabase-network` como `external: true`. Quando o Baileys e instalado de forma standalone (sem o sistema completo), essa rede nao existe, causando falha no `docker compose up`.
+O script de instalacao atual:
+1. Nao pede o dominio do usuario -- mostra "SEU_DOMINIO" como placeholder
+2. Nao exibe as credenciais de acesso ao sistema (email/senha padrao)
+3. Nao configura o Nginx automaticamente com SSL
 
 ### Solucao
 
-**1. Atualizar `deploy/baileys/docker-compose.yml`**
-- Remover a dependencia de rede externa
-- Usar uma rede propria ou a rede bridge padrao
-- O Baileys standalone nao precisa de rede compartilhada com Supabase
+Modificar o `deploy/baileys/scripts/install-simple.sh` para:
 
-Antes:
-```text
-networks:
-  supabase-network:
-    name: deploy_supabase-network
-    external: true
-```
+**1. Perguntar o dominio no inicio da instalacao**
+- Adicionar um `read -p` interativo pedindo o dominio (ex: `chatbotvital.store`)
+- Usar esse dominio em todas as mensagens e no arquivo CREDENCIAIS.txt
 
-Depois:
-```text
-networks:
-  baileys-network:
-    driver: bridge
-```
+**2. Instalar e configurar Nginx + SSL automaticamente**
+- Instalar Nginx se nao existir
+- Gerar configuracao com proxy para `/baileys/`
+- Obter certificado SSL via Certbot/Let's Encrypt (pedir email para SSL)
+- Fallback: se SSL falhar, manter HTTP e avisar
 
-E no servico `baileys`, trocar `supabase-network` por `baileys-network`.
-
-**2. Atualizar `deploy/baileys/scripts/install-simple.sh`**
-- Adicionar criacao automatica da rede caso o docker-compose ainda dependa dela (fallback)
-- Ou simplesmente confiar no novo docker-compose corrigido
+**3. Mostrar credenciais do sistema no resumo final**
+- Exibir URL completa do Baileys: `https://DOMINIO/baileys`
+- Exibir API Key completa
+- Exibir credenciais de acesso ao painel: `admin@admin.com` / `123456`
+- Salvar tudo no CREDENCIAIS.txt
 
 ### Arquivos a modificar
-- `deploy/baileys/docker-compose.yml` -- trocar rede externa por rede local
-- `deploy/baileys/scripts/install-simple.sh` -- nenhuma mudanca necessaria apos correcao do compose
+
+**`deploy/baileys/scripts/install-simple.sh`**
+- Adicionar prompt interativo para dominio e email SSL no inicio
+- Adicionar etapa de instalacao/configuracao do Nginx com proxy reverso
+- Adicionar etapa de obtencao de certificado SSL (Certbot)
+- Atualizar resumo final com dominio real e credenciais do sistema
+- Atualizar CREDENCIAIS.txt com todas as informacoes
+
+**`deploy/baileys/scripts/bootstrap.sh`**
+- Nenhuma alteracao necessaria (ele apenas chama o install-simple.sh)
 
 ### Secao tecnica
-- A rede `deploy_supabase-network` so existe quando o sistema completo (deploy/docker-compose.yml) esta rodando
-- Para instalacao standalone do Baileys, uma rede bridge propria e suficiente
-- A comunicacao com o Supabase/Cloud acontece via HTTPS (webhook), nao via rede Docker interna
+
+Fluxo do install-simple.sh atualizado:
+
+```text
+1. Verificar root
+2. [NOVO] Perguntar dominio (ex: chatbotvital.store)
+3. [NOVO] Perguntar email para SSL
+4. Verificar/Instalar Docker
+5. [NOVO] Instalar Nginx se necessario
+6. Gerar API Key e configuracoes
+7. Build e iniciar container Baileys
+8. [NOVO] Configurar Nginx com proxy /baileys/ -> localhost:3000
+9. [NOVO] Obter certificado SSL com Certbot
+10. Exibir resumo com:
+    - URL do Baileys: https://DOMINIO/baileys
+    - API Key completa
+    - Credenciais do painel: admin@admin.com / 123456
+    - Comandos uteis
+```
+
+Configuracao Nginx gerada automaticamente:
+```text
+server {
+    listen 80;
+    server_name DOMINIO;
+
+    location /baileys/ {
+        rewrite ^/baileys/(.*)$ /$1 break;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+    }
+}
+```
+
+Depois o Certbot converte automaticamente para HTTPS (porta 443).
 
