@@ -14,23 +14,16 @@ declare global {
 
 // Usar runtime config se disponível, senão usar variáveis de ambiente
 const getRuntimeConfig = () => {
-  const envUrl = import.meta.env.VITE_SUPABASE_URL;
-  const envKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  
-  // Se as variáveis de ambiente são placeholders ou não existem, usar runtime config
-  if (!envUrl || envUrl.includes('placeholder') || envUrl === 'undefined') {
-    const runtimeConfig = window.__SUPABASE_CONFIG__;
-    if (runtimeConfig) {
-      return {
-        url: runtimeConfig.url,
-        key: runtimeConfig.anonKey
-      };
-    }
+  // Runtime config (config.js no VPS) SEMPRE tem prioridade
+  const runtimeConfig = window.__SUPABASE_CONFIG__;
+  if (runtimeConfig?.url && runtimeConfig?.anonKey) {
+    return { url: runtimeConfig.url, key: runtimeConfig.anonKey };
   }
   
+  // Fallback: variáveis de ambiente compiladas (Lovable Cloud)
   return {
-    url: envUrl,
-    key: envKey
+    url: import.meta.env.VITE_SUPABASE_URL,
+    key: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
   };
 };
 
