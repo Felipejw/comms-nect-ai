@@ -1,81 +1,92 @@
 
 
-## Analise do Chatbot: Problemas Encontrados
-
-### Status Geral
-
-O chatbot tem uma **interface visual completa e bem construida** (editor de fluxos com drag-and-drop, 10 tipos de blocos, painel de configuracao detalhado). Porem, o **backend de execucao esta quebrado** -- o fluxo nunca e executado quando uma mensagem chega.
+## Correcao de 4 Bugs: WhatsApp, Contatos e Permissoes
 
 ---
 
-### PROBLEMA CRITICO: Handler do execute-flow esta vazio
+### Bug 1: Exclusao em massa de conversas nao funciona
 
-**Arquivo:** `supabase/functions/execute-flow/index.ts` (linhas 953-959)
+**Causa raiz:** A politica de RLS na tabela `conversations` so permite DELETE para usuarios com role `admin` ou `manager` (via `is_admin_or_manager(auth.uid())`). Quando um operador tenta excluir, o banco simplesmente ignora o DELETE sem retornar erro, e as conversas permanecem.
 
-O handler HTTP que recebe as requisicoes do webhook esta assim:
+**Correcao:**
+- No componente `Atendimento.tsx`, verificar a role do usuario antes de mostrar a opcao de exclusao em massa
+- Adicionar `useAuth()` e verificar `isAdmin` ou `hasPermission('atendimento', 'edit')` 
+- Desabilitar botoes de excluir para usuarios sem permissao
+- Exibir toast informativo caso tente excluir sem permissao
 
-```text
-const handler = async (req: Request): Promise<Response> => {
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+---
 
-  // ... keep existing code (flow execution logic - processNode, all node type handling)
-};
+### Bug 2: Grupos nao aparecem na aba "Grupos"
+
+**Causa raiz:** O webhook do Baileys (`baileys-webhook/index.ts`, linha 314-320) descarta **todas** as mensagens de grupo com um `return` imediato:
 ```
+if (rawFrom.endsWith("@g.us")) {
+  console.log("Skipping group message");
+  return ...
+}
+```
+Alem disso, ao criar contatos, o campo `is_group` nunca e setado como `true`. Resultado: nenhum contato no banco tem `is_group = true`, e a aba Grupos fica sempre vazia.
 
-O comentario `// ... keep existing code` e um placeholder que nunca foi preenchido. Todas as funcoes auxiliares estao implementadas (findMatchingTrigger, executeFlowFromNode, matchMenuOption, etc.), mas **nenhuma delas e chamada** porque o handler nao faz nada.
-
-**Impacto:** O webhook chama `execute-flow` com os dados da mensagem, mas a funcao retorna `undefined` (nenhuma Response), entao o fluxo nunca executa.
-
----
-
-### O que esta funcionando (UI)
-
-- Editor visual de fluxos com React Flow (arrastar/soltar blocos)
-- 10 tipos de blocos: Gatilho, Mensagem, WhatsApp, IA, Aguardar, Menu, Agendar, CRM, Transferir, Encerrar
-- Painel de configuracao completo para cada bloco
-- Validacao visual nos blocos (badges de aviso)
-- CRUD de fluxos (criar, editar, excluir, ativar/desativar)
-- Salvamento de nodes/edges no banco de dados
-- Sidebar colapsavel com busca
-
-### O que esta funcionando (Backend)
-
-- Todas as funcoes auxiliares: envio de mensagem, chamada de IA (Lovable AI + Google AI Studio), busca de gatilhos, execucao de menu, delay, transferencia, CRM, agendamento
-- Integracao com Google Calendar para agendamentos
-- Suporte a LID (Lead ID) do WhatsApp
-- Historico de conversa para contexto da IA
-- Tabelas no banco: `chatbot_flows`, `flow_nodes`, `flow_edges` + campos `is_bot_active`, `active_flow_id`, `flow_state` na tabela `conversations`
+**Correcao:**
+- Remover o skip de mensagens de grupo no webhook
+- Detectar se o `rawFrom` termina com `@g.us` e setar `is_group = true` ao criar o contato
+- Usar o nome do grupo vindo do `pushName` ou do payload
+- Garantir que a conversa seja criada normalmente para grupos
 
 ---
 
-### Correcao necessaria
+### Bug 3: Contatos nao mostram numero ou nome
 
-Implementar o handler da funcao `execute-flow` que deve:
+**Causa raiz:** A maioria dos contatos no banco nao tem `phone` (e null) e so tem `whatsapp_lid`. A pagina de Contatos (`Contatos.tsx`) mostra o `contact.name` diretamente (que muitas vezes e um pushName repetido como "Gatteflow | Sistema de Vendas Online") e mostra "Pendente" para o telefone.
 
-1. Receber os dados do webhook (`conversationId`, `contactId`, `message`, `connectionId`, `isNewConversation`)
-2. Verificar se a conversa tem um `flow_state` pendente (menu aguardando resposta, IA aguardando resposta, agendamento aguardando resposta)
-3. Se sim, continuar o fluxo a partir do estado salvo
-4. Se nao, buscar todos os fluxos ativos, encontrar um gatilho que corresponda a mensagem
-5. Se encontrar, ativar o fluxo na conversa e executar a partir do gatilho
-6. Carregar a configuracao do Baileys e os dados do contato
-7. Chamar `executeFlowFromNode()` para executar os blocos em sequencia
+O problema e que a pagina Contatos **nao usa** o hook centralizado `useContactDisplayName` que ja existe e trata esses casos corretamente. O hook mostra telefone formatado quando disponivel, e trata pushNames e LIDs de forma inteligente.
 
-### Secao Tecnica
+**Correcao:**
+- Importar e usar `getContactDisplayName` e `formatPhoneForDisplay` do hook `useContactDisplayName` na pagina Contatos
+- Na coluna "Contato" da tabela, usar `getContactDisplayName(contact)` em vez de `contact.name` direto
+- Para contatos sem telefone real, mostrar o LID parcial como referencia em vez de apenas "Pendente"
+- Garantir que o `whatsapp_lid` esteja disponivel na interface `Contact` (ja esta)
 
-**Arquivo modificado:** `supabase/functions/execute-flow/index.ts`
+---
 
-O handler precisa:
-- Fazer parse do body JSON
-- Criar cliente Supabase com service role
-- Buscar dados da conversa (incluindo `flow_state`, `active_flow_id`)
-- Buscar dados do contato (nome, telefone, whatsapp_lid)
-- Buscar a conexao WhatsApp associada a conversa
-- Carregar config do Baileys (URL do servidor, API key, nome da sessao)
-- Verificar se ha estado pendente (menu/IA/agendamento) e processar a resposta
-- Ou buscar fluxos ativos e encontrar gatilho correspondente
-- Chamar `executeFlowFromNode` com todos os parametros
-- Retornar Response com status de sucesso ou erro
+### Bug 4: Atendentes nao obedecem permissoes
 
-Estimativa: ~150 linhas de codigo no handler, usando todas as funcoes auxiliares que ja existem no arquivo.
+**Causa raiz:** A pagina `Atendimento.tsx` nao verifica permissoes do usuario em nenhum momento. Diferente de outras paginas (Tags, Kanban, Campanhas, Contatos) que usam `hasPermission` e `canEdit`, o Atendimento permite que qualquer usuario logado faca qualquer acao -- excluir conversas, transferir, alterar status, usar acoes em massa, etc.
+
+A sidebar ja filtra os links baseado em permissoes, e o `ProtectedRoute` bloqueia o acesso a pagina inteira. Mas dentro da pagina, nao ha granularidade.
+
+**Correcao:**
+- Adicionar `useAuth()` com `hasPermission` e `isAdmin` no componente Atendimento
+- Criar variavel `canEdit = isAdmin || hasPermission('atendimento', 'edit')`
+- Desabilitar botoes de: excluir conversa, excluir em massa, alterar status, transferir atendente, transferir setor, transferir para bot
+- Manter funcoes de leitura (ver conversas, ler mensagens, buscar) acessiveis para todos com `can_view`
+- Adicionar `ReadOnlyBadge` quando o usuario nao tem permissao de edicao
+
+---
+
+### Secao tecnica
+
+**Arquivos modificados:**
+
+1. `supabase/functions/baileys-webhook/index.ts`
+   - Remover o bloco de skip de grupos (linhas 314-320)
+   - Adicionar deteccao de `@g.us` para setar `is_group: true` na criacao de contatos
+   - Ajustar a logica de busca/criacao de contatos para incluir grupos
+
+2. `src/pages/Contatos.tsx`
+   - Importar `getContactDisplayName` de `useContactDisplayName`
+   - Substituir `contact.name` por `getContactDisplayName(contact)` na coluna de contato da tabela (linha 738)
+   - Melhorar exibicao para contatos sem telefone
+
+3. `src/pages/Atendimento.tsx`
+   - Importar `useAuth` e `ReadOnlyBadge`
+   - Adicionar verificacao `canEdit` em ~15 pontos de acao (botoes de excluir, transferir, alterar status, acoes em massa)
+   - Adicionar `ReadOnlyBadge` no header quando sem permissao de edicao
+
+**Fluxo de permissoes resultante:**
+- Admin: acesso total a tudo
+- Manager: acesso total (via `is_admin_or_manager`)
+- Operator com `can_view` + `can_edit`: pode ver e editar
+- Operator com apenas `can_view`: pode ver conversas e enviar mensagens, mas nao pode excluir, transferir ou alterar status
+- Operator sem permissao no modulo: nao acessa a pagina (bloqueado pelo ProtectedRoute)
+
