@@ -955,7 +955,303 @@ const handler = async (req: Request): Promise<Response> => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // ... keep existing code (flow execution logic - processNode, all node type handling)
+  try {
+    const body = await req.json();
+    const { conversationId, contactId, message, connectionId, isNewConversation } = body;
+
+    console.log("[FlowExecutor] Received request:", { conversationId, contactId, messagePreview: message?.substring(0, 50), connectionId, isNewConversation });
+
+    if (!conversationId || !message) {
+      return new Response(JSON.stringify({ error: "conversationId and message are required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Fetch conversation data
+    const { data: conversation, error: convError } = await supabase
+      .from("conversations")
+      .select("*, contacts(*)")
+      .eq("id", conversationId)
+      .single();
+
+    if (convError || !conversation) {
+      console.error("[FlowExecutor] Conversation not found:", convError);
+      return new Response(JSON.stringify({ error: "Conversation not found" }), {
+        status: 404,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Check if bot is active for this conversation
+    if (conversation.is_bot_active === false) {
+      console.log("[FlowExecutor] Bot is inactive for this conversation, skipping");
+      return new Response(JSON.stringify({ success: true, skipped: true, reason: "bot_inactive" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const contact = conversation.contacts as any;
+    const contactName = contact?.name || "";
+    const contactPhone = contact?.phone || "";
+    const whatsappLid = contact?.whatsapp_lid || "";
+
+    // Format phone for Baileys
+    const { formattedPhone } = formatPhoneForBaileys(contactPhone, whatsappLid);
+
+    if (!formattedPhone) {
+      console.error("[FlowExecutor] No valid phone or LID for contact:", contactId);
+      return new Response(JSON.stringify({ error: "No valid phone number" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Load connection data
+    const effectiveConnectionId = connectionId || conversation.connection_id;
+    let connection: any = null;
+
+    if (effectiveConnectionId) {
+      const { data: conn } = await supabase
+        .from("connections")
+        .select("*")
+        .eq("id", effectiveConnectionId)
+        .single();
+      connection = conn;
+    }
+
+    if (!connection) {
+      // Fallback: get default connection
+      const { data: defaultConn } = await supabase
+        .from("connections")
+        .select("*")
+        .eq("is_default", true)
+        .eq("status", "connected")
+        .maybeSingle();
+      connection = defaultConn;
+    }
+
+    if (!connection) {
+      console.error("[FlowExecutor] No WhatsApp connection available");
+      return new Response(JSON.stringify({ error: "No WhatsApp connection" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Load Baileys config
+    const baileysConfig = await loadBaileysConfig(supabase, connection);
+    if (!baileysConfig) {
+      return new Response(JSON.stringify({ error: "Baileys not configured" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const flowState = conversation.flow_state as FlowState | null;
+
+    // === CASE 1: Resume from pending state ===
+    if (flowState) {
+      console.log("[FlowExecutor] Resuming from flow state:", { flowId: flowState.flowId, awaitingMenu: flowState.awaitingMenuResponse, awaitingAI: flowState.awaitingAIResponse, awaitingSchedule: flowState.awaitingScheduleResponse });
+
+      // Load flow nodes and edges
+      const [{ data: nodes }, { data: edges }] = await Promise.all([
+        supabase.from("flow_nodes").select("*").eq("flow_id", flowState.flowId),
+        supabase.from("flow_edges").select("*").eq("flow_id", flowState.flowId),
+      ]);
+
+      if (!nodes || !edges) {
+        console.error("[FlowExecutor] Could not load flow data");
+        await supabase.from("conversations").update({ flow_state: null, active_flow_id: null }).eq("id", conversationId);
+        return new Response(JSON.stringify({ error: "Flow data not found" }), {
+          status: 404,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const flowNodes: FlowNode[] = nodes.map((n: any) => ({ id: n.id, type: n.type, data: n.data || {} }));
+      const flowEdges: FlowEdge[] = edges.map((e: any) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, label: e.label }));
+
+      // Handle menu response
+      if (flowState.awaitingMenuResponse && flowState.menuOptions) {
+        const selectedOption = matchMenuOption(message, flowState.menuOptions);
+
+        if (!selectedOption) {
+          const retryMsg = `Opção inválida. Por favor, escolha uma das opções:\n\n${flowState.menuOptions.map((o, i) => `${i + 1}. ${o.text}`).join("\n")}`;
+          await sendWhatsAppMessage(baileysConfig, formattedPhone, retryMsg);
+          await supabase.from("messages").insert({ conversation_id: conversationId, content: retryMsg, sender_type: "bot", message_type: "text" });
+          return new Response(JSON.stringify({ success: true, action: "menu_retry" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        // Clear state and continue from menu option edge
+        await supabase.from("conversations").update({ flow_state: null }).eq("id", conversationId);
+
+        const nextNode = getNextNode(flowNodes, flowEdges, flowState.currentNodeId, selectedOption.id);
+        if (nextNode) {
+          await executeFlowFromNode(supabase, flowNodes, flowEdges, nextNode, conversationId, contactId || contact.id, formattedPhone, message, baileysConfig, contactName, flowState.flowId);
+        }
+
+        return new Response(JSON.stringify({ success: true, action: "menu_continued" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Handle AI response (continue conversation with AI)
+      if (flowState.awaitingAIResponse && flowState.aiNodeData) {
+        const { systemPrompt, model, temperature, maxTokens, knowledgeBase, useOwnApiKey, googleApiKey } = flowState.aiNodeData;
+        const conversationHistory = await fetchConversationHistory(supabase, conversationId, 10);
+
+        const aiResponse = await callAI(systemPrompt, message, model, temperature, maxTokens, knowledgeBase, useOwnApiKey, googleApiKey, conversationHistory);
+
+        await sendWhatsAppMessage(baileysConfig, formattedPhone, aiResponse);
+        await supabase.from("messages").insert({ conversation_id: conversationId, content: aiResponse, sender_type: "bot", message_type: "text" });
+
+        // AI stays in loop (no next node), keep state
+        return new Response(JSON.stringify({ success: true, action: "ai_response" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Handle schedule response
+      if (flowState.awaitingScheduleResponse && flowState.scheduleNodeData) {
+        const { integrationId, calendarId, availableSlots, eventTitle, eventDescription, eventDuration, sendConfirmation } = flowState.scheduleNodeData;
+
+        const input = message.trim();
+
+        if (input === "0") {
+          const cancelMsg = "Agendamento cancelado. Como posso ajudá-lo?";
+          await sendWhatsAppMessage(baileysConfig, formattedPhone, cancelMsg);
+          await supabase.from("messages").insert({ conversation_id: conversationId, content: cancelMsg, sender_type: "bot", message_type: "text" });
+          await supabase.from("conversations").update({ flow_state: null, active_flow_id: null }).eq("id", conversationId);
+          return new Response(JSON.stringify({ success: true, action: "schedule_cancelled" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const slotIndex = parseInt(input, 10) - 1;
+        if (isNaN(slotIndex) || slotIndex < 0 || slotIndex >= availableSlots.length) {
+          const retryMsg = `Opção inválida. Digite um número de 1 a ${availableSlots.length} ou 0 para cancelar.`;
+          await sendWhatsAppMessage(baileysConfig, formattedPhone, retryMsg);
+          await supabase.from("messages").insert({ conversation_id: conversationId, content: retryMsg, sender_type: "bot", message_type: "text" });
+          return new Response(JSON.stringify({ success: true, action: "schedule_retry" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        const selectedSlot = availableSlots[slotIndex];
+
+        try {
+          const { data: eventData, error: eventError } = await supabase.functions.invoke("google-calendar", {
+            body: {
+              action: "create-event",
+              integration_id: integrationId,
+              calendar_id: calendarId,
+              title: `${eventTitle} - ${contactName}`,
+              description: `${eventDescription}\nContato: ${contactName}\nTelefone: ${contactPhone}`,
+              start_time: selectedSlot.start,
+              end_time: selectedSlot.end,
+              contact_id: contactId || contact.id,
+              conversation_id: conversationId,
+            },
+          });
+
+          if (eventError) throw eventError;
+
+          const startDate = new Date(selectedSlot.start);
+          const confirmMsg = sendConfirmation
+            ? `✅ Agendamento confirmado!\n\n📅 ${startDate.toLocaleDateString("pt-BR")}\n🕐 ${startDate.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}\n\nObrigado!`
+            : "Agendamento confirmado!";
+
+          await sendWhatsAppMessage(baileysConfig, formattedPhone, confirmMsg);
+          await supabase.from("messages").insert({ conversation_id: conversationId, content: confirmMsg, sender_type: "bot", message_type: "text" });
+        } catch (error) {
+          console.error("[FlowExecutor] Error creating event:", error);
+          const errorMsg = "Desculpe, houve um erro ao criar o agendamento. Tente novamente.";
+          await sendWhatsAppMessage(baileysConfig, formattedPhone, errorMsg);
+          await supabase.from("messages").insert({ conversation_id: conversationId, content: errorMsg, sender_type: "bot", message_type: "text" });
+        }
+
+        // Clear state and continue
+        await supabase.from("conversations").update({ flow_state: null }).eq("id", conversationId);
+
+        const nextNode = getNextNode(flowNodes, flowEdges, flowState.currentNodeId);
+        if (nextNode) {
+          await executeFlowFromNode(supabase, flowNodes, flowEdges, nextNode, conversationId, contactId || contact.id, formattedPhone, message, baileysConfig, contactName, flowState.flowId);
+        }
+
+        return new Response(JSON.stringify({ success: true, action: "schedule_completed" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    // === CASE 2: Find matching trigger in active flows ===
+    const { data: activeFlows, error: flowsError } = await supabase
+      .from("chatbot_flows")
+      .select("*")
+      .eq("is_active", true);
+
+    if (flowsError || !activeFlows || activeFlows.length === 0) {
+      console.log("[FlowExecutor] No active flows found");
+      return new Response(JSON.stringify({ success: true, skipped: true, reason: "no_active_flows" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Search through all active flows for a matching trigger
+    for (const flow of activeFlows) {
+      const [{ data: nodes }, { data: edges }] = await Promise.all([
+        supabase.from("flow_nodes").select("*").eq("flow_id", flow.id),
+        supabase.from("flow_edges").select("*").eq("flow_id", flow.id),
+      ]);
+
+      if (!nodes || !edges || nodes.length === 0) continue;
+
+      const flowNodes: FlowNode[] = nodes.map((n: any) => ({ id: n.id, type: n.type, data: n.data || {} }));
+      const flowEdges: FlowEdge[] = edges.map((e: any) => ({ id: e.id, source_id: e.source_id, target_id: e.target_id, label: e.label }));
+
+      const trigger = findMatchingTrigger(flowNodes, flowEdges, message, isNewConversation || false, effectiveConnectionId);
+
+      if (trigger) {
+        console.log("[FlowExecutor] Trigger matched in flow:", flow.id, flow.name);
+
+        // Activate flow on conversation
+        await supabase
+          .from("conversations")
+          .update({ active_flow_id: flow.id, is_bot_active: true })
+          .eq("id", conversationId);
+
+        // Get next node after trigger
+        const startNode = getNextNode(flowNodes, flowEdges, trigger.id);
+
+        if (startNode) {
+          await executeFlowFromNode(supabase, flowNodes, flowEdges, startNode, conversationId, contactId || contact.id, formattedPhone, message, baileysConfig, contactName, flow.id);
+        }
+
+        return new Response(JSON.stringify({ success: true, action: "flow_executed", flowId: flow.id }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+    }
+
+    console.log("[FlowExecutor] No trigger matched for message:", message.substring(0, 50));
+    return new Response(JSON.stringify({ success: true, skipped: true, reason: "no_trigger_matched" }), {
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  } catch (error) {
+    console.error("[FlowExecutor] Handler error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error", message: error instanceof Error ? error.message : "Unknown error" }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
 };
 
 export default handler;
