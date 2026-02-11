@@ -2,8 +2,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProfileTab } from "@/components/configuracoes/ProfileTab";
 import { OptionsTab } from "@/components/configuracoes/OptionsTab";
 import { CustomizeTab } from "@/components/configuracoes/CustomizeTab";
+import { BackupTab } from "@/components/configuracoes/BackupTab";
+import { useAuth } from "@/contexts/AuthContext";
 
 export default function Configuracoes() {
+  const { isAdmin } = useAuth();
 
   return (
     <div className="space-y-6">
@@ -34,6 +37,14 @@ export default function Configuracoes() {
           >
             Personalizar
           </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger
+              value="backup"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+            >
+              Backup
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <div className="mt-6">
@@ -48,6 +59,12 @@ export default function Configuracoes() {
           <TabsContent value="personalizar" className="mt-0">
             <CustomizeTab />
           </TabsContent>
+
+          {isAdmin && (
+            <TabsContent value="backup" className="mt-0">
+              <BackupTab />
+            </TabsContent>
+          )}
         </div>
       </Tabs>
     </div>
