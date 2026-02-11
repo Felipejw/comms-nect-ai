@@ -1,75 +1,104 @@
 
 
-## Corrigir status "Offline" e QR Code na pagina de Conexoes
+## Corrigir recebimento de mensagens WhatsApp na VPS
 
-### Problemas identificados
+### Contexto
 
-Tres bugs na integracao entre o frontend, a Edge Function e o servidor Baileys:
+O sistema esta instalado na VPS com todos os containers Docker rodando. O Baileys envia webhooks para `http://kong:8000/functions/v1/baileys-webhook` (rota interna Docker), que e o correto. O problema esta no codigo da Edge Function que processa esses webhooks.
 
----
-
-### Bug 1: Servidor mostra "Offline" mesmo estando online
-
-**Arquivo:** `src/pages/Conexoes.tsx` (linha 64)
-
-O frontend acessa `result.data?.status` mas o `checkServerHealth` retorna os campos diretamente na raiz (sem wrapper `data`). A Edge Function `serverHealth` retorna `{ success: true, status: "ok", sessions: 0 }`, entao o acesso correto e `result.status`.
-
-**Correcao:** Trocar `result.data?.status` por `result.status`, e ajustar `result.data?.version` e `result.data?.sessions` da mesma forma.
+### Problemas identificados (4 bugs no codigo)
 
 ---
 
-### Bug 2: Endpoint de status usa URL incorreta (404)
+#### Bug 1: Conexao nunca e encontrada (CRITICO)
 
-**Arquivo:** `supabase/functions/baileys-instance/index.ts` (linha 237)
+**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linha 239)
 
-A Edge Function chama `GET /sessions/{name}/status` mas o servidor Baileys nao tem esse sufixo `/status`. O endpoint correto e `GET /sessions/{name}`.
+O filtro exige `sessionData?.engine === "baileys"`, mas a conexao "BR" no banco tem `session_data: {sessionName: "BR"}` -- sem o campo `engine`. Resultado: **todas as mensagens sao ignoradas** com log "Connection not found".
 
-**Correcao:** Trocar `/sessions/${sessionName}/status` por `/sessions/${sessionName}`.
-
-Alem disso, a resposta do servidor retorna `{ success: true, data: { name, status, phoneNumber, hasQrCode } }`. O campo de status esta em `result.data.status`, nao em `result.status`. Ajustar o mapeamento nas linhas 245-257.
-
----
-
-### Bug 3: QR Code nao e capturado corretamente
-
-**Arquivo:** `supabase/functions/baileys-instance/index.ts` (linha 183)
-
-A Edge Function verifica `result.qr` mas o servidor Baileys retorna o QR dentro de `result.data.qrCode` (formato: `{ success: true, data: { qrCode: "base64...", format: "base64" } }`).
-
-**Correcao:** Trocar `result.qr` por `result.data?.qrCode` na verificacao e no update do banco.
-
----
-
-### Secao tecnica - Alteracoes
-
-#### 1. `src/pages/Conexoes.tsx` - funcao `fetchServerInfo` (~5 linhas)
-
+**Correcao:** Remover o filtro `engine`:
 ```text
 // De:
-status: result.data?.status === 'ok' ? "online" : "offline",
-version: result.data?.version || "Baileys",
-sessionsCount: result.data?.sessions ?? 0,
-
+return sessionData?.sessionName === session && sessionData?.engine === "baileys";
 // Para:
-status: result.status === 'ok' ? "online" : "offline",
-version: result.version || "Baileys",
-sessionsCount: result.sessions ?? 0,
+return sessionData?.sessionName === session;
 ```
 
-#### 2. `supabase/functions/baileys-instance/index.ts` - action "status" (~2 linhas)
+---
 
-Linha 237: Trocar URL de `/sessions/${sessionName}/status` para `/sessions/${sessionName}`
+#### Bug 2: QR Code nao e salvo via webhook
 
-Linhas 245-257: Ajustar mapeamento para ler de `result.data` (ex: `result.data?.status` em vez de `result.status`)
+**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linha 253)
 
-#### 3. `supabase/functions/baileys-instance/index.ts` - action "getQrCode" (~2 linhas)
+O servidor Baileys envia `{ qrCode: "data:image/png;base64,..." }` mas o handler verifica `eventPayload?.qr`.
 
-Linha 183: Trocar `result.qr` por `result.data?.qrCode`
-Linha 188: Trocar `result.qr as string` por `result.data.qrCode as string`
+**Correcao:** Adicionar `qrCode` como campo prioritario:
+```text
+const qrCode = eventPayload?.qrCode || eventPayload?.qr || eventPayload;
+```
 
-### Resultado esperado
+---
 
-- Servidor Baileys aparece como **Online** na pagina de Conexoes
-- Ao clicar em QR Code, o codigo e exibido corretamente
-- Polling detecta quando o WhatsApp e escaneado e atualiza para "Conectado"
+#### Bug 3: Numero de telefone nao e extraido ao conectar
+
+**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linhas 284-286)
+
+O servidor Baileys envia `{ status: "WORKING", me: { id: "5511999999999" } }` mas o handler so verifica `eventPayload?.phoneNumber`, que nao existe.
+
+**Correcao:** Adicionar fallback para `me.id`:
+```text
+if (eventPayload?.phoneNumber) {
+  updates.phone_number = eventPayload.phoneNumber;
+} else if (eventPayload?.me?.id) {
+  updates.phone_number = String(eventPayload.me.id).split(':')[0].replace('@s.whatsapp.net', '');
+}
+```
+
+---
+
+#### Bug 4: Midia (fotos, audios, videos) nao e armazenada
+
+**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linhas 333-334)
+
+O servidor Baileys envia a midia no campo `mediaUrl` (formato `data:image/jpeg;base64,...`), mas o handler so verifica `msgPayload.base64 || msgPayload.mediaData`. Alem disso, a condicao `hasMedia` do Baileys nao e verificada.
+
+**Correcao:** Incluir `mediaUrl` nas verificacoes:
+```text
+// Linha 333 - condicao
+if (msgPayload.hasMedia || msgPayload.mediaData || msgPayload.base64 || msgPayload.mediaUrl) {
+
+// Linha 334 - dados
+const base64Data = msgPayload.base64 || msgPayload.mediaData || msgPayload.mediaUrl;
+```
+
+---
+
+### Correcao preventiva adicional
+
+#### Salvar `engine` ao criar novas conexoes
+
+**Arquivo:** `supabase/functions/baileys-instance/index.ts` (linha 106)
+
+Para que futuras conexoes nao tenham o mesmo problema:
+```text
+session_data: { sessionName, engine: "baileys" },
+```
+
+---
+
+### Secao tecnica
+
+**Arquivos modificados:**
+1. `supabase/functions/baileys-webhook/index.ts` -- 4 correcoes (linhas 239, 253, 284-286, 333-334)
+2. `supabase/functions/baileys-instance/index.ts` -- 1 correcao (linha 106)
+
+**Fluxo apos as correcoes:**
+1. Mensagem chega no WhatsApp
+2. Baileys processa e envia POST para `http://kong:8000/functions/v1/baileys-webhook`
+3. Webhook encontra a conexao pelo `sessionName` (sem exigir `engine`)
+4. Contato e criado/encontrado no banco
+5. Conversa e criada/atualizada
+6. Mensagem e salva e aparece no frontend
+
+**Apos aplicar:** O usuario precisa atualizar os arquivos das Edge Functions na VPS (pull + restart do container functions) para que as correcoes entrem em vigor.
 
