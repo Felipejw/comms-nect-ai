@@ -311,12 +311,10 @@ const handler = async (req: Request): Promise<Response> => {
       const messageId = msgPayload.messageId || msgPayload.id || `msg_${Date.now()}`;
       const isFromMe = msgPayload.fromMe === true;
 
-      // Skip group messages
-      if (rawFrom.endsWith("@g.us")) {
-        console.log("[Baileys Webhook] Skipping group message");
-        return new Response(JSON.stringify({ success: true }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+      // Detect group messages
+      const isGroup = rawFrom.endsWith("@g.us");
+      if (isGroup) {
+        console.log("[Baileys Webhook] Processing group message from:", rawFrom);
       }
 
       const { identifier, isLid } = parseFromAddress(rawFrom, rawJid);
@@ -365,7 +363,59 @@ const handler = async (req: Request): Promise<Response> => {
       // deno-lint-ignore no-explicit-any
       let contact: any = null;
 
-      if (isLid) {
+      if (isGroup) {
+        // For groups, search by the group identifier
+        const groupId = rawFrom.replace("@g.us", "");
+        const { data: groupContacts } = await supabaseClient
+          .from("contacts")
+          .select("*")
+          .eq("phone", groupId)
+          .eq("is_group", true)
+          .limit(1);
+
+        contact = groupContacts?.[0] || null;
+
+        if (!contact) {
+          const groupName = pushName || `Grupo ${groupId.substring(0, 10)}`;
+          const { data: newContact, error: createError } = await supabaseClient
+            .from("contacts")
+            .insert({
+              name: groupName,
+              phone: groupId,
+              is_group: true,
+              name_source: pushName ? "push_name" : "auto",
+              status: "active",
+            })
+            .select()
+            .single();
+
+          if (createError) {
+            console.error("[Baileys Webhook] Error creating group contact:", createError.message);
+            const { data: retryContacts } = await supabaseClient
+              .from("contacts")
+              .select("*")
+              .eq("phone", groupId)
+              .eq("is_group", true)
+              .limit(1);
+            contact = retryContacts?.[0] || null;
+          } else {
+            contact = newContact;
+            console.log(`[Baileys Webhook] Created new group contact: ${contact.id}`);
+          }
+        } else {
+          // Update group name from pushName if current name is generic
+          if (pushName && contact.name_source !== "manual") {
+            const isGenericName = contact.name.startsWith("Grupo ") || /^\d+$/.test(contact.name);
+            if (isGenericName) {
+              await supabaseClient
+                .from("contacts")
+                .update({ name: pushName, name_source: "push_name", updated_at: new Date().toISOString() })
+                .eq("id", contact.id);
+              contact.name = pushName;
+            }
+          }
+        }
+      } else if (isLid) {
         // Search by LID
         const { data: lidContacts } = await supabaseClient
           .from("contacts")
@@ -396,7 +446,6 @@ const handler = async (req: Request): Promise<Response> => {
               .single();
 
             if (createError) {
-              // May have been created concurrently - try to find again
               console.error("[Baileys Webhook] Error creating LID contact:", createError.message);
               const { data: retryContacts } = await supabaseClient
                 .from("contacts")

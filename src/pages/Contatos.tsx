@@ -56,6 +56,7 @@ import { format, formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useAuth } from "@/contexts/AuthContext";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
+import { getContactDisplayName, getContactInitials, formatPhoneForDisplay } from "@/hooks/useContactDisplayName";
 
 // Helper to check if phone is a LID (long identifier, not a real phone)
 const isLidPhone = (phone: string | null | undefined): boolean => {
@@ -731,11 +732,11 @@ export default function Contatos() {
                       <Avatar className="w-10 h-10">
                         <AvatarImage src={contact.avatar_url || undefined} />
                         <AvatarFallback className="bg-primary/10 text-primary text-sm">
-                          {contact.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                          {getContactInitials(contact as any)}
                         </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="font-medium">{contact.name}</p>
+                        <p className="font-medium">{getContactDisplayName(contact as any)}</p>
                         <p className="text-sm text-muted-foreground">{contact.email || "-"}</p>
                       </div>
                     </div>
@@ -744,7 +745,12 @@ export default function Contatos() {
                     <div className="flex items-center gap-2">
                       {!contact.phone && (contact as any).whatsapp_lid ? (
                         <>
-                          <span className="text-muted-foreground text-sm italic">Pendente</span>
+                          <span className="text-muted-foreground text-sm italic">
+                            {(contact as any).whatsapp_lid 
+                              ? `Contato #${(contact as any).whatsapp_lid.slice(-6)}`
+                              : "Pendente"
+                            }
+                          </span>
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>

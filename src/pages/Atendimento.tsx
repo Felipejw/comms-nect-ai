@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
-import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, Info, Users, AlertCircle } from "lucide-react";
+import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, Info, Users, AlertCircle, Eye } from "lucide-react";
+import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
@@ -193,7 +194,8 @@ export default function Atendimento() {
   const videoInputRef = useRef<HTMLInputElement>(null);
   const messageRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   
-  const { user, profile } = useAuth();
+  const { user, profile, hasPermission, isAdmin } = useAuth();
+  const canEdit = isAdmin || hasPermission('atendimento', 'edit');
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { data: conversations, isLoading: conversationsLoading, isError: conversationsIsError, error: conversationsError, refetch: refetchConversations } = useConversations();
@@ -1380,7 +1382,7 @@ export default function Atendimento() {
                   variant="destructive" 
                   size="sm" 
                   onClick={() => setShowBulkDeleteDialog(true)}
-                  disabled={bulkDeleteConversations.isPending}
+                  disabled={bulkDeleteConversations.isPending || !canEdit}
                 >
                   <Trash2 className="w-4 h-4 mr-1" />
                   Excluir
@@ -1389,7 +1391,7 @@ export default function Atendimento() {
                   variant="outline" 
                   size="sm" 
                   onClick={handleBulkResolve}
-                  disabled={bulkUpdateConversations.isPending}
+                  disabled={bulkUpdateConversations.isPending || !canEdit}
                 >
                   <CheckCircle className="w-4 h-4 mr-1" />
                   Resolver
@@ -1398,7 +1400,7 @@ export default function Atendimento() {
                   variant="outline" 
                   size="sm" 
                   onClick={handleBulkArchive}
-                  disabled={bulkUpdateConversations.isPending}
+                  disabled={bulkUpdateConversations.isPending || !canEdit}
                 >
                   <Archive className="w-4 h-4 mr-1" />
                   Arquivar
@@ -1830,7 +1832,7 @@ export default function Atendimento() {
                       <User className="w-4 h-4 mr-2" />
                       Ver perfil
                     </DropdownMenuItem>
-                    {selectedConversation.status !== "resolved" && (
+                    {selectedConversation.status !== "resolved" && canEdit && (
                       <DropdownMenuItem onClick={handleResolve} disabled={updateConversation.isPending}>
                         <CheckCircle className="w-4 h-4 mr-2" />
                         Resolver conversa
@@ -1849,29 +1851,35 @@ export default function Atendimento() {
                       <Calendar className="w-4 h-4 mr-2" />
                       Agendar mensagem
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleChangeQueue}>
-                      <Building className="w-4 h-4 mr-2" />
-                      Mudar setor
-                    </DropdownMenuItem>
-                    {selectedConversation.is_bot_active ? (
-                      <DropdownMenuItem onClick={handleTransferToManual} disabled={updateConversation.isPending}>
-                        <UserCheck className="w-4 h-4 mr-2" />
-                        Assumir atendimento
-                      </DropdownMenuItem>
-                    ) : (
-                      <DropdownMenuItem onClick={handleTransferToBot} disabled={updateConversation.isPending}>
-                        <Bot className="w-4 h-4 mr-2" />
-                        Transferir para Bot
+                    {canEdit && (
+                      <DropdownMenuItem onClick={handleChangeQueue}>
+                        <Building className="w-4 h-4 mr-2" />
+                        Mudar setor
                       </DropdownMenuItem>
                     )}
+                    {canEdit && (
+                      selectedConversation.is_bot_active ? (
+                        <DropdownMenuItem onClick={handleTransferToManual} disabled={updateConversation.isPending}>
+                          <UserCheck className="w-4 h-4 mr-2" />
+                          Assumir atendimento
+                        </DropdownMenuItem>
+                      ) : (
+                        <DropdownMenuItem onClick={handleTransferToBot} disabled={updateConversation.isPending}>
+                          <Bot className="w-4 h-4 mr-2" />
+                          Transferir para Bot
+                        </DropdownMenuItem>
+                      )
+                    )}
                     <DropdownMenuSeparator />
-                    <DropdownMenuItem 
-                      className="text-destructive"
-                      onClick={() => setShowDeleteDialog(true)}
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Excluir conversa
-                    </DropdownMenuItem>
+                    {canEdit && (
+                      <DropdownMenuItem 
+                        className="text-destructive"
+                        onClick={() => setShowDeleteDialog(true)}
+                      >
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Excluir conversa
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
