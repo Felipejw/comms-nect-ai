@@ -1,93 +1,58 @@
 
 
-## Sistema de Backup Completo na Pagina de Configuracoes
+## Corrigir Logs de Diagnostico para Mostrar Nome do Atendente, Data e Hora
 
-### Visao geral
+### Problema identificado
 
-Adicionar uma nova aba "Backup" na pagina de Configuracoes que permite ao administrador exportar e importar todos os dados do sistema diretamente pela interface web, sem necessidade de acesso ao servidor VPS.
+Todos os logs de atividade estao com `user_id = null`, mostrando "Sistema" em vez do nome do atendente. Isso acontece porque:
 
----
+1. As acoes feitas via **edge functions** (service role key) nao tem `auth.uid()` disponivel - o trigger `log_activity()` nao consegue capturar quem fez a acao
+2. As acoes feitas diretamente pelo **frontend** (ex: criar contato, atualizar conversa) devem ter o `user_id` preenchido, mas como muitas operacoes passam por edge functions, a maioria fica sem identificacao
 
-### Funcionalidades
+### O que sera feito
 
-**Exportar Backup (Download)**
-- Gera um arquivo JSON contendo todos os dados do sistema
-- Tabelas incluidas: contacts, conversations, messages, tags, contact_tags, conversation_tags, quick_replies, chatbot_rules, chatbot_flows, flow_nodes, flow_edges, queues, queue_agents, campaigns, campaign_contacts, kanban_columns, connections, integrations, ai_settings, system_settings, profiles, user_roles, user_permissions, schedules, message_templates, activity_logs
-- Barra de progresso mostrando o andamento da exportacao
-- Download automatico do arquivo `.json` com timestamp no nome
-- Metadados incluidos: versao, data, total de registros por tabela
+**1. Melhorar o trigger `log_activity()` para capturar o usuario de fontes alternativas**
 
-**Importar Backup (Restauracao)**
-- Upload de arquivo JSON previamente exportado
-- Validacao do formato do arquivo antes de iniciar
-- Preview mostrando quantos registros serao restaurados por tabela
-- Confirmacao obrigatoria antes de executar (dialog de alerta)
-- Processo de restauracao com progresso por tabela
-- Usa upsert para evitar conflitos de chave duplicada
+O trigger passara a verificar, alem de `auth.uid()`, campos como `assigned_to` (em conversations), `created_by` (em campaigns, chatbot_flows), e `sender_id` (em messages) para identificar o usuario responsavel.
 
-**Restricoes de acesso**
-- Apenas usuarios admin podem ver e usar a aba de Backup
-- A aba nao aparece para operadores e managers
+**2. Melhorar a exibicao na tabela de Logs**
 
----
+- Coluna **Data/Hora** com formato mais legivel: data em uma linha, hora em outra (ex: "11/02/2026" e "14:42:05")
+- Coluna **Atendente** com avatar e nome (ou badge "Sistema" quando for automatico)
+- Filtro por **atendente** especifico adicionado aos filtros existentes
+
+**3. Adicionar filtro por Atendente**
+
+- Novo dropdown de filtro para selecionar um atendente especifico
+- Busca a lista de profiles para popular o dropdown
 
 ### Secao tecnica
 
-**Arquivos criados:**
+**Migration SQL - Atualizar trigger `log_activity()`:**
 
-1. `src/components/configuracoes/BackupTab.tsx`
-   - Componente principal da aba de backup
-   - Secao "Exportar": botao que consulta todas as tabelas via Supabase client, monta objeto JSON e dispara download via `Blob` + `URL.createObjectURL`
-   - Secao "Importar": input de arquivo, validacao, preview, dialog de confirmacao, e loop de upsert por tabela
-   - Progress bar (componente `Progress` ja existente) para feedback visual
-   - Tratamento de tabelas com FK: importacao na ordem correta (contacts antes de conversations, conversations antes de messages, etc.)
-
-**Arquivos modificados:**
-
-2. `src/pages/Configuracoes.tsx`
-   - Importar `BackupTab` e `useAuth`
-   - Adicionar aba "Backup" condicional (`isAdmin`)
-   - Nova `TabsTrigger` e `TabsContent` para backup
-
-**Ordem de exportacao/importacao das tabelas (respeitando dependencias):**
+Modificar a funcao para tentar extrair o user_id de campos da propria tabela quando `auth.uid()` retorna null:
 
 ```text
-1. profiles, user_roles, user_permissions
-2. tags, kanban_columns, queues
-3. queue_agents
-4. contacts, contact_tags
-5. connections
-6. chatbot_flows, chatbot_rules
-7. flow_nodes, flow_edges
-8. conversations, conversation_tags
-9. messages
-10. campaigns, campaign_contacts
-11. quick_replies, schedules
-12. message_templates
-13. integrations, ai_settings
-14. system_settings
-15. activity_logs
+v_user_id := auth.uid();
+
+-- Fallback: tentar extrair de campos da tabela
+IF v_user_id IS NULL THEN
+  CASE TG_TABLE_NAME
+    WHEN 'conversations' THEN v_user_id := COALESCE(NEW.assigned_to, OLD.assigned_to);
+    WHEN 'messages' THEN v_user_id := NEW.sender_id;
+    WHEN 'campaigns' THEN v_user_id := COALESCE(NEW.created_by, OLD.created_by);
+    WHEN 'chatbot_flows' THEN v_user_id := COALESCE(NEW.created_by, OLD.created_by);
+    WHEN 'quick_replies' THEN v_user_id := COALESCE(NEW.created_by, OLD.created_by);
+    WHEN 'schedules' THEN v_user_id := COALESCE(NEW.user_id, OLD.user_id);
+    ELSE NULL;
+  END CASE;
+END IF;
 ```
 
-**Limites e paginacao:**
-- Tabelas grandes (messages, activity_logs) serao exportadas em lotes de 1000 registros para evitar timeout
-- Loop com `.range(offset, offset + 999)` ate nao haver mais dados
+**Arquivo modificado: `src/pages/Diagnostico.tsx`:**
 
-**Formato do arquivo de backup:**
+- Coluna Data/Hora: separar data e hora em duas linhas para melhor leitura
+- Coluna Atendente: mostrar nome com destaque ou badge "Sistema" quando for acao automatica
+- Novo filtro dropdown "Atendente" que lista todos os profiles e filtra por `user_id`
+- Melhorar metadata summary para mostrar mais contexto
 
-```text
-{
-  "meta": {
-    "version": "1.0",
-    "created_at": "2026-02-11T...",
-    "tables": { "contacts": 150, "messages": 5000, ... }
-  },
-  "data": {
-    "contacts": [...],
-    "conversations": [...],
-    ...
-  }
-}
-```
-
-**Dependencias:** Nenhuma nova - usa apenas componentes UI ja existentes (Button, Progress, Card, AlertDialog, Input) e o cliente Supabase.
