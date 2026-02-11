@@ -103,7 +103,7 @@ const handler = async (req: Request): Promise<Response> => {
             name: instanceName || "WhatsApp",
             type: "whatsapp",
             status: "connecting",
-            session_data: { sessionName },
+            session_data: { sessionName, engine: "baileys" },
           })
           .select()
           .single();

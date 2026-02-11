@@ -236,7 +236,7 @@ const handler = async (req: Request): Promise<Response> => {
     // deno-lint-ignore no-explicit-any
     const connection = connections?.find((c: any) => {
       const sessionData = c.session_data;
-      return sessionData?.sessionName === session && sessionData?.engine === "baileys";
+      return sessionData?.sessionName === session;
     });
 
     if (!connection) {
@@ -250,7 +250,7 @@ const handler = async (req: Request): Promise<Response> => {
 
     // ========== Handle QR Code Update ==========
     if (event === "qr.update") {
-      const qrCode = eventPayload?.qr || eventPayload;
+      const qrCode = eventPayload?.qrCode || eventPayload?.qr || eventPayload;
       console.log("[Baileys Webhook] QR code received, length:", typeof qrCode === "string" ? qrCode.length : "N/A");
 
       await supabaseClient
@@ -283,6 +283,8 @@ const handler = async (req: Request): Promise<Response> => {
         // Try to get phone number from payload
         if (eventPayload?.phoneNumber) {
           updates.phone_number = eventPayload.phoneNumber;
+        } else if (eventPayload?.me?.id) {
+          updates.phone_number = String(eventPayload.me.id).split(':')[0].replace('@s.whatsapp.net', '');
         }
       }
 
@@ -330,8 +332,8 @@ const handler = async (req: Request): Promise<Response> => {
       }
 
       // Handle media types
-      if (msgPayload.hasMedia || msgPayload.mediaData || msgPayload.base64) {
-        const base64Data = msgPayload.base64 || msgPayload.mediaData;
+      if (msgPayload.hasMedia || msgPayload.mediaData || msgPayload.base64 || msgPayload.mediaUrl) {
+        const base64Data = msgPayload.base64 || msgPayload.mediaData || msgPayload.mediaUrl;
         if (msgPayload.mediaType === "image" || msgPayload.type === "image") {
           msgType = "image";
           messageContent = msgPayload.caption || messageContent || "[Imagem]";
