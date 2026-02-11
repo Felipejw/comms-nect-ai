@@ -1,58 +1,43 @@
 
 
-## Corrigir Logs de Diagnostico para Mostrar Nome do Atendente, Data e Hora
+## Corrigir Erros de RLS no Backup/Restore
 
-### Problema identificado
+### Problema
 
-Todos os logs de atividade estao com `user_id = null`, mostrando "Sistema" em vez do nome do atendente. Isso acontece porque:
+A restauracao do backup usa chamadas diretas ao Supabase (`supabase.from(table).upsert()`), que sao bloqueadas pelas politicas de RLS em tabelas como `connections`, `system_settings`, `integrations`, `ai_settings`, entre outras que exigem role de admin.
 
-1. As acoes feitas via **edge functions** (service role key) nao tem `auth.uid()` disponivel - o trigger `log_activity()` nao consegue capturar quem fez a acao
-2. As acoes feitas diretamente pelo **frontend** (ex: criar contato, atualizar conversa) devem ter o `user_id` preenchido, mas como muitas operacoes passam por edge functions, a maioria fica sem identificacao
+### Solucao
 
-### O que sera feito
+Usar o helper `adminWrite()` ja existente no projeto para todas as operacoes de upsert durante a restauracao. Este helper tenta a Edge Function `admin-write` (que usa service_role e ignora RLS) e faz fallback para chamada direta se necessario.
 
-**1. Melhorar o trigger `log_activity()` para capturar o usuario de fontes alternativas**
+### Alteracoes
 
-O trigger passara a verificar, alem de `auth.uid()`, campos como `assigned_to` (em conversations), `created_by` (em campaigns, chatbot_flows), e `sender_id` (em messages) para identificar o usuario responsavel.
+**1. Edge Function `supabase/functions/admin-write/index.ts`**
 
-**2. Melhorar a exibicao na tabela de Logs**
+Adicionar as tabelas que faltam na whitelist `ALLOWED_TABLES`:
+- `profiles`
+- `user_roles`
+- `user_permissions`
+- `contacts`
+- `contact_tags`
+- `conversations`
+- `conversation_tags`
+- `messages`
+- `campaigns`
+- `campaign_contacts`
+- `quick_replies`
+- `schedules`
+- `activity_logs`
 
-- Coluna **Data/Hora** com formato mais legivel: data em uma linha, hora em outra (ex: "11/02/2026" e "14:42:05")
-- Coluna **Atendente** com avatar e nome (ou badge "Sistema" quando for automatico)
-- Filtro por **atendente** especifico adicionado aos filtros existentes
+Isso permite que o backup restaure TODAS as 26 tabelas via service role.
 
-**3. Adicionar filtro por Atendente**
+**2. Componente `src/components/configuracoes/BackupTab.tsx`**
 
-- Novo dropdown de filtro para selecionar um atendente especifico
-- Busca a lista de profiles para popular o dropdown
+Substituir a chamada direta `supabase.from(table).upsert(batch, ...)` pelo helper `adminWrite({ table, operation: "upsert", data: batch, onConflict: "id" })` que ja existe em `src/lib/adminWrite.ts`.
 
-### Secao tecnica
+### Resultado esperado
 
-**Migration SQL - Atualizar trigger `log_activity()`:**
-
-Modificar a funcao para tentar extrair o user_id de campos da propria tabela quando `auth.uid()` retorna null:
-
-```text
-v_user_id := auth.uid();
-
--- Fallback: tentar extrair de campos da tabela
-IF v_user_id IS NULL THEN
-  CASE TG_TABLE_NAME
-    WHEN 'conversations' THEN v_user_id := COALESCE(NEW.assigned_to, OLD.assigned_to);
-    WHEN 'messages' THEN v_user_id := NEW.sender_id;
-    WHEN 'campaigns' THEN v_user_id := COALESCE(NEW.created_by, OLD.created_by);
-    WHEN 'chatbot_flows' THEN v_user_id := COALESCE(NEW.created_by, OLD.created_by);
-    WHEN 'quick_replies' THEN v_user_id := COALESCE(NEW.created_by, OLD.created_by);
-    WHEN 'schedules' THEN v_user_id := COALESCE(NEW.user_id, OLD.user_id);
-    ELSE NULL;
-  END CASE;
-END IF;
-```
-
-**Arquivo modificado: `src/pages/Diagnostico.tsx`:**
-
-- Coluna Data/Hora: separar data e hora em duas linhas para melhor leitura
-- Coluna Atendente: mostrar nome com destaque ou badge "Sistema" quando for acao automatica
-- Novo filtro dropdown "Atendente" que lista todos os profiles e filtra por `user_id`
-- Melhorar metadata summary para mostrar mais contexto
+- Restauracao sem erros de RLS em nenhuma tabela
+- Funciona tanto no ambiente Cloud quanto no VPS self-hosted
+- Nenhuma dependencia nova
 
