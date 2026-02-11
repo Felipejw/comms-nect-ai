@@ -1,104 +1,81 @@
 
 
-## Corrigir recebimento de mensagens WhatsApp na VPS
+## Analise do Chatbot: Problemas Encontrados
 
-### Contexto
+### Status Geral
 
-O sistema esta instalado na VPS com todos os containers Docker rodando. O Baileys envia webhooks para `http://kong:8000/functions/v1/baileys-webhook` (rota interna Docker), que e o correto. O problema esta no codigo da Edge Function que processa esses webhooks.
-
-### Problemas identificados (4 bugs no codigo)
+O chatbot tem uma **interface visual completa e bem construida** (editor de fluxos com drag-and-drop, 10 tipos de blocos, painel de configuracao detalhado). Porem, o **backend de execucao esta quebrado** -- o fluxo nunca e executado quando uma mensagem chega.
 
 ---
 
-#### Bug 1: Conexao nunca e encontrada (CRITICO)
+### PROBLEMA CRITICO: Handler do execute-flow esta vazio
 
-**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linha 239)
+**Arquivo:** `supabase/functions/execute-flow/index.ts` (linhas 953-959)
 
-O filtro exige `sessionData?.engine === "baileys"`, mas a conexao "BR" no banco tem `session_data: {sessionName: "BR"}` -- sem o campo `engine`. Resultado: **todas as mensagens sao ignoradas** com log "Connection not found".
+O handler HTTP que recebe as requisicoes do webhook esta assim:
 
-**Correcao:** Remover o filtro `engine`:
 ```text
-// De:
-return sessionData?.sessionName === session && sessionData?.engine === "baileys";
-// Para:
-return sessionData?.sessionName === session;
+const handler = async (req: Request): Promise<Response> => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  // ... keep existing code (flow execution logic - processNode, all node type handling)
+};
 ```
 
----
+O comentario `// ... keep existing code` e um placeholder que nunca foi preenchido. Todas as funcoes auxiliares estao implementadas (findMatchingTrigger, executeFlowFromNode, matchMenuOption, etc.), mas **nenhuma delas e chamada** porque o handler nao faz nada.
 
-#### Bug 2: QR Code nao e salvo via webhook
-
-**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linha 253)
-
-O servidor Baileys envia `{ qrCode: "data:image/png;base64,..." }` mas o handler verifica `eventPayload?.qr`.
-
-**Correcao:** Adicionar `qrCode` como campo prioritario:
-```text
-const qrCode = eventPayload?.qrCode || eventPayload?.qr || eventPayload;
-```
+**Impacto:** O webhook chama `execute-flow` com os dados da mensagem, mas a funcao retorna `undefined` (nenhuma Response), entao o fluxo nunca executa.
 
 ---
 
-#### Bug 3: Numero de telefone nao e extraido ao conectar
+### O que esta funcionando (UI)
 
-**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linhas 284-286)
+- Editor visual de fluxos com React Flow (arrastar/soltar blocos)
+- 10 tipos de blocos: Gatilho, Mensagem, WhatsApp, IA, Aguardar, Menu, Agendar, CRM, Transferir, Encerrar
+- Painel de configuracao completo para cada bloco
+- Validacao visual nos blocos (badges de aviso)
+- CRUD de fluxos (criar, editar, excluir, ativar/desativar)
+- Salvamento de nodes/edges no banco de dados
+- Sidebar colapsavel com busca
 
-O servidor Baileys envia `{ status: "WORKING", me: { id: "5511999999999" } }` mas o handler so verifica `eventPayload?.phoneNumber`, que nao existe.
+### O que esta funcionando (Backend)
 
-**Correcao:** Adicionar fallback para `me.id`:
-```text
-if (eventPayload?.phoneNumber) {
-  updates.phone_number = eventPayload.phoneNumber;
-} else if (eventPayload?.me?.id) {
-  updates.phone_number = String(eventPayload.me.id).split(':')[0].replace('@s.whatsapp.net', '');
-}
-```
-
----
-
-#### Bug 4: Midia (fotos, audios, videos) nao e armazenada
-
-**Arquivo:** `supabase/functions/baileys-webhook/index.ts` (linhas 333-334)
-
-O servidor Baileys envia a midia no campo `mediaUrl` (formato `data:image/jpeg;base64,...`), mas o handler so verifica `msgPayload.base64 || msgPayload.mediaData`. Alem disso, a condicao `hasMedia` do Baileys nao e verificada.
-
-**Correcao:** Incluir `mediaUrl` nas verificacoes:
-```text
-// Linha 333 - condicao
-if (msgPayload.hasMedia || msgPayload.mediaData || msgPayload.base64 || msgPayload.mediaUrl) {
-
-// Linha 334 - dados
-const base64Data = msgPayload.base64 || msgPayload.mediaData || msgPayload.mediaUrl;
-```
+- Todas as funcoes auxiliares: envio de mensagem, chamada de IA (Lovable AI + Google AI Studio), busca de gatilhos, execucao de menu, delay, transferencia, CRM, agendamento
+- Integracao com Google Calendar para agendamentos
+- Suporte a LID (Lead ID) do WhatsApp
+- Historico de conversa para contexto da IA
+- Tabelas no banco: `chatbot_flows`, `flow_nodes`, `flow_edges` + campos `is_bot_active`, `active_flow_id`, `flow_state` na tabela `conversations`
 
 ---
 
-### Correcao preventiva adicional
+### Correcao necessaria
 
-#### Salvar `engine` ao criar novas conexoes
+Implementar o handler da funcao `execute-flow` que deve:
 
-**Arquivo:** `supabase/functions/baileys-instance/index.ts` (linha 106)
+1. Receber os dados do webhook (`conversationId`, `contactId`, `message`, `connectionId`, `isNewConversation`)
+2. Verificar se a conversa tem um `flow_state` pendente (menu aguardando resposta, IA aguardando resposta, agendamento aguardando resposta)
+3. Se sim, continuar o fluxo a partir do estado salvo
+4. Se nao, buscar todos os fluxos ativos, encontrar um gatilho que corresponda a mensagem
+5. Se encontrar, ativar o fluxo na conversa e executar a partir do gatilho
+6. Carregar a configuracao do Baileys e os dados do contato
+7. Chamar `executeFlowFromNode()` para executar os blocos em sequencia
 
-Para que futuras conexoes nao tenham o mesmo problema:
-```text
-session_data: { sessionName, engine: "baileys" },
-```
+### Secao Tecnica
 
----
+**Arquivo modificado:** `supabase/functions/execute-flow/index.ts`
 
-### Secao tecnica
+O handler precisa:
+- Fazer parse do body JSON
+- Criar cliente Supabase com service role
+- Buscar dados da conversa (incluindo `flow_state`, `active_flow_id`)
+- Buscar dados do contato (nome, telefone, whatsapp_lid)
+- Buscar a conexao WhatsApp associada a conversa
+- Carregar config do Baileys (URL do servidor, API key, nome da sessao)
+- Verificar se ha estado pendente (menu/IA/agendamento) e processar a resposta
+- Ou buscar fluxos ativos e encontrar gatilho correspondente
+- Chamar `executeFlowFromNode` com todos os parametros
+- Retornar Response com status de sucesso ou erro
 
-**Arquivos modificados:**
-1. `supabase/functions/baileys-webhook/index.ts` -- 4 correcoes (linhas 239, 253, 284-286, 333-334)
-2. `supabase/functions/baileys-instance/index.ts` -- 1 correcao (linha 106)
-
-**Fluxo apos as correcoes:**
-1. Mensagem chega no WhatsApp
-2. Baileys processa e envia POST para `http://kong:8000/functions/v1/baileys-webhook`
-3. Webhook encontra a conexao pelo `sessionName` (sem exigir `engine`)
-4. Contato e criado/encontrado no banco
-5. Conversa e criada/atualizada
-6. Mensagem e salva e aparece no frontend
-
-**Apos aplicar:** O usuario precisa atualizar os arquivos das Edge Functions na VPS (pull + restart do container functions) para que as correcoes entrem em vigor.
-
+Estimativa: ~150 linhas de codigo no handler, usando todas as funcoes auxiliares que ja existem no arquivo.
