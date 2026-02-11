@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
+import { adminWrite } from "@/lib/adminWrite";
 import { toast } from "sonner";
 import { Download, Upload, FileJson, AlertTriangle, CheckCircle2 } from "lucide-react";
 import {
@@ -145,17 +146,20 @@ export function BackupTab() {
         setProgressLabel(`Restaurando ${table} (${rows.length} registros)...`);
         setProgress(Math.round((i / tables.length) * 100));
 
-        // Upsert in batches of 500
+        // Upsert in batches of 500 via adminWrite (bypasses RLS)
         const BATCH = 500;
         for (let j = 0; j < rows.length; j += BATCH) {
           const batch = rows.slice(j, j + BATCH);
-          const { error } = await (supabase.from(table as any) as any).upsert(batch, {
-            onConflict: "id",
-            ignoreDuplicates: false,
-          });
-          if (error) {
-            console.error(`Erro em ${table}:`, error);
-            toast.error(`Erro ao restaurar ${table}: ${error.message}`);
+          try {
+            await adminWrite({
+              table,
+              operation: "upsert",
+              data: batch,
+              onConflict: "id",
+            });
+          } catch (err: any) {
+            console.error(`Erro em ${table}:`, err);
+            toast.error(`Erro ao restaurar ${table}: ${err.message || err}`);
           }
         }
       }
