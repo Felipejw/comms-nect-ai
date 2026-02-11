@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -84,10 +85,11 @@ export default function Diagnostico() {
   const [actionFilter, setActionFilter] = useState("all");
   const [entityFilter, setEntityFilter] = useState("all");
   const [periodFilter, setPeriodFilter] = useState("7d");
+  const [attendantFilter, setAttendantFilter] = useState("all");
   const [currentPage, setCurrentPage] = useState(0);
 
   // Reset page when filters change
-  useEffect(() => { setCurrentPage(0); }, [actionFilter, entityFilter, periodFilter]);
+  useEffect(() => { setCurrentPage(0); }, [actionFilter, entityFilter, periodFilter, attendantFilter]);
 
   // Fetch Baileys server health
   const {
@@ -155,13 +157,26 @@ export default function Diagnostico() {
     }
   };
 
+  // Fetch all profiles for attendant filter
+  const { data: allProfiles } = useQuery({
+    queryKey: ["profiles-for-filter"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("user_id, name, avatar_url")
+        .order("name");
+      if (error) throw error;
+      return data || [];
+    },
+  });
+
   // Fetch activity logs with filters and pagination
   const {
     data: activityLogsData,
     isLoading: isLoadingLogs,
     refetch: refetchLogs,
   } = useQuery({
-    queryKey: ["activity-logs-diagnostic", actionFilter, entityFilter, periodFilter, currentPage],
+    queryKey: ["activity-logs-diagnostic", actionFilter, entityFilter, periodFilter, attendantFilter, currentPage],
     queryFn: async () => {
       let query = supabase
         .from("activity_logs")
@@ -176,24 +191,32 @@ export default function Diagnostico() {
       if (entityFilter !== "all") {
         query = query.eq("entity_type", entityFilter);
       }
+      if (attendantFilter !== "all") {
+        if (attendantFilter === "system") {
+          query = query.is("user_id", null);
+        } else {
+          query = query.eq("user_id", attendantFilter);
+        }
+      }
 
       const { data, error, count } = await query;
       if (error) throw error;
 
       const userIds = [...new Set(data?.map(log => log.user_id).filter(Boolean))];
-      let userNames: Record<string, string> = {};
+      let profileMap: Record<string, { name: string; avatar_url: string | null }> = {};
 
       if (userIds.length > 0) {
         const { data: profiles } = await supabase
           .from("profiles")
-          .select("user_id, name")
+          .select("user_id, name, avatar_url")
           .in("user_id", userIds);
-        profiles?.forEach(p => { userNames[p.user_id] = p.name; });
+        profiles?.forEach(p => { profileMap[p.user_id] = { name: p.name, avatar_url: p.avatar_url }; });
       }
 
       const logs = data?.map(log => ({
         ...log,
-        userName: log.user_id ? (userNames[log.user_id] || "Usuário desconhecido") : "Sistema",
+        userName: log.user_id ? (profileMap[log.user_id]?.name || "Usuário desconhecido") : "Sistema",
+        userAvatar: log.user_id ? (profileMap[log.user_id]?.avatar_url || null) : null,
       })) || [];
 
       return { logs, totalCount: count || 0 };
@@ -560,6 +583,18 @@ export default function Diagnostico() {
                   ))}
                 </SelectContent>
               </Select>
+              <Select value={attendantFilter} onValueChange={setAttendantFilter}>
+                <SelectTrigger className="w-[180px] h-8 text-xs">
+                  <SelectValue placeholder="Atendente" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Todos os atendentes</SelectItem>
+                  <SelectItem value="system">Sistema</SelectItem>
+                  {allProfiles?.map(p => (
+                    <SelectItem key={p.user_id} value={p.user_id}>{p.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </CardHeader>
@@ -581,8 +616,8 @@ export default function Diagnostico() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[160px]">Data/Hora</TableHead>
-                      <TableHead>Usuário</TableHead>
+                      <TableHead className="w-[130px]">Data/Hora</TableHead>
+                      <TableHead className="w-[180px]">Atendente</TableHead>
                       <TableHead>Ação</TableHead>
                       <TableHead>Entidade</TableHead>
                       <TableHead>Detalhes</TableHead>
@@ -596,10 +631,25 @@ export default function Diagnostico() {
                       return (
                         <TableRow key={log.id}>
                           <TableCell className="font-mono text-xs">
-                            {format(new Date(log.created_at), "dd/MM/yy HH:mm:ss", { locale: ptBR })}
+                            <div className="flex flex-col">
+                              <span>{format(new Date(log.created_at), "dd/MM/yyyy", { locale: ptBR })}</span>
+                              <span className="text-muted-foreground">{format(new Date(log.created_at), "HH:mm:ss", { locale: ptBR })}</span>
+                            </div>
                           </TableCell>
                           <TableCell>
-                            <span className="font-medium text-sm">{log.userName}</span>
+                            {log.user_id ? (
+                              <div className="flex items-center gap-2">
+                                <Avatar className="h-6 w-6">
+                                  <AvatarImage src={log.userAvatar || undefined} />
+                                  <AvatarFallback className="text-[10px]">
+                                    {log.userName.split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <span className="font-medium text-sm">{log.userName}</span>
+                              </div>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs">Sistema</Badge>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge variant="outline" className="text-xs">
