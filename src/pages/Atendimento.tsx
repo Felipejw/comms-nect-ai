@@ -262,6 +262,16 @@ export default function Atendimento() {
     }
   }, [selectedConversation?.id]);
 
+  // Sync selectedConversation with latest data from cache
+  useEffect(() => {
+    if (selectedConversation && conversations) {
+      const updated = conversations.find(c => c.id === selectedConversation.id);
+      if (updated && updated.last_message_at !== selectedConversation.last_message_at) {
+        setSelectedConversation(updated);
+      }
+    }
+  }, [conversations]);
+
   // Filtered quick replies based on input
   const filteredQuickReplies = useMemo(() => {
     if (!showQuickReplies || !quickReplies) return [];
@@ -1052,6 +1062,32 @@ export default function Atendimento() {
             <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
               <Mic className="w-4 h-4 text-muted-foreground" />
               <span className="text-sm text-muted-foreground">Mensagem de áudio</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={async () => {
+                  try {
+                    const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
+                      body: { 
+                        messageId: message.id, 
+                        mediaType: 'audio',
+                        sessionName: selectedConversation?.connection?.name || 'default'
+                      },
+                    });
+                    if (error) throw error;
+                    if (data?.success && data?.url) {
+                      await supabase.from('messages').update({ media_url: data.url }).eq('id', message.id);
+                      queryClient.invalidateQueries({ queryKey: ['messages', message.conversation_id] });
+                    }
+                  } catch (err) {
+                    console.error('Error downloading audio:', err);
+                  }
+                }}
+              >
+                <Download className="w-3 h-3 mr-1" />
+                Baixar
+              </Button>
             </div>
           )}
           {message.message_type === "video" && message.media_url && (
@@ -1737,26 +1773,6 @@ export default function Atendimento() {
                         </Badge>
                         <ChatConnectionIndicator connectionId={selectedConversation.connection_id} />
                       </div>
-                    )}
-                    {/* LID Contact Warning Button */}
-                    {isLidOnlyContact(selectedConversation.contact) && (
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 px-1.5 text-yellow-500 hover:text-yellow-600 hover:bg-yellow-100/50"
-                              onClick={() => handleResolveLidContact(selectedConversation.contact?.id)}
-                            >
-                              <Info className="w-3.5 h-3.5" />
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent side="bottom">
-                            <p className="text-xs">Contato com identificador temporário. Clique para tentar localizar o número real.</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
                     )}
                   </div>
                 </div>
