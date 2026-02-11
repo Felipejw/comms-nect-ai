@@ -139,7 +139,7 @@ export default function ContactProfilePanel({ contactId, conversationId, onClose
   }
 
   return (
-    <div className="w-80 border-l border-border flex flex-col bg-card">
+    <div className="w-80 border-l border-border flex flex-col bg-background">
       {/* Header */}
       <div className="p-4 border-b border-border flex items-center justify-between">
         <h3 className="font-semibold">Perfil do Contato</h3>

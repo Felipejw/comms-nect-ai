@@ -245,7 +245,24 @@ export function useMessages(conversationId: string) {
         (payload) => {
           queryClient.setQueryData(['messages', conversationId], (old: Message[] | undefined) => {
             if (!old) return [payload.new as Message];
+            // Avoid duplicates
+            if (old.some(m => m.id === (payload.new as Message).id)) return old;
             return [...old, payload.new as Message];
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${conversationId}`,
+        },
+        (payload) => {
+          queryClient.setQueryData(['messages', conversationId], (old: Message[] | undefined) => {
+            if (!old) return old;
+            return old.map(m => m.id === (payload.new as Message).id ? (payload.new as Message) : m);
           });
         }
       )
