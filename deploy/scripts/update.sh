@@ -12,6 +12,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -19,52 +20,112 @@ log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
 log_warning() { echo -e "${YELLOW}[AVISO]${NC} $1"; }
 log_error() { echo -e "${RED}[ERRO]${NC} $1"; }
 
-# Diretório do script
+# Verificar root
+if [ "$EUID" -ne 0 ]; then
+    log_error "Execute como root: sudo ./scripts/update.sh"
+    exit 1
+fi
+
+# Diretório do script → deploy/scripts/
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEPLOY_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(dirname "$DEPLOY_DIR")"
 
-cd "$DEPLOY_DIR"
+cd "$PROJECT_DIR"
 
-# Carregar variáveis de ambiente
-if [ -f .env ]; then
-    export $(cat .env | grep -v '^#' | xargs)
+# Carregar variáveis de ambiente do deploy
+if [ -f "$DEPLOY_DIR/.env" ]; then
+    export $(cat "$DEPLOY_DIR/.env" | grep -v '^#' | xargs)
 fi
 
 # Detectar comando do Docker Compose
-if command -v docker-compose &> /dev/null; then
-    DOCKER_COMPOSE="docker-compose"
-else
+if docker compose version &> /dev/null; then
     DOCKER_COMPOSE="docker compose"
+else
+    DOCKER_COMPOSE="docker-compose"
 fi
 
 # Ler versões
-OLD_VERSION=$(cat VERSION.old 2>/dev/null || echo "desconhecida")
-NEW_VERSION=$(cat VERSION 2>/dev/null || echo "3.0.0")
+OLD_VERSION=$(cat "$DEPLOY_DIR/VERSION.old" 2>/dev/null || echo "desconhecida")
+NEW_VERSION=$(cat "$DEPLOY_DIR/VERSION" 2>/dev/null || echo "3.0.0")
 
-echo -e "${BLUE}"
-echo "============================================"
-echo "  Atualização do Sistema de Atendimento"
-echo "  Versão: $OLD_VERSION → $NEW_VERSION"
-echo "  Data: $(date)"
-echo "============================================"
+echo -e "${CYAN}"
+echo "╔════════════════════════════════════════════════════════════╗"
+echo "║   ATUALIZAÇÃO COMPLETA DO SISTEMA                         ║"
+echo "║   Versão: $OLD_VERSION → $NEW_VERSION"
+echo "║   Data: $(date)"
+echo "╚════════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
 # ==========================================
-# 1. Confirmar Atualização
+# 1. Git Pull - Baixar código mais recente
 # ==========================================
-echo ""
-log_warning "ATENÇÃO: Certifique-se de ter feito backup antes de continuar!"
-echo ""
-read -p "Deseja continuar com a atualização? (s/N): " confirm
-if [ "$confirm" != "s" ] && [ "$confirm" != "S" ]; then
-    log_info "Atualização cancelada"
-    exit 0
-fi
+log_info "Baixando código mais recente..."
+
+# Corrigir permissões para o git pull
+chown -R $(logname 2>/dev/null || echo $SUDO_USER):$(logname 2>/dev/null || echo $SUDO_USER) . 2>/dev/null || true
+
+su -c "cd $PROJECT_DIR && git pull origin main" $(logname 2>/dev/null || echo $SUDO_USER) || {
+    log_warning "Git pull falhou. Tentando com reset..."
+    su -c "cd $PROJECT_DIR && git fetch origin main && git reset --hard origin/main" $(logname 2>/dev/null || echo $SUDO_USER) || {
+        log_error "Não foi possível atualizar o código. Verifique o repositório."
+        exit 1
+    }
+}
+
+log_success "Código atualizado"
 
 # ==========================================
-# 2. Fazer Backup Automático
+# 2. Rebuild do Frontend via Docker
 # ==========================================
-log_info "Fazendo backup antes da atualização..."
+log_info "Compilando frontend..."
+
+# Limpar build anterior para garantir build limpo
+rm -rf dist
+
+docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build" || {
+    log_error "Falha ao compilar o frontend"
+    exit 1
+}
+
+log_success "Frontend compilado"
+
+# ==========================================
+# 3. Deploy do Frontend
+# ==========================================
+log_info "Copiando frontend para o volume do Nginx..."
+
+# Preservar config.js existente
+if [ -f "$DEPLOY_DIR/volumes/frontend/config.js" ]; then
+    cp "$DEPLOY_DIR/volumes/frontend/config.js" /tmp/config.js.bak
+fi
+
+# Criar diretório se não existir
+mkdir -p "$DEPLOY_DIR/volumes/frontend"
+
+# Copiar novo build
+cp -r dist/* "$DEPLOY_DIR/volumes/frontend/"
+
+# Restaurar config.js
+if [ -f /tmp/config.js.bak ]; then
+    cp /tmp/config.js.bak "$DEPLOY_DIR/volumes/frontend/config.js"
+    rm /tmp/config.js.bak
+fi
+
+# Injetar config.js no index.html (se ainda não estiver)
+if ! grep -q 'config.js' "$DEPLOY_DIR/volumes/frontend/index.html" 2>/dev/null; then
+    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/volumes/frontend/index.html"
+    log_success "config.js injetado no index.html"
+fi
+
+log_success "Frontend deployado"
+
+# ==========================================
+# 4. Backup automático
+# ==========================================
+log_info "Fazendo backup antes de reiniciar..."
+
+cd "$DEPLOY_DIR"
 
 if [ -f "scripts/backup.sh" ]; then
     ./scripts/backup.sh || {
@@ -76,32 +137,12 @@ else
 fi
 
 # ==========================================
-# 3. Parar Containers
-# ==========================================
-log_info "Parando containers..."
-
-$DOCKER_COMPOSE down || true
-
-log_success "Containers parados"
-
-# ==========================================
-# 4. Atualizar Imagens Docker (se necessário)
-# ==========================================
-log_info "Atualizando imagens Docker..."
-
-$DOCKER_COMPOSE pull 2>/dev/null || {
-    log_warning "Não foi possível atualizar imagens. Usando versões existentes."
-}
-
-log_success "Imagens verificadas"
-
-# ==========================================
 # 5. Executar Migrations de Atualização
 # ==========================================
 log_info "Verificando migrations..."
 
 # Iniciar apenas o banco de dados
-$DOCKER_COMPOSE up -d db
+$DOCKER_COMPOSE up -d db 2>/dev/null || true
 
 # Aguardar banco estar pronto
 max_attempts=30
@@ -110,58 +151,36 @@ log_info "Aguardando banco de dados..."
 while ! $DOCKER_COMPOSE exec -T db pg_isready -U postgres &>/dev/null; do
     attempt=$((attempt + 1))
     if [ $attempt -ge $max_attempts ]; then
-        log_error "Banco de dados não iniciou a tempo"
-        exit 1
+        log_warning "Banco de dados não respondeu a tempo. Pulando migrations."
+        break
     fi
     sleep 2
 done
 
 # Executar migrations se existirem
-if [ -f "supabase/migrations_update.sql" ]; then
-    log_info "Executando migrations de atualização..."
-    
-    $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} \
-        -f /docker-entrypoint-initdb.d/migrations_update.sql || {
-        log_warning "Algumas migrations podem ter falhado (normal se já executadas)"
-    }
-    
-    # Mover para pasta de histórico
-    mkdir -p supabase/migrations_applied
-    mv supabase/migrations_update.sql "supabase/migrations_applied/update_$(date +%Y%m%d_%H%M%S).sql"
-    
-    log_success "Migrations executadas"
-else
-    log_info "Nenhuma migration de atualização encontrada"
-fi
-
-# Verificar migrations em pasta
-if [ -d "supabase/migrations_update" ] && [ "$(ls -A supabase/migrations_update 2>/dev/null)" ]; then
-    log_info "Executando migrations da pasta..."
-    
-    for migration in supabase/migrations_update/*.sql; do
-        if [ -f "$migration" ]; then
-            log_info "  - $(basename $migration)"
-            $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} -f "/docker-entrypoint-initdb.d/$(basename $migration)" || {
-                log_warning "    Falhou (pode já ter sido aplicada)"
-            }
-        fi
-    done
-    
-    # Mover para histórico
-    mkdir -p supabase/migrations_applied
-    mv supabase/migrations_update/* supabase/migrations_applied/ 2>/dev/null || true
-    
-    log_success "Migrations da pasta executadas"
+if [ $attempt -lt $max_attempts ]; then
+    if [ -f "supabase/migrations_update.sql" ]; then
+        log_info "Executando migrations de atualização..."
+        $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} \
+            -f /docker-entrypoint-initdb.d/migrations_update.sql || {
+            log_warning "Algumas migrations podem ter falhado (normal se já executadas)"
+        }
+        mkdir -p supabase/migrations_applied
+        mv supabase/migrations_update.sql "supabase/migrations_applied/update_$(date +%Y%m%d_%H%M%S).sql"
+        log_success "Migrations executadas"
+    else
+        log_info "Nenhuma migration de atualização encontrada"
+    fi
 fi
 
 # ==========================================
-# 6. Iniciar Todos os Containers
+# 6. Reiniciar TODOS os containers
 # ==========================================
-log_info "Iniciando containers..."
+log_info "Reiniciando todos os containers..."
 
-$DOCKER_COMPOSE --profile baileys up -d
+$DOCKER_COMPOSE --profile baileys up -d --force-recreate
 
-log_success "Containers iniciados"
+log_success "Containers reiniciados"
 
 # ==========================================
 # 7. Aguardar Serviços
