@@ -4,7 +4,9 @@ import {
   LayoutDashboard, MessageSquare, Users, Calendar, Tags, Zap, Settings,
   ChevronDown, ChevronRight, FileText, Activity, HeartPulse, Send, UserCog,
   Bot, Plug, QrCode, Kanban, MessagesSquare, ChevronsLeft, ChevronsRight, Building2, LogOut,
+  Sun, Moon,
 } from "lucide-react";
+import { useTheme } from "next-themes";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -58,6 +60,7 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const navigate = useNavigate();
   const { hasPermission, isAdmin, signOut, profile } = useAuth();
   const { getSetting } = useSystemSettings();
+  const { theme, setTheme } = useTheme();
   const [expandedSections, setExpandedSections] = useState<string[]>(["Gerência", "Atendimento", "Administração"]);
   const [isCollapsed, setIsCollapsed] = useState(false);
 
@@ -146,6 +149,14 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
             <Settings className="w-5 h-5" />
             {!isCollapsed && <span>Configurações</span>}
           </NavLink>
+          <button
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+            className={cn("sidebar-link w-full", isCollapsed && "justify-center px-2")}
+            title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+          >
+            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            {!isCollapsed && <span>{theme === "dark" ? "Modo Claro" : "Modo Escuro"}</span>}
+          </button>
           <button
             onClick={async () => {
               try {
