@@ -127,10 +127,16 @@ touch "$PACKAGE_DIR/volumes/kong/.gitkeep"
 touch "$PACKAGE_DIR/volumes/baileys/sessions/.gitkeep"
 touch "$PACKAGE_DIR/backups/.gitkeep"
 
+# Copiar bootstrap-local.sh para a raiz do pacote (fora da subpasta)
+cp "$DEPLOY_DIR/scripts/bootstrap-local.sh" "$PACKAGE_DIR/bootstrap-local.sh"
+
 # Criar ZIP
 cd /tmp
 rm -f "$OUTPUT_DIR/${PACKAGE_NAME}.zip"
 zip -r "$OUTPUT_DIR/${PACKAGE_NAME}.zip" "$PACKAGE_NAME"
+
+# Também copiar bootstrap-local.sh solto no releases/ para conveniência
+cp "$DEPLOY_DIR/scripts/bootstrap-local.sh" "$OUTPUT_DIR/bootstrap-local.sh"
 
 # Limpar
 rm -rf "$PACKAGE_DIR"
