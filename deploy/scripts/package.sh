@@ -88,7 +88,7 @@ log_success "Frontend construído"
 # ==========================================
 log_info "Criando pacote de instalação..."
 
-PACKAGE_NAME="sistema-atendimento-v${VERSION}"
+PACKAGE_NAME="chatbot-v${VERSION}"
 PACKAGE_DIR="/tmp/$PACKAGE_NAME"
 OUTPUT_DIR="$PROJECT_DIR/releases"
 
@@ -148,7 +148,7 @@ log_success "Pacote criado: $OUTPUT_DIR/${PACKAGE_NAME}.zip"
 # ==========================================
 log_info "Criando pacote de atualização..."
 
-UPDATE_PACKAGE_NAME="sistema-atendimento-v${VERSION}-update"
+UPDATE_PACKAGE_NAME="chatbot-v${VERSION}-update"
 UPDATE_PACKAGE_DIR="/tmp/$UPDATE_PACKAGE_NAME"
 
 rm -rf "$UPDATE_PACKAGE_DIR"
