@@ -47,7 +47,7 @@ ZIP_FILE="$1"
 
 # Se nenhum argumento, tentar autodetectar ZIP no diretório atual
 if [ -z "$ZIP_FILE" ]; then
-    DETECTED_ZIP=$(ls sistema-atendimento-*.zip 2>/dev/null | head -1)
+    DETECTED_ZIP=$(ls chatbot-*.zip 2>/dev/null | head -1)
     if [ -n "$DETECTED_ZIP" ]; then
         ZIP_FILE="$DETECTED_ZIP"
         echo -e "${BLUE}[INFO]${NC} ZIP detectado automaticamente: $ZIP_FILE"
