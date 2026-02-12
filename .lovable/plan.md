@@ -1,37 +1,36 @@
 
 
-## Modo Noturno (Dark Mode)
+## Script de Instalacao Local (bootstrap-local.sh)
 
-### Situacao atual
+### O que sera criado
 
-O projeto ja possui as variaveis CSS para modo escuro definidas no `src/index.css` (classe `.dark`) e o pacote `next-themes` esta instalado. Porem, nao ha um `ThemeProvider` envolvendo a aplicacao nem um botao para alternar entre os modos.
+Um unico arquivo: `deploy/scripts/bootstrap-local.sh`
 
-### Alteracoes necessarias
+### Como funciona
 
-**1. Adicionar ThemeProvider no App.tsx**
+1. Voce sobe os arquivos do projeto para a VPS (SCP, SFTP, ZIP, etc.)
+2. Executa: `sudo bash /opt/sistema/deploy/scripts/bootstrap-local.sh`
+3. O script faz todo o resto automaticamente
 
-Envolver a aplicacao com o `ThemeProvider` do `next-themes`, configurado para usar a classe `dark` no `<html>` e com o tema padrao `light`.
+### O que o script faz internamente
 
-**2. Criar botao de alternancia no AppSidebar**
+1. Detecta o diretorio raiz do projeto (relativo a posicao do proprio script)
+2. Valida que os arquivos essenciais existem (`docker-compose.yml`, `install-unified.sh`)
+3. Instala Git se necessario (dependencia do install-unified)
+4. Da permissao de execucao a todos os scripts em `deploy/scripts/`
+5. Executa o `install-unified.sh` que ja cuida de tudo:
+   - Instalar Docker
+   - Perguntar dominio e email SSL
+   - Configurar Nginx e certificado
+   - Subir banco de dados
+   - Criar usuario admin
+   - Iniciar Baileys
 
-Adicionar um botao com icones Sol/Lua na parte inferior da sidebar para que o usuario possa alternar entre modo claro e escuro. O estado sera persistido automaticamente pelo `next-themes` via `localStorage`.
-
-**3. Ajustar BrandingProvider para respeitar o tema**
-
-O sistema de branding atual aplica cores via CSS vars inline, o que funciona em ambos os modos. Nenhuma alteracao necessaria no branding -- as cores customizadas continuarao sobrescrevendo as variaveis, e o modo escuro usara as variaveis `.dark` como fallback para propriedades nao customizadas.
-
-### Resumo tecnico
+### Secao tecnica
 
 | Arquivo | Alteracao |
 |---|---|
-| `src/App.tsx` | Envolver com `ThemeProvider` do `next-themes` |
-| `src/components/layout/AppSidebar.tsx` | Adicionar botao Sun/Moon para alternar tema |
-| `src/components/layout/AppLayout.tsx` | Adicionar botao no header mobile |
+| `deploy/scripts/bootstrap-local.sh` | Novo script (~50 linhas) que reutiliza o install-unified.sh |
 
-### Resultado esperado
-
-- Botao de alternancia claro/escuro na sidebar (desktop) e no header (mobile)
-- Transicao suave entre os modos
-- Preferencia salva automaticamente no navegador
-- Compativel com o sistema de cores customizaveis existente
+O script e simples: apenas resolve o caminho do projeto, valida os arquivos, e chama o instalador existente. Toda a logica complexa ja esta no `install-unified.sh`.
 
