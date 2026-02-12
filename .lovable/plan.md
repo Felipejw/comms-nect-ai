@@ -1,96 +1,71 @@
 
 
-## Correcoes na Pagina de Atendimento e Diagnostico
+## Correcoes: Media WhatsApp, Grupos, Cor de Conexao e Logs
 
-### Problemas identificados e solucoes
+### 1. Media (imagens, audio, video) nao aparecendo
 
----
+**Causa raiz**: O codigo so mostra o botao "Baixar" para audios sem `media_url`. Para imagens e videos sem `media_url`, nada e renderizado (condicao `&& message.media_url` impede a exibicao). Alem disso, o servidor Baileys esta offline, o que impede o processamento de midia no momento do webhook.
 
-### 1. Mensagens nao atualizam em tempo real
-
-**Causa**: O hook `useMessages` ja tem subscription de realtime para INSERTs, mas a conversa selecionada (`selectedConversation`) nao e atualizada quando uma nova conversa chega via realtime. O componente pode estar com o objeto de conversa desatualizado (stale).
-
-**Solucao**: Adicionar um `useEffect` no `Atendimento.tsx` que, ao detectar invalidacao do cache de conversas, atualiza o `selectedConversation` com os dados mais recentes do cache. Tambem garantir que o realtime de `messages` tambem escute eventos UPDATE (para delivery_status e is_read).
+**Solucao**: Adicionar botoes de download para imagens e videos sem `media_url`, identico ao que ja existe para audio. Isso permite ao atendente tentar buscar a midia manualmente.
 
 **Arquivo**: `src/pages/Atendimento.tsx`
-- Adicionar efeito que sincroniza `selectedConversation` com dados do cache quando `conversations` muda
-- No `useMessages`, tambem escutar UPDATE events para refletir status de leitura/entrega
-
-**Arquivo**: `src/hooks/useConversations.ts`
-- No `useMessages`, adicionar listener para UPDATE alem de INSERT no canal realtime
+- Adicionar bloco para `message.message_type === "image" && !message.media_url` com botao "Baixar imagem"
+- Adicionar bloco para `message.message_type === "video" && !message.media_url` com botao "Baixar video"
+- Cada botao invoca a Edge Function `download-whatsapp-media` com o `mediaType` correto
 
 ---
 
-### 2. Audio nao reproduz (mostra "[Audio]" em vez do player)
+### 2. Separacao de Grupos
 
-**Causa**: Os audios da conversa do Ferdinando estao salvos no banco COM `message_type = 'audio'` mas SEM `media_url`. O servidor Baileys envia o audio como base64 no campo `mediaUrl`, mas se o download falhar ou o base64 nao for processado corretamente, `mediaUrl` fica null. O webhook salva a mensagem sem `media_url`.
+**Causa raiz**: O codigo de separacao por abas ja funciona corretamente (aba "Grupos" existe). O problema e que o trigger `prevent_duplicate_contacts` normaliza telefones e pode rejeitar numeros de grupo (>15 digitos) em certas situacoes. Alem disso, ha apenas 1 grupo no banco de dados. O grupo existente (`Bigode`) tem `is_group: true` e `phone: 120363423042084921`.
 
-O codigo atual no `Atendimento.tsx` (linha 1048-1055) ja trata isso: se `media_url` existe, mostra o `AudioPlayer`; se nao, mostra o texto "[Audio]". O problema e que as mensagens de audio estao chegando sem a midia.
+**Verificacao**: A logica de filtro por aba esta correta:
+- Aba "Grupos": mostra conversas onde `contact.is_group === true`
+- Demais abas: filtram `!isGroup`
 
-**Solucao**: Adicionar na interface um botao para tentar baixar a midia posteriormente via Edge Function `download-whatsapp-media` quando a `media_url` esta vazia. Isso permite ao atendente clicar para buscar o audio que nao foi processado no momento do webhook.
+**Solucao**: O problema pode ser que novos grupos nao estao sendo criados corretamente. No trigger `prevent_duplicate_contacts`, telefones com >15 digitos sao tratados como invalidos pelo `normalize_phone`. O trigger tenta mover para `whatsapp_lid` se >= 20 digitos, mas IDs de grupo tem ~18 digitos, ficando no limbo - o telefone nao e normalizado mas tambem nao e movido. Para garantir consistencia, ajustar o trigger para ignorar contatos com `is_group = true` (nao normalizar o telefone de grupos).
 
-**Arquivo**: `src/pages/Atendimento.tsx`
-- Na secao onde mostra "Mensagem de audio" sem media_url, adicionar botao "Baixar audio" que invoca a Edge Function `download-whatsapp-media`
-- Ao obter sucesso, atualizar o cache local com a nova media_url
-
----
-
-### 3. Remover icone amarelo de exclamacao (LID indicator)
-
-**Causa**: O icone amarelo de exclamacao aparece no header da conversa (linha 1742-1760) para contatos que so possuem identificador LID. O usuario quer remover esse indicador visual.
-
-**Solucao**: Remover o bloco de codigo que renderiza o botao com icone `Info` amarelo no header da conversa.
-
-**Arquivo**: `src/pages/Atendimento.tsx`
-- Remover o bloco de linhas 1741-1760 (TooltipProvider com o botao amarelo de Info para LID contacts)
+**Migration SQL**: Atualizar `prevent_duplicate_contacts` para fazer `RETURN NEW` imediatamente quando `NEW.is_group = true`.
 
 ---
 
-### 4. Painel de perfil do contato fica escuro
+### 3. Cor de conexao nao atualiza
 
-**Causa**: O componente `ContactProfilePanel` usa `bg-card` como fundo (linha 142). Na segunda screenshot do usuario (VPS em producao), o fundo aparece rosa/escuro, o que indica que a variavel CSS `--card` pode estar com um valor escuro no tema ativo. Porem, o mais provavel e que o `Sheet` no mobile (linha 2219-2228) esta adicionando overlay escuro por padrao.
+**Causa raiz**: A tabela `connections` tem RLS que exige `has_role(auth.uid(), 'admin')` para UPDATE. O `updateConnection` no hook `useWhatsAppConnections` faz chamada direta ao Supabase, que e bloqueada se o usuario nao for admin. O erro e silencioso porque o toast de sucesso nao e atingido (vai para `onError`), mas a mensagem de erro pode nao ser clara.
 
-**Solucao**: No desktop, o painel ja usa `bg-card`. Verificar e ajustar o componente `ContactProfilePanel` para usar `bg-background` em vez de `bg-card`, e garantir que o `SheetContent` no mobile nao aplique overlay escuro excessivo.
+**Solucao**: Substituir a chamada direta `supabase.from("connections").update(...)` pelo helper `adminWrite()` que usa a Edge Function com service_role para contornar RLS.
 
-**Arquivo**: `src/components/atendimento/ContactProfilePanel.tsx`
-- Trocar `bg-card` por `bg-background` na div principal (linha 142)
-
----
-
-### 5. Acoes nao ficam salvas no Log de Diagnostico
-
-**Causa**: Confirmado pela consulta ao banco - todos os `user_id` estao null. O trigger `log_activity` ja tem o fallback implementado na migration mais recente, mas o trigger pode nao estar atrelado a todas as tabelas relevantes. Alem disso, as acoes feitas pelo frontend (como atualizar conversas, enviar mensagens) passam pelo Supabase client com `auth.uid()` valido, mas como nao ha trigger de `messages` registrado, essas acoes nao geram logs.
-
-Analisando os triggers existentes:
-- `trg_log_contacts` - contacts
-- `trg_log_conversations` - conversations (INSERT/UPDATE only)
-- `trg_log_connections` - connections
-- `trg_log_campaigns` - campaigns
-- `trg_log_tags` - tags
-- `trg_log_quick_replies` - quick_replies
-- `trg_log_chatbot_rules` - chatbot_rules
-
-**Faltam triggers para**: messages, chatbot_flows, flow_nodes, schedules, user_roles, system_settings
-
-O problema principal e que a maioria das acoes na conexao sao feitas via Edge Functions (service_role) que nao tem `auth.uid()`, e o fallback do trigger para `connections` nao extrai user_id de nenhum campo (o CASE nao tem clausula para 'connections').
-
-**Solucao**: 
-1. Adicionar migration SQL para criar triggers nas tabelas que faltam
-2. Expandir o fallback no CASE do trigger para cobrir mais tabelas
-
-**Migration SQL**:
-- Adicionar trigger para `messages` (INSERT apenas, para nao gerar log em cada update de is_read)
-- Adicionar trigger para `chatbot_flows` (INSERT/UPDATE/DELETE)
-- Adicionar trigger para `system_settings` (INSERT/UPDATE)
+**Arquivo**: `src/hooks/useWhatsAppConnections.ts`
+- Importar `adminWrite` de `@/lib/adminWrite`
+- No `updateConnection.mutationFn`, substituir `supabase.from("connections").update(...)` por `adminWrite({ table: "connections", operation: "update", data: updates, filters: { id: connectionId } })`
 
 ---
 
-### Secao tecnica - Resumo das alteracoes
+### 4. Logs nao aparecem no Diagnostico
+
+**Causa raiz**: Existem 579 registros de atividade no banco, mas o filtro de `entity_type` usa valores fixos de `ENTITY_LABELS` que nao incluem todos os tipos reais do banco. Alem disso, a acao `receive_message` existe em massa (244 registros) mas o filtro de acoes do dropdown mostra apenas as chaves de `ACTION_LABELS`.
+
+O problema principal e que os filtros de dropdown usam `Object.keys(ACTION_LABELS)` e `Object.keys(ENTITY_LABELS)` como opcoes. Se o usuario selecionar um filtro especifico que nao bate com os dados reais, os logs desaparecem. Alem disso, faltam entradas no mapa para `system_settings` e `schedule`.
+
+Outro fator: o filtro de periodo padrao e "7 dias". Os logs mais recentes sao de 11/02 (ontem), o que esta dentro do periodo.
+
+**Solucao**:
+1. Adicionar entradas faltantes nos mapas `ACTION_LABELS` e `ENTITY_LABELS`
+2. Adicionar `system_settings` -> "Configuracao" e `schedule` -> "Agendamento" ao ENTITY_LABELS
+3. Os filtros de dropdown devem funcionar corretamente com essas adicoes
+
+**Arquivo**: `src/pages/Diagnostico.tsx`
+- Adicionar ao `ENTITY_LABELS`: `system_settings: "Configuração"`, `schedule: "Agendamento"`, `chatbot_flow: "Fluxo chatbot"` (ja existe), `queues: "Fila"` (ja existe)
+- Confirmar que o `ACTION_LABELS` cobre as acoes reais do banco
+
+---
+
+### Secao tecnica - Resumo
 
 | Arquivo | Alteracao |
 |---|---|
-| `src/hooks/useConversations.ts` | Adicionar listener UPDATE no canal realtime de messages |
-| `src/pages/Atendimento.tsx` | 1. Sincronizar selectedConversation com cache. 2. Botao para baixar audio. 3. Remover icone amarelo LID |
-| `src/components/atendimento/ContactProfilePanel.tsx` | Trocar `bg-card` por `bg-background` |
-| Migration SQL | Adicionar triggers faltantes e expandir fallback de user_id |
+| `src/pages/Atendimento.tsx` | Adicionar botoes de download para imagem/video sem media_url |
+| `src/hooks/useWhatsAppConnections.ts` | Usar `adminWrite` no `updateConnection` para contornar RLS |
+| `src/pages/Diagnostico.tsx` | Adicionar entradas faltantes nos mapas de labels |
+| Migration SQL | Ajustar `prevent_duplicate_contacts` para ignorar grupos |
 
