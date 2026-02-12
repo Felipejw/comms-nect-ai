@@ -1044,6 +1044,38 @@ export default function Atendimento() {
               onClick={() => window.open(message.media_url!, '_blank')}
             />
           )}
+          {message.message_type === "image" && !message.media_url && (
+            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
+              <Image className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Imagem</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={async () => {
+                  try {
+                    const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
+                      body: { 
+                        messageId: message.id, 
+                        mediaType: 'image',
+                        sessionName: selectedConversation?.connection?.name || 'default'
+                      },
+                    });
+                    if (error) throw error;
+                    if (data?.success && data?.url) {
+                      await supabase.from('messages').update({ media_url: data.url }).eq('id', message.id);
+                      queryClient.invalidateQueries({ queryKey: ['messages', message.conversation_id] });
+                    }
+                  } catch (err) {
+                    console.error('Error downloading image:', err);
+                  }
+                }}
+              >
+                <Download className="w-3 h-3 mr-1" />
+                Baixar
+              </Button>
+            </div>
+          )}
           {message.message_type === "document" && message.media_url && (
             <a 
               href={message.media_url} 
@@ -1099,6 +1131,38 @@ export default function Atendimento() {
               <source src={message.media_url} />
               Seu navegador não suporta vídeos.
             </video>
+          )}
+          {message.message_type === "video" && !message.media_url && (
+            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
+              <Video className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">Vídeo</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={async () => {
+                  try {
+                    const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
+                      body: { 
+                        messageId: message.id, 
+                        mediaType: 'video',
+                        sessionName: selectedConversation?.connection?.name || 'default'
+                      },
+                    });
+                    if (error) throw error;
+                    if (data?.success && data?.url) {
+                      await supabase.from('messages').update({ media_url: data.url }).eq('id', message.id);
+                      queryClient.invalidateQueries({ queryKey: ['messages', message.conversation_id] });
+                    }
+                  } catch (err) {
+                    console.error('Error downloading video:', err);
+                  }
+                }}
+              >
+                <Download className="w-3 h-3 mr-1" />
+                Baixar
+              </Button>
+            </div>
           )}
           {message.content && (
             <p className="text-sm break-words">
