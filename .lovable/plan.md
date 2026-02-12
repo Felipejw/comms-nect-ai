@@ -1,36 +1,58 @@
 
 
-## Script de Instalacao Local (bootstrap-local.sh)
+## Instalacao com ZIP em Servidor Limpo
 
-### O que sera criado
+### Fluxo atualizado
 
-Um unico arquivo: `deploy/scripts/bootstrap-local.sh`
+1. Voce sobe o ZIP para a VPS (ex: `scp sistema-atendimento-v3.0.0.zip root@ip:/root/`)
+2. Executa **1 comando**:
 
-### Como funciona
+```text
+sudo bash -c "apt-get update -qq && apt-get install -y -qq unzip && unzip -o /root/sistema-atendimento-*.zip -d /tmp && mv /tmp/sistema-atendimento-*/ /opt/sistema && chmod +x /opt/sistema/scripts/*.sh && cd /opt/sistema && ./scripts/install-unified.sh"
+```
 
-1. Voce sobe os arquivos do projeto para a VPS (SCP, SFTP, ZIP, etc.)
-2. Executa: `sudo bash /opt/sistema/deploy/scripts/bootstrap-local.sh`
-3. O script faz todo o resto automaticamente
+Porem isso e longo demais. A solucao melhor e atualizar o `bootstrap-local.sh` para fazer tudo isso automaticamente.
 
-### O que o script faz internamente
+### O que muda no bootstrap-local.sh
 
-1. Detecta o diretorio raiz do projeto (relativo a posicao do proprio script)
-2. Valida que os arquivos essenciais existem (`docker-compose.yml`, `install-unified.sh`)
-3. Instala Git se necessario (dependencia do install-unified)
-4. Da permissao de execucao a todos os scripts em `deploy/scripts/`
-5. Executa o `install-unified.sh` que ja cuida de tudo:
-   - Instalar Docker
-   - Perguntar dominio e email SSL
-   - Configurar Nginx e certificado
-   - Subir banco de dados
-   - Criar usuario admin
-   - Iniciar Baileys
+O script sera reescrito para funcionar em **dois modos**:
+
+**Modo 1 - Com argumento (ZIP):**
+```text
+sudo bash bootstrap-local.sh /root/sistema-atendimento-v3.0.0.zip
+```
+
+**Modo 2 - Autodeteccao:**
+Se executado de dentro da pasta ja descompactada (como funciona hoje).
+
+### Logica do script atualizado
+
+1. Se receber um arquivo ZIP como argumento:
+   - Instala `unzip` se necessario
+   - Descompacta o ZIP em `/tmp`
+   - Move o conteudo para `/opt/sistema`
+   - Da permissao aos scripts
+   - Executa `install-unified.sh`
+2. Se nao receber argumento:
+   - Funciona como hoje (detecta diretorio relativo ao script)
+
+### Comando final para o usuario
+
+Voce sobe 2 arquivos para a VPS: o ZIP e o script `bootstrap-local.sh`. Depois executa:
+
+```text
+sudo bash bootstrap-local.sh sistema-atendimento-v3.0.0.zip
+```
+
+Ou ainda mais simples: o script pode buscar automaticamente qualquer `.zip` que comece com `sistema-atendimento` no diretorio atual.
 
 ### Secao tecnica
 
 | Arquivo | Alteracao |
 |---|---|
-| `deploy/scripts/bootstrap-local.sh` | Novo script (~50 linhas) que reutiliza o install-unified.sh |
+| `deploy/scripts/bootstrap-local.sh` | Reescrever para suportar modo ZIP (argumento ou autodeteccao) |
 
-O script e simples: apenas resolve o caminho do projeto, valida os arquivos, e chama o instalador existente. Toda a logica complexa ja esta no `install-unified.sh`.
+O script tera ~90 linhas e cobrira ambos os cenarios:
+- ZIP solto no servidor (servidor limpo)
+- Ja descompactado manualmente
 
