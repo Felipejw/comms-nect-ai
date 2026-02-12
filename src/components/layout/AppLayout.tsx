@@ -4,7 +4,8 @@ import { AppSidebar } from "./AppSidebar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Menu } from "lucide-react";
+import { Menu, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { usePresence } from "@/hooks/usePresence";
 
@@ -12,6 +13,7 @@ export function AppLayout() {
   const isMobile = useIsMobile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { getSetting } = useSystemSettings();
+  const { theme, setTheme } = useTheme();
   usePresence();
   
   const platformName = getSetting("platform_name") || "TalkFlow";
@@ -31,7 +33,15 @@ export function AppLayout() {
               <AppSidebar onNavigate={() => setSidebarOpen(false)} />
             </SheetContent>
           </Sheet>
-          <span className="font-semibold">{platformName}</span>
+          <span className="font-semibold flex-1">{platformName}</span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-sidebar-foreground"
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
         </header>
         
         <main className="flex-1 overflow-auto p-4">
