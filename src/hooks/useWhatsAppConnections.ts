@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { adminWrite } from "@/lib/adminWrite";
 
 export interface WhatsAppConnection {
   id: string;
@@ -160,19 +161,18 @@ export function useWhatsAppConnections() {
 
   const updateConnection = useMutation({
     mutationFn: async ({ connectionId, name, color }: { connectionId: string; name?: string; color?: string }) => {
-      const updates: { name?: string; color?: string; updated_at: string } = { updated_at: new Date().toISOString() };
+      const updates: Record<string, any> = { updated_at: new Date().toISOString() };
       if (name !== undefined) updates.name = name;
       if (color !== undefined) updates.color = color;
       
-      const { data, error } = await supabase
-        .from("connections")
-        .update(updates)
-        .eq("id", connectionId)
-        .select()
-        .single();
+      const result = await adminWrite({
+        table: "connections",
+        operation: "update",
+        data: updates,
+        filters: { id: connectionId },
+      });
 
-      if (error) throw error;
-      return data;
+      return result?.[0] || null;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["whatsapp-connections"] });

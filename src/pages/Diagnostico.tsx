@@ -52,6 +52,10 @@ const ACTION_LABELS: Record<string, string> = {
   execute_campaign: "Executou campanha",
   execute_flow: "Executou fluxo",
   reset_password: "Redefiniu senha",
+  assign: "Atribuiu",
+  transfer: "Transferiu",
+  archive: "Arquivou",
+  resolve: "Resolveu",
 };
 
 const ENTITY_LABELS: Record<string, string> = {
@@ -67,6 +71,10 @@ const ENTITY_LABELS: Record<string, string> = {
   chatbot_rule: "Regra chatbot",
   chatbot_flow: "Fluxo chatbot",
   session: "Sessão",
+  system_settings: "Configuração",
+  schedule: "Agendamento",
+  messages: "Mensagem",
+  schedules: "Agendamento",
 };
 
 const PERIOD_OPTIONS = [
