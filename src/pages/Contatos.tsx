@@ -289,28 +289,28 @@ export default function Contatos() {
     if (selectedContactIds.length === 0) return;
     
     setIsBulkDeleting(true);
-    let successCount = 0;
-    let errorCount = 0;
 
-    for (const id of selectedContactIds) {
-      try {
-        await deleteContact.mutateAsync(id);
-        successCount++;
-      } catch {
-        errorCount++;
+    try {
+      const { data, error } = await supabase.functions.invoke("bulk-delete-contacts", {
+        body: { contactIds: selectedContactIds },
+      });
+
+      if (error) throw error;
+
+      if (data?.deleted > 0) {
+        toast.success(`${data.deleted} contatos excluídos com sucesso!`);
+        queryClient.invalidateQueries({ queryKey: ["contacts"] });
       }
+      if (data?.failed > 0) {
+        toast.error(`${data.failed} contatos falharam ao excluir`);
+      }
+    } catch (err: any) {
+      toast.error("Erro ao excluir contatos: " + (err.message || "Erro desconhecido"));
     }
 
     setIsBulkDeleting(false);
     setIsBulkDeleteDialogOpen(false);
     setSelectedContactIds([]);
-
-    if (successCount > 0) {
-      toast.success(`${successCount} contatos excluídos com sucesso!`);
-    }
-    if (errorCount > 0) {
-      toast.error(`${errorCount} contatos falharam ao excluir`);
-    }
   };
 
   const toggleContactSelection = (contactId: string) => {
