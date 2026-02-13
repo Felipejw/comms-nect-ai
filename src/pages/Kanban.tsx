@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
-import { Plus, MoreHorizontal, Clock, User, Edit, Trash2, Loader2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, MoreHorizontal, Clock, User, Edit, Trash2, Loader2, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
 import { DragDropContext, Droppable, Draggable, DropResult } from "@hello-pangea/dnd";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -68,6 +69,7 @@ function formatRelativeTime(dateString: string | null): string {
 export default function Kanban() {
   const { hasPermission, isAdmin } = useAuth();
   const canEdit = isAdmin || hasPermission('kanban', 'edit');
+  const isMobile = useIsMobile();
   
   const { data: columns = [], isLoading: columnsLoading, isError: columnsError, error: columnsErrorMsg, refetch: refetchColumns } = useKanbanColumns();
   const { data: conversations = [], isLoading: conversationsLoading, isError: conversationsError, refetch: refetchConversations } = useKanbanConversations();
@@ -77,6 +79,7 @@ export default function Kanban() {
   const moveConversation = useMoveConversationToColumn();
   const navigate = useNavigate();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [expandedMobileColumns, setExpandedMobileColumns] = useState<string[]>([]);
 
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -216,67 +219,26 @@ export default function Kanban() {
       </div>
 
       <DragDropContext onDragEnd={handleDragEnd}>
-        <div className="relative">
-          {/* Scroll buttons */}
-          <Button
-            variant="outline"
-            size="icon"
-            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-background shadow-md"
-            onClick={scrollLeft}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
-          <Button
-            variant="outline"
-            size="icon"
-            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-background shadow-md"
-            onClick={scrollRight}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
-
-          <div 
-            ref={scrollContainerRef}
-            className="flex gap-6 overflow-x-auto pb-4 px-10 scrollbar-thin scroll-smooth"
-            style={{ scrollbarWidth: "thin" }}
-          >
-            {/* Unassigned column */}
+        {isMobile ? (
+          /* ===== MOBILE: Accordion/List View ===== */
+          <div className="space-y-3">
+            {/* Unassigned */}
             {getUnassignedConversations().length > 0 && (
-              <div className="kanban-column w-[320px] flex-shrink-0 opacity-70">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full bg-muted" />
-                    <h3 className="font-semibold">Sem Coluna</h3>
-                    <Badge variant="secondary" className="ml-1">
-                      {getUnassignedConversations().length}
-                    </Badge>
-                  </div>
-                </div>
-
+              <MobileColumnAccordion
+                title="Sem Coluna"
+                color="#9ca3af"
+                count={getUnassignedConversations().length}
+                isExpanded={expandedMobileColumns.includes("unassigned")}
+                onToggle={() => setExpandedMobileColumns(prev => prev.includes("unassigned") ? prev.filter(id => id !== "unassigned") : [...prev, "unassigned"])}
+              >
                 <Droppable droppableId="unassigned">
-                  {(provided, snapshot) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={cn(
-                        "space-y-3 min-h-[100px] max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg transition-colors pr-1 scrollbar-thin",
-                        snapshot.isDraggingOver && "bg-muted/50"
-                      )}
-                    >
+                  {(provided) => (
+                    <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-2 px-3 pb-3">
                       {getUnassignedConversations().map((conv, index) => (
                         <Draggable key={conv.id} draggableId={conv.id} index={index}>
                           {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              style={provided.draggableProps.style}
-                            >
-                              <ConversationCard
-                                conversation={conv}
-                                isDragging={snapshot.isDragging}
-                                onClick={() => navigate("/atendimento")}
-                              />
+                            <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={provided.draggableProps.style}>
+                              <ConversationCard conversation={conv} isDragging={snapshot.isDragging} onClick={() => navigate("/atendimento")} />
                             </div>
                           )}
                         </Draggable>
@@ -285,78 +247,124 @@ export default function Kanban() {
                     </div>
                   )}
                 </Droppable>
-              </div>
+              </MobileColumnAccordion>
             )}
 
-            {columns.map((column) => (
-              <div key={column.id} className="kanban-column w-[320px] flex-shrink-0">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: column.color }} />
-                    <h3 className="font-semibold">{column.name}</h3>
-                    <Badge variant="secondary" className="ml-1">
-                      {getConversationsForColumn(column.id).length}
-                    </Badge>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="w-8 h-8">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEditDialog(column)} disabled={!canEdit}>
-                        <Edit className="w-4 h-4 mr-2" />
-                        Editar
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => openDeleteDialog(column)}
-                        className="text-destructive"
-                        disabled={!canEdit}
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Excluir
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-
-                <Droppable droppableId={column.id}>
-                  {(provided, snapshot) => (
-                    <div
-                      ref={provided.innerRef}
-                      {...provided.droppableProps}
-                      className={cn(
-                        "space-y-3 min-h-[100px] max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg transition-colors pr-1 scrollbar-thin",
-                        snapshot.isDraggingOver && "bg-primary/5 ring-2 ring-primary/20"
-                      )}
-                    >
-                      {getConversationsForColumn(column.id).map((conv, index) => (
-                        <Draggable key={conv.id} draggableId={conv.id} index={index}>
-                          {(provided, snapshot) => (
-                            <div
-                              ref={provided.innerRef}
-                              {...provided.draggableProps}
-                              {...provided.dragHandleProps}
-                              style={provided.draggableProps.style}
-                            >
-                              <ConversationCard
-                                conversation={conv}
-                                isDragging={snapshot.isDragging}
-                                onClick={() => navigate("/atendimento")}
-                              />
-                            </div>
-                          )}
-                        </Draggable>
-                      ))}
-                      {provided.placeholder}
-                    </div>
-                  )}
-                </Droppable>
-              </div>
-            ))}
+            {columns.map((column) => {
+              const colConvs = getConversationsForColumn(column.id);
+              return (
+                <MobileColumnAccordion
+                  key={column.id}
+                  title={column.name}
+                  color={column.color}
+                  count={colConvs.length}
+                  isExpanded={expandedMobileColumns.includes(column.id)}
+                  onToggle={() => setExpandedMobileColumns(prev => prev.includes(column.id) ? prev.filter(id => id !== column.id) : [...prev, column.id])}
+                  onEdit={canEdit ? () => openEditDialog(column) : undefined}
+                  onDelete={canEdit ? () => openDeleteDialog(column) : undefined}
+                >
+                  <Droppable droppableId={column.id}>
+                    {(provided) => (
+                      <div ref={provided.innerRef} {...provided.droppableProps} className="space-y-2 px-3 pb-3">
+                        {colConvs.map((conv, index) => (
+                          <Draggable key={conv.id} draggableId={conv.id} index={index}>
+                            {(provided, snapshot) => (
+                              <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={provided.draggableProps.style}>
+                                <ConversationCard conversation={conv} isDragging={snapshot.isDragging} onClick={() => navigate("/atendimento")} />
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {colConvs.length === 0 && (
+                          <p className="text-sm text-muted-foreground text-center py-4">Nenhuma conversa</p>
+                        )}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </MobileColumnAccordion>
+              );
+            })}
           </div>
-        </div>
+        ) : (
+          /* ===== DESKTOP: Horizontal Scroll View ===== */
+          <div className="relative">
+            <Button variant="outline" size="icon" className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-background shadow-md" onClick={scrollLeft}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Button variant="outline" size="icon" className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-background shadow-md" onClick={scrollRight}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+
+            <div ref={scrollContainerRef} className="flex gap-6 overflow-x-auto pb-4 px-10 scrollbar-thin scroll-smooth" style={{ scrollbarWidth: "thin" }}>
+              {/* Unassigned column */}
+              {getUnassignedConversations().length > 0 && (
+                <div className="kanban-column w-[320px] flex-shrink-0 opacity-70">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-muted" />
+                      <h3 className="font-semibold">Sem Coluna</h3>
+                      <Badge variant="secondary" className="ml-1">{getUnassignedConversations().length}</Badge>
+                    </div>
+                  </div>
+                  <Droppable droppableId="unassigned">
+                    {(provided, snapshot) => (
+                      <div ref={provided.innerRef} {...provided.droppableProps} className={cn("space-y-3 min-h-[100px] max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg transition-colors pr-1 scrollbar-thin", snapshot.isDraggingOver && "bg-muted/50")}>
+                        {getUnassignedConversations().map((conv, index) => (
+                          <Draggable key={conv.id} draggableId={conv.id} index={index}>
+                            {(provided, snapshot) => (
+                              <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={provided.draggableProps.style}>
+                                <ConversationCard conversation={conv} isDragging={snapshot.isDragging} onClick={() => navigate("/atendimento")} />
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </div>
+              )}
+
+              {columns.map((column) => (
+                <div key={column.id} className="kanban-column w-[320px] flex-shrink-0">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: column.color }} />
+                      <h3 className="font-semibold">{column.name}</h3>
+                      <Badge variant="secondary" className="ml-1">{getConversationsForColumn(column.id).length}</Badge>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="w-8 h-8"><MoreHorizontal className="w-4 h-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openEditDialog(column)} disabled={!canEdit}><Edit className="w-4 h-4 mr-2" />Editar</DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => openDeleteDialog(column)} className="text-destructive" disabled={!canEdit}><Trash2 className="w-4 h-4 mr-2" />Excluir</DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                  <Droppable droppableId={column.id}>
+                    {(provided, snapshot) => (
+                      <div ref={provided.innerRef} {...provided.droppableProps} className={cn("space-y-3 min-h-[100px] max-h-[calc(100vh-280px)] overflow-y-auto rounded-lg transition-colors pr-1 scrollbar-thin", snapshot.isDraggingOver && "bg-primary/5 ring-2 ring-primary/20")}>
+                        {getConversationsForColumn(column.id).map((conv, index) => (
+                          <Draggable key={conv.id} draggableId={conv.id} index={index}>
+                            {(provided, snapshot) => (
+                              <div ref={provided.innerRef} {...provided.draggableProps} {...provided.dragHandleProps} style={provided.draggableProps.style}>
+                                <ConversationCard conversation={conv} isDragging={snapshot.isDragging} onClick={() => navigate("/atendimento")} />
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </DragDropContext>
 
       {/* Create Column Dialog */}
@@ -471,6 +479,58 @@ export default function Kanban() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+function MobileColumnAccordion({
+  title,
+  color,
+  count,
+  isExpanded,
+  onToggle,
+  onEdit,
+  onDelete,
+  children,
+}: {
+  title: string;
+  color: string;
+  count: number;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-card rounded-xl border border-border overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between p-4 hover:bg-muted/50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color }} />
+          <span className="font-semibold">{title}</span>
+          <Badge variant="secondary" className="ml-1">{count}</Badge>
+        </div>
+        <div className="flex items-center gap-1">
+          {(onEdit || onDelete) && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="w-7 h-7" onClick={(e) => e.stopPropagation()}>
+                  <MoreHorizontal className="w-4 h-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {onEdit && <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onEdit(); }}><Edit className="w-4 h-4 mr-2" />Editar</DropdownMenuItem>}
+                {onDelete && <DropdownMenuItem onClick={(e) => { e.stopPropagation(); onDelete(); }} className="text-destructive"><Trash2 className="w-4 h-4 mr-2" />Excluir</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+          <ChevronDown className={cn("w-4 h-4 text-muted-foreground transition-transform", isExpanded && "rotate-180")} />
+        </div>
+      </button>
+      {isExpanded && children}
     </div>
   );
 }
