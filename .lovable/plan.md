@@ -1,66 +1,51 @@
 
-
-# Correção: "Bucket not found" ao enviar arquivos na VPS
+# Correção: Player de áudio automático no servidor VPS
 
 ## Problema
 
-Ao enviar audio, video ou imagem no Atendimento, o erro "Bucket not found" aparece porque o bucket `chat-attachments` nao existe no Supabase da VPS. O script `init.sql` tenta cria-lo, mas pode ter falhado silenciosamente durante a instalacao.
+Quando uma mensagem de áudio chega via WhatsApp no servidor VPS, o webhook do Baileys nem sempre inclui a URL da mídia. Sem `media_url`, o sistema exibe um fallback com texto "Mensagem de áudio" e um botão "Baixar" manual, em vez do player bonito com waveform.
 
-## Solucao
+Na Lovable, como os dados de teste já têm `media_url` preenchido, o AudioPlayer aparece normalmente.
 
-Duas frentes: correcao imediata via codigo e prevencao futura.
+## Solução
 
-### 1. Edge Function para garantir que o bucket existe
+Fazer o download da mídia acontecer **automaticamente** quando uma mensagem de áudio sem `media_url` é exibida, eliminando a necessidade de clique manual.
 
-Criar uma logica na Edge Function `admin-write` (que ja usa `service_role`) para aceitar uma operacao `ensure-bucket` que cria o bucket se nao existir. Isso sera chamado antes do upload.
+## Detalhes Técnicos
 
-### 2. Hook useFileUpload resiliente
+**Arquivo:** `src/pages/Atendimento.tsx`
 
-Modificar `src/hooks/useFileUpload.ts` para:
-- Antes de fazer upload, tentar um `list` no bucket para verificar se existe
-- Se receber erro "Bucket not found", chamar a Edge Function para criar o bucket e as policies
-- Depois, prosseguir com o upload normalmente
-- Isso acontece apenas na primeira vez; depois o bucket ja existe
+### Mudança: Auto-download de áudio sem media_url
 
-### 3. Fallback no init.sql (prevencao)
+Substituir o bloco estático de fallback (linhas 1086-1115) por um componente que:
 
-Adicionar ao script `deploy/supabase/init.sql` um bloco mais robusto com `EXCEPTION` handler para garantir que falhas na criacao de buckets sejam logadas.
-
----
-
-## Detalhes Tecnicos
-
-**Arquivo: `src/hooks/useFileUpload.ts`**
-
-Adicionar logica de retry com criacao automatica do bucket:
+1. Ao montar, detecta que `media_url` está vazio
+2. Automaticamente chama a Edge Function `download-whatsapp-media`
+3. Mostra um indicador de carregamento (spinner + "Carregando áudio...")
+4. Quando o download termina e o banco é atualizado, a query é invalidada e o `AudioPlayer` aparece no lugar
 
 ```text
-mutationFn: async (file: File) => {
-  // Tentar upload
-  // Se erro "Bucket not found":
-  //   -> Chamar edge function admin-write com operacao ensure-bucket
-  //   -> Retentar upload
-}
+Fluxo atual:
+  audio sem media_url -> texto "Mensagem de áudio" + botão Baixar (manual)
+
+Fluxo novo:
+  audio sem media_url -> spinner "Carregando áudio..." (auto-download)
+  -> media_url preenchido -> AudioPlayer com waveform
 ```
 
-**Arquivo: `supabase/functions/admin-write/index.ts`**
+### Implementação
 
-Adicionar handler para operacao `ensure-bucket`:
+Criar um pequeno componente inline `AudioAutoDownloader` que:
+- Recebe `messageId`, `conversationId`, `sessionName`
+- Usa `useEffect` para disparar o download automaticamente ao montar
+- Controla estados: `loading`, `error`, `idle`
+- Se falhar, mostra o fallback atual com botão manual de retry
+- Se sucesso, invalida a query de mensagens (o que fará o AudioPlayer renderizar)
 
-```text
-if (operation === 'ensure-bucket') {
-  // Criar bucket com service_role se nao existir
-  // Criar policies de storage
-}
-```
-
-**Arquivo: `deploy/supabase/init.sql`**
-
-Tornar o bloco de criacao de buckets mais robusto com tratamento de excecoes explicito.
+O componente ficará no mesmo arquivo `Atendimento.tsx` para manter a simplicidade.
 
 ### Resultado
 
-- Na primeira vez que o usuario enviar um arquivo na VPS, o sistema cria o bucket automaticamente
-- Uploads subsequentes funcionam normalmente sem overhead extra
-- Nenhuma acao manual necessaria do usuario
-
+- Áudios no servidor VPS carregam automaticamente e exibem o player bonito
+- Se o download falhar, o botão manual de retry continua disponível
+- Nenhuma mudança na experiência da Lovable (já funciona)
