@@ -3,6 +3,9 @@ project_id = "qducanwbpleoceynmend"
 [functions.admin-write]
 verify_jwt = false
 
+[functions.api-gateway]
+verify_jwt = false
+
 [functions.create-user]
 verify_jwt = false
 

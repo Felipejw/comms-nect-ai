@@ -14,6 +14,7 @@ const corsHeaders = {
 
 const VALID_FUNCTIONS = new Set([
   'admin-write',
+  'api-gateway',
   'baileys-create-session',
   'baileys-instance',
   'baileys-webhook',

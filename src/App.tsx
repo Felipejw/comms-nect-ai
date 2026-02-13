@@ -29,6 +29,7 @@ import Relatorios from "./pages/Relatorios";
 import Painel from "./pages/Painel";
 import Configuracoes from "./pages/Configuracoes";
 import Diagnostico from "./pages/Diagnostico";
+import ApiDocs from "./pages/ApiDocs";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient({
@@ -75,6 +76,7 @@ const App = () => (
                 <Route path="/conexoes" element={<ProtectedRoute module="conexoes"><Conexoes /></ProtectedRoute>} />
                 <Route path="/diagnostico" element={<ProtectedRoute module="conexoes"><Diagnostico /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
+                <Route path="/api-docs" element={<ProtectedRoute><ApiDocs /></ProtectedRoute>} />
               </Route>
               
               <Route path="*" element={<NotFound />} />

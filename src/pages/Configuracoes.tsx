@@ -3,6 +3,7 @@ import { ProfileTab } from "@/components/configuracoes/ProfileTab";
 import { OptionsTab } from "@/components/configuracoes/OptionsTab";
 import { CustomizeTab } from "@/components/configuracoes/CustomizeTab";
 import { BackupTab } from "@/components/configuracoes/BackupTab";
+import { ApiKeysTab } from "@/components/configuracoes/ApiKeysTab";
 import { useAuth } from "@/contexts/AuthContext";
 
 export default function Configuracoes() {
@@ -45,6 +46,14 @@ export default function Configuracoes() {
               Backup
             </TabsTrigger>
           )}
+          {isAdmin && (
+            <TabsTrigger
+              value="api"
+              className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3"
+            >
+              API
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <div className="mt-6">
@@ -63,6 +72,12 @@ export default function Configuracoes() {
           {isAdmin && (
             <TabsContent value="backup" className="mt-0">
               <BackupTab />
+            </TabsContent>
+          )}
+
+          {isAdmin && (
+            <TabsContent value="api" className="mt-0">
+              <ApiKeysTab />
             </TabsContent>
           )}
         </div>
