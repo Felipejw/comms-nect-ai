@@ -44,7 +44,7 @@ export function AppLayout() {
           </Button>
         </header>
         
-        <main className="flex-1 overflow-auto p-4">
+        <main className="flex-1 overflow-auto p-4 animate-fade-in">
           <Outlet />
         </main>
       </div>
@@ -55,7 +55,7 @@ export function AppLayout() {
     <div className="flex min-h-screen w-full bg-background">
       <AppSidebar />
       <div className="flex-1 flex flex-col overflow-hidden">
-        <main className="flex-1 overflow-auto p-6">
+        <main className="flex-1 overflow-auto p-6 animate-fade-in">
           <Outlet />
         </main>
       </div>

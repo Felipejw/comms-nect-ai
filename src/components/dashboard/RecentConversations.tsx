@@ -1,12 +1,14 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRecentConversations } from "@/hooks/useDashboardStats";
 import { formatDistanceToNow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { useNavigate } from "react-router-dom";
 import { useContactDisplayName, getContactSecondaryName } from "@/hooks/useContactDisplayName";
+import { SkeletonConversationList } from "@/components/ui/SkeletonCard";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { MessageSquare } from "lucide-react";
 
 const statusConfig = {
   new: { label: "Novo", className: "bg-primary/10 text-primary" },
@@ -24,18 +26,7 @@ export function RecentConversations() {
     return formatDistanceToNow(new Date(date), { addSuffix: false, locale: ptBR });
   };
 
-  if (isLoading) {
-    return (
-      <div className="bg-card rounded-xl border border-border p-6 animate-fade-in">
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="font-semibold text-lg">Conversas Recentes</h3>
-        </div>
-        <div className="flex items-center justify-center h-32">
-          <Loader2 className="w-6 h-6 animate-spin text-primary" />
-        </div>
-      </div>
-    );
-  }
+  if (isLoading) return <SkeletonConversationList />;
 
   return (
     <div className="bg-card rounded-xl border border-border p-6 animate-fade-in">
@@ -50,9 +41,13 @@ export function RecentConversations() {
       </div>
       
       {!conversations || conversations.length === 0 ? (
-        <div className="flex items-center justify-center h-32 text-muted-foreground">
-          Nenhuma conversa recente
-        </div>
+        <EmptyState
+          icon={MessageSquare}
+          title="Nenhuma conversa recente"
+          description="As conversas aparecerão aqui quando seus contatos entrarem em contato."
+          actionLabel="Ir para Atendimento"
+          onAction={() => navigate("/atendimento")}
+        />
       ) : (
         <div className="space-y-4">
           {conversations.map((conv: any) => (
