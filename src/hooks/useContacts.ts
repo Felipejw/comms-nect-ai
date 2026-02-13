@@ -37,22 +37,36 @@ export function useContacts() {
     queryKey: ['contacts'],
     queryFn: async () => {
       const timeoutSignal = AbortSignal.timeout(15000);
-      const { data, error } = await supabase
-        .from('contacts')
-        .select(`
-          *,
-          contact_tags (
-            tag_id,
-            tags (id, name, color)
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .limit(500)
-        .abortSignal(timeoutSignal);
-
-      if (error) throw error;
       
-      return (data || []).map(contact => ({
+      // First get total count
+      const { count } = await supabase
+        .from('contacts')
+        .select('*', { count: 'exact', head: true });
+      
+      const totalCount = count || 0;
+      const PAGE_SIZE = 1000;
+      let allContacts: any[] = [];
+      
+      // Fetch in pages of 1000
+      for (let offset = 0; offset < totalCount; offset += PAGE_SIZE) {
+        const { data, error } = await supabase
+          .from('contacts')
+          .select(`
+            *,
+            contact_tags (
+              tag_id,
+              tags (id, name, color)
+            )
+          `)
+          .order('created_at', { ascending: false })
+          .range(offset, offset + PAGE_SIZE - 1)
+          .abortSignal(timeoutSignal);
+
+        if (error) throw error;
+        if (data) allContacts = allContacts.concat(data);
+      }
+      
+      return allContacts.map(contact => ({
         ...contact,
         tags: contact.contact_tags?.map((ct: any) => ct.tags).filter(Boolean) || []
       })) as Contact[];

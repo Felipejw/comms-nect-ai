@@ -31,6 +31,7 @@ export interface QueueAgent {
 export function useQueues() {
   return useQuery({
     queryKey: ['queues'],
+    staleTime: 5 * 60 * 1000, // 5 minutes - queues rarely change
     queryFn: async () => {
       const { data, error } = await supabase
         .from('queues')

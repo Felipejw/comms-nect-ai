@@ -36,6 +36,7 @@ const Painel = lazy(() => import("./pages/Painel"));
 const Configuracoes = lazy(() => import("./pages/Configuracoes"));
 const Diagnostico = lazy(() => import("./pages/Diagnostico"));
 const ApiDocs = lazy(() => import("./pages/ApiDocs"));
+const RecuperarSenha = lazy(() => import("./pages/RecuperarSenha"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient({
@@ -67,6 +68,7 @@ const App = () => (
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/recuperar-senha" element={<RecuperarSenha />} />
               <Route path="/acesso-negado" element={<AcessoNegado />} />
               
               {/* App Routes with Layout */}
@@ -87,7 +89,7 @@ const App = () => (
                 <Route path="/filas-chatbot" element={<ProtectedRoute module="setores"><FilasChatbot /></ProtectedRoute>} />
                 <Route path="/integracoes" element={<ProtectedRoute module="integracoes"><Integracoes /></ProtectedRoute>} />
                 <Route path="/conexoes" element={<ProtectedRoute module="conexoes"><Conexoes /></ProtectedRoute>} />
-                <Route path="/diagnostico" element={<ProtectedRoute module="conexoes"><Diagnostico /></ProtectedRoute>} />
+                <Route path="/diagnostico" element={<ProtectedRoute module="dashboard"><Diagnostico /></ProtectedRoute>} />
                 <Route path="/configuracoes" element={<ProtectedRoute><Configuracoes /></ProtectedRoute>} />
                 <Route path="/api-docs" element={<ProtectedRoute><ApiDocs /></ProtectedRoute>} />
               </Route>

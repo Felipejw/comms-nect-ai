@@ -14,6 +14,7 @@ export interface Tag {
 export function useTags() {
   return useQuery({
     queryKey: ['tags'],
+    staleTime: 5 * 60 * 1000, // 5 minutes - tags rarely change
     queryFn: async () => {
       const { data, error } = await supabase
         .from('tags')
