@@ -1,72 +1,66 @@
 
-# Correcao: Mensagens nao aparecem em tempo real
 
-## Problema Identificado
+# Correção: "Bucket not found" ao enviar arquivos na VPS
 
-O hook `useMessages` depende exclusivamente de uma assinatura Realtime com `setQueryData` para adicionar novas mensagens. Se a assinatura perde um evento (instabilidade de rede, reconexao do WebSocket), a mensagem fica "invisivel" ate o usuario sair e voltar (o que causa um refetch completo).
+## Problema
 
-Alem disso, quando uma nova mensagem chega e atualiza a tabela `conversations` (campo `last_message_at`), o canal de conversas invalida apenas `['conversations']` mas **nao** invalida `['messages', conversationId]`, perdendo a oportunidade de sincronizar.
+Ao enviar audio, video ou imagem no Atendimento, o erro "Bucket not found" aparece porque o bucket `chat-attachments` nao existe no Supabase da VPS. O script `init.sql` tenta cria-lo, mas pode ter falhado silenciosamente durante a instalacao.
 
-## Solucao (3 camadas de protecao)
+## Solucao
 
-### 1. Invalidar mensagens quando a conversa atualizar
-No hook `useConversations`, quando o canal realtime de `conversations` detectar mudanca, tambem invalidar as mensagens da conversa ativa. Isso garante que quando o webhook do Baileys atualiza a conversa (novo `last_message_at`), as mensagens tambem sejam recarregadas.
+Duas frentes: correcao imediata via codigo e prevencao futura.
 
-### 2. Adicionar refetchInterval como fallback
-Configurar um `refetchInterval` de 10 segundos no `useMessages` como rede de seguranca. Se o Realtime falhar, o polling garante que mensagens aparecam em no maximo 10s.
+### 1. Edge Function para garantir que o bucket existe
 
-### 3. Manter o setQueryData para resposta instantanea
-A assinatura Realtime com `setQueryData` continua como caminho primario para mostrar mensagens instantaneamente. As outras camadas sao fallback.
+Criar uma logica na Edge Function `admin-write` (que ja usa `service_role`) para aceitar uma operacao `ensure-bucket` que cria o bucket se nao existir. Isso sera chamado antes do upload.
+
+### 2. Hook useFileUpload resiliente
+
+Modificar `src/hooks/useFileUpload.ts` para:
+- Antes de fazer upload, tentar um `list` no bucket para verificar se existe
+- Se receber erro "Bucket not found", chamar a Edge Function para criar o bucket e as policies
+- Depois, prosseguir com o upload normalmente
+- Isso acontece apenas na primeira vez; depois o bucket ja existe
+
+### 3. Fallback no init.sql (prevencao)
+
+Adicionar ao script `deploy/supabase/init.sql` um bloco mais robusto com `EXCEPTION` handler para garantir que falhas na criacao de buckets sejam logadas.
 
 ---
 
 ## Detalhes Tecnicos
 
-**Arquivo:** `src/hooks/useConversations.ts`
+**Arquivo: `src/hooks/useFileUpload.ts`**
 
-### Mudanca 1 - useMessages: adicionar refetchInterval
-```typescript
-return useQuery({
-  queryKey: ['messages', conversationId],
-  queryFn: async () => { ... },
-  enabled: !!conversationId,
-  refetchInterval: 10000, // Fallback: refetch a cada 10s
-});
+Adicionar logica de retry com criacao automatica do bucket:
+
+```text
+mutationFn: async (file: File) => {
+  // Tentar upload
+  // Se erro "Bucket not found":
+  //   -> Chamar edge function admin-write com operacao ensure-bucket
+  //   -> Retentar upload
+}
 ```
 
-### Mudanca 2 - useConversations: invalidar mensagens no realtime
-Quando o canal de conversas receber um evento, alem de invalidar `['conversations']`, tambem invalidar todas as queries de mensagens:
-```typescript
-.on('postgres_changes', {
-  event: '*',
-  schema: 'public',
-  table: 'conversations',
-}, () => {
-  queryClient.invalidateQueries({ queryKey: ['conversations'] });
-  queryClient.invalidateQueries({ queryKey: ['messages'] }); // <-- novo
-})
+**Arquivo: `supabase/functions/admin-write/index.ts`**
+
+Adicionar handler para operacao `ensure-bucket`:
+
+```text
+if (operation === 'ensure-bucket') {
+  // Criar bucket com service_role se nao existir
+  // Criar policies de storage
+}
 ```
 
-### Mudanca 3 - useMessages: tambem ouvir eventos sem filtro como backup
-Adicionar uma segunda assinatura sem filtro de `conversation_id` que faz `invalidateQueries` em vez de `setQueryData`. Isso cobre o caso onde o filtro do Realtime falha:
-```typescript
-const backupChannel = supabase
-  .channel(`messages-backup-${conversationId}`)
-  .on('postgres_changes', {
-    event: 'INSERT',
-    schema: 'public',
-    table: 'messages',
-  }, (payload) => {
-    if ((payload.new as any).conversation_id === conversationId) {
-      queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
-    }
-  })
-  .subscribe();
-```
+**Arquivo: `deploy/supabase/init.sql`**
 
-### Resultado esperado
-- **Caminho rapido:** Realtime com `setQueryData` (instantaneo, <100ms)
-- **Fallback 1:** Invalidacao quando conversa atualiza (1-2s)
-- **Fallback 2:** Polling a cada 10 segundos (maximo 10s de atraso)
+Tornar o bloco de criacao de buckets mais robusto com tratamento de excecoes explicito.
 
-Nenhuma dessas mudancas afeta a performance negativamente - o polling so busca dados se a query estiver stale, e as invalidacoes sao operacoes leves.
+### Resultado
+
+- Na primeira vez que o usuario enviar um arquivo na VPS, o sistema cria o bucket automaticamente
+- Uploads subsequentes funcionam normalmente sem overhead extra
+- Nenhuma acao manual necessaria do usuario
+
