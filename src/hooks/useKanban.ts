@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { adminWrite } from "@/lib/adminWrite";
 import { toast } from "sonner";
 
 export interface KanbanColumn {
@@ -133,14 +134,8 @@ export function useCreateKanbanColumn() {
 
   return useMutation({
     mutationFn: async (data: { name: string; color: string; position: number }) => {
-      const { data: result, error } = await supabase
-        .from("kanban_columns")
-        .insert(data)
-        .select()
-        .single();
-
-      if (error) throw error;
-      return result;
+      const result = await adminWrite({ table: "kanban_columns", operation: "insert", data });
+      return result?.[0];
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["kanban-columns"] });
@@ -157,12 +152,7 @@ export function useUpdateKanbanColumn() {
 
   return useMutation({
     mutationFn: async ({ id, ...data }: { id: string; name?: string; color?: string; position?: number }) => {
-      const { error } = await supabase
-        .from("kanban_columns")
-        .update(data)
-        .eq("id", id);
-
-      if (error) throw error;
+      await adminWrite({ table: "kanban_columns", operation: "update", data, filters: { id } });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["kanban-columns"] });
@@ -185,12 +175,7 @@ export function useDeleteKanbanColumn() {
         .update({ kanban_column_id: null })
         .eq("kanban_column_id", id);
 
-      const { error } = await supabase
-        .from("kanban_columns")
-        .delete()
-        .eq("id", id);
-
-      if (error) throw error;
+      await adminWrite({ table: "kanban_columns", operation: "delete", filters: { id } });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["kanban-columns"] });
