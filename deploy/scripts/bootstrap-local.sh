@@ -99,16 +99,16 @@ echo -e "${GREEN}[OK]${NC} Extraído: $EXTRACTED_DIR"
 
 # Detectar onde está o deploy/ (pode ser raiz ou subpasta)
 if [ -f "$EXTRACTED_DIR/deploy/docker-compose.yml" ]; then
-    DEPLOY_SOURCE="$EXTRACTED_DIR/deploy"
+    PROJECT_SOURCE="$EXTRACTED_DIR"
 elif [ -f "$EXTRACTED_DIR/docker-compose.yml" ]; then
-    DEPLOY_SOURCE="$EXTRACTED_DIR"
+    PROJECT_SOURCE="$EXTRACTED_DIR"
 else
     echo -e "${RED}[ERRO]${NC} Estrutura do ZIP não reconhecida. docker-compose.yml não encontrado."
     rm -rf /tmp/sistema-extract
     exit 1
 fi
 
-echo -e "${BLUE}[INFO]${NC} Deploy encontrado em: $DEPLOY_SOURCE"
+echo -e "${BLUE}[INFO]${NC} Projeto encontrado em: $PROJECT_SOURCE"
 
 # ==========================================
 # BACKUP DE INSTALAÇÃO EXISTENTE
@@ -116,18 +116,28 @@ echo -e "${BLUE}[INFO]${NC} Deploy encontrado em: $DEPLOY_SOURCE"
 if [ -d "$INSTALL_DIR" ]; then
     echo -e "${YELLOW}[INFO]${NC} Instalação anterior detectada, fazendo backup..."
 
-    if [ -d "$INSTALL_DIR/volumes/baileys/sessions" ]; then
+    if [ -d "$INSTALL_DIR/deploy/volumes/baileys/sessions" ]; then
+        mkdir -p /tmp/baileys-backup
+        cp -r "$INSTALL_DIR/deploy/volumes/baileys/sessions/"* /tmp/baileys-backup/ 2>/dev/null || true
+        echo -e "${GREEN}[OK]${NC} Sessões WhatsApp salvas"
+    elif [ -d "$INSTALL_DIR/volumes/baileys/sessions" ]; then
         mkdir -p /tmp/baileys-backup
         cp -r "$INSTALL_DIR/volumes/baileys/sessions/"* /tmp/baileys-backup/ 2>/dev/null || true
         echo -e "${GREEN}[OK]${NC} Sessões WhatsApp salvas"
     fi
 
-    if [ -f "$INSTALL_DIR/.env" ]; then
+    if [ -f "$INSTALL_DIR/deploy/.env" ]; then
+        cp "$INSTALL_DIR/deploy/.env" /tmp/sistema-env-backup 2>/dev/null || true
+        echo -e "${GREEN}[OK]${NC} .env salvo"
+    elif [ -f "$INSTALL_DIR/.env" ]; then
         cp "$INSTALL_DIR/.env" /tmp/sistema-env-backup 2>/dev/null || true
         echo -e "${GREEN}[OK]${NC} .env salvo"
     fi
 
-    if [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
+    if [ -f "$INSTALL_DIR/deploy/docker-compose.yml" ]; then
+        cd /tmp
+        (cd "$INSTALL_DIR/deploy" && docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true)
+    elif [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
         cd /tmp
         (cd "$INSTALL_DIR" && docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true)
     fi
@@ -136,34 +146,35 @@ if [ -d "$INSTALL_DIR" ]; then
 fi
 
 # ==========================================
-# MOVER PARA DIRETÓRIO FINAL
+# MOVER PROJETO COMPLETO PARA DIRETÓRIO FINAL
 # ==========================================
 mkdir -p "$INSTALL_DIR"
-cp -r "$DEPLOY_SOURCE/"* "$INSTALL_DIR/"
+cp -r "$PROJECT_SOURCE/"* "$INSTALL_DIR/"
+cp "$PROJECT_SOURCE/".[!.]* "$INSTALL_DIR/" 2>/dev/null || true
 rm -rf /tmp/sistema-extract
 
 # Restaurar backup
 if [ -d "/tmp/baileys-backup" ] && [ "$(ls -A /tmp/baileys-backup 2>/dev/null)" ]; then
-    mkdir -p "$INSTALL_DIR/volumes/baileys/sessions"
-    cp -r /tmp/baileys-backup/* "$INSTALL_DIR/volumes/baileys/sessions/"
+    mkdir -p "$INSTALL_DIR/deploy/volumes/baileys/sessions"
+    cp -r /tmp/baileys-backup/* "$INSTALL_DIR/deploy/volumes/baileys/sessions/"
     rm -rf /tmp/baileys-backup
     echo -e "${GREEN}[OK]${NC} Sessões restauradas"
 fi
 
 if [ -f "/tmp/sistema-env-backup" ]; then
-    cp /tmp/sistema-env-backup "$INSTALL_DIR/.env"
+    cp /tmp/sistema-env-backup "$INSTALL_DIR/deploy/.env"
     echo -e "${GREEN}[OK]${NC} .env restaurado"
 fi
 
 # ==========================================
 # EXECUTAR INSTALAÇÃO
 # ==========================================
-chmod +x "$INSTALL_DIR/scripts/"*.sh
+chmod +x "$INSTALL_DIR/deploy/scripts/"*.sh
 
 echo -e "${BLUE}[INFO]${NC} Iniciando instalação unificada..."
 echo ""
 
-cd "$INSTALL_DIR"
+cd "$INSTALL_DIR/deploy"
 ./scripts/install-unified.sh < /dev/tty
 
 echo -e "${GREEN}"
