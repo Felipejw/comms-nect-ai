@@ -1,52 +1,36 @@
 
+## Ajustes no sistema
 
-## Corrigir conflito de container Baileys na reinstalacao
+### 1. Remover opcao de criar conta na tela de login
+- Remover o componente `Tabs` (Entrar / Criar Conta) da pagina `src/pages/Login.tsx`
+- Manter apenas o formulario de login direto, sem abas
+- Remover imports e codigo relacionados ao signup (signupSchema, signupForm, handleSignup, TabsList, etc.)
+- Ajustar o texto "Entre ou crie sua conta" para "Entre com suas credenciais"
 
-### Problema
-Dois bugs causam o erro "container name /baileys-server is already in use":
+### 2. Trocar titulo da aba do navegador
+- Alterar o `<title>` em `index.html` de "Lovable App" para "TalkFlow"
+- Atualizar tambem os meta tags og:title
+- Gerar um favicon SVG com o icone MessageSquare e salvar como `public/favicon.svg`, referenciando no index.html
 
-1. **bootstrap-local.sh**: O `docker compose down` na limpeza da instalacao anterior nao inclui `--profile baileys`, entao o container do Baileys nunca e parado/removido antes da reinstalacao.
-2. **install-unified.sh**: O `docker compose --profile baileys up -d` na Etapa 3 nao usa `--force-recreate`, entao se um container com o mesmo nome ja existe (de uma instalacao standalone anterior ou reinstalacao), o Docker recusa criar um novo.
+### 3. Remover opcao de Diagnostico do menu
+- Remover o item "Diagnostico" do array de navegacao em `src/components/layout/AppSidebar.tsx`
+- Manter a rota no App.tsx para caso alguem acesse diretamente, nao quebrar
 
-Isso faz o Nginx tambem falhar ao subir, resultando em ERR_CONNECTION_REFUSED no navegador.
-
-### Solucao
-
-**Arquivo 1: `deploy/scripts/bootstrap-local.sh`**
-- Adicionar `--profile baileys` ao comando `docker compose down` na secao de backup
-- Adicionar um `docker rm -f baileys-server` como fallback para remover containers orfaos
-
-**Arquivo 2: `deploy/scripts/install-unified.sh`**
-- Adicionar `--force-recreate --remove-orphans` ao comando da Etapa 3 (linha 892)
-- Adicionar uma limpeza preventiva de containers orfaos no inicio da funcao `start_services()`
+### 4. Corrigir erro de RLS ao criar coluna no CRM
+- A tabela `kanban_columns` tem politica RLS que exige `is_admin_or_manager()` para INSERT
+- Alterar o hook `useCreateKanbanColumn` em `src/hooks/useKanban.ts` para usar `adminWrite()` ao inves de chamada direta ao Supabase
+- Fazer o mesmo para `useUpdateKanbanColumn` e `useDeleteKanbanColumn` para consistencia
 
 ### Detalhes tecnicos
 
-**bootstrap-local.sh** - Secao de backup (linhas 137-143):
-```bash
-# Antes (nao para o baileys):
-docker compose down
+**Login.tsx**: Remover Tabs, signupSchema, signupForm, handleSignup, TabsContent de signup. Renderizar apenas o form de login diretamente.
 
-# Depois:
-docker compose --profile baileys down --remove-orphans
-docker rm -f baileys-server 2>/dev/null || true
+**index.html**: 
+```html
+<title>TalkFlow</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
 ```
 
-**install-unified.sh** - Funcao start_services (linha 892):
-```bash
-# Antes:
-docker compose --profile baileys up -d || true
+**AppSidebar.tsx**: Remover a linha com `{ title: "Diagnostico", href: "/diagnostico", icon: HeartPulse, module: "conexoes" }`
 
-# Depois:
-docker rm -f baileys-server 2>/dev/null || true
-docker compose --profile baileys up -d --force-recreate --remove-orphans || true
-```
-
-### Comando para corrigir agora na VPS (sem precisar reinstalar)
-Voce pode rodar isso agora para desbloquear:
-```text
-cd /opt/sistema/deploy
-docker rm -f baileys-server
-docker compose --profile baileys up -d --force-recreate
-```
-
+**useKanban.ts** - useCreateKanbanColumn: Trocar `supabase.from("kanban_columns").insert()` por `adminWrite({ table: "kanban_columns", operation: "insert", data })`. Mesma abordagem para update e delete.
