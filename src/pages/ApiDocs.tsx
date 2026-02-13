@@ -2,7 +2,10 @@ import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
+import { CheckCircle2, XCircle, ExternalLink } from "lucide-react";
+import { Link } from "react-router-dom";
 
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
@@ -49,10 +52,38 @@ function EndpointCard({ method, path, description, permission, body, response, c
   );
 }
 
+function StepCard({ step, title, children }: { step: number; title: string; children: React.ReactNode }) {
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-3">
+          <div className="flex items-center justify-center w-8 h-8 rounded-full bg-primary text-primary-foreground text-sm font-bold shrink-0">
+            {step}
+          </div>
+          <CardTitle className="text-lg">{title}</CardTitle>
+        </div>
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
 export default function ApiDocs() {
   const { getSetting } = useSystemSettings();
+  const [apiKeyPreview, setApiKeyPreview] = useState("");
+
   const apiUrl = getSetting("api_base_url");
   const baseUrl = `${(apiUrl || "https://seu-dominio.com").replace(/\/$/, "")}/functions/v1/api-gateway`;
+  const apiKey = apiKeyPreview || "tf_sua_chave_aqui";
+
+  const tabItems = [
+    { value: "inicio", label: "Início" },
+    { value: "auth", label: "Autenticação" },
+    { value: "messages", label: "Mensagens" },
+    { value: "contacts", label: "Contatos" },
+    { value: "conversations", label: "Conversas" },
+    { value: "connections", label: "Conexões" },
+  ];
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -61,23 +92,86 @@ export default function ApiDocs() {
         <p className="text-muted-foreground">Integre sistemas externos com o TalkFlow via API REST.</p>
       </div>
 
+      {/* Status indicator */}
+      <div className="flex items-center gap-4 text-sm">
+        <div className="flex items-center gap-1.5">
+          {apiUrl ? (
+            <CheckCircle2 className="h-4 w-4 text-primary" />
+          ) : (
+            <XCircle className="h-4 w-4 text-destructive" />
+          )}
+          <span className="text-muted-foreground">URL Base da API:</span>
+          <span className={apiUrl ? "font-medium text-foreground" : "text-destructive font-medium"}>
+            {apiUrl || "Não configurada"}
+          </span>
+        </div>
+      </div>
+
       {!apiUrl && (
         <div className="bg-accent/50 border border-border text-foreground rounded-lg p-4 text-sm">
           <strong>⚠️ URL base da API não configurada.</strong>{" "}
-          Vá em <strong>Configurações → Opções</strong> e defina o endereço do seu servidor no campo "URL Base da API" para que os exemplos abaixo reflitam o endereço correto.
+          Vá em <Link to="/configuracoes" className="underline font-medium hover:text-primary">Configurações → Opções</Link> e defina o endereço do seu servidor no campo "URL Base da API" para que os exemplos abaixo reflitam o endereço correto.
         </div>
       )}
 
-      <Tabs defaultValue="auth" className="w-full">
+      {/* Interactive API Key input */}
+      <div className="flex flex-col gap-1.5">
+        <label className="text-sm font-medium text-muted-foreground">
+          Cole sua API Key para preencher os exemplos automaticamente (não é salva):
+        </label>
+        <Input
+          placeholder="tf_sua_chave_aqui"
+          value={apiKeyPreview}
+          onChange={(e) => setApiKeyPreview(e.target.value)}
+          className="max-w-md font-mono text-sm"
+        />
+      </div>
+
+      <Tabs defaultValue="inicio" className="w-full">
         <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent flex-wrap">
-          {["auth", "messages", "contacts", "conversations", "connections"].map((tab) => (
-            <TabsTrigger key={tab} value={tab} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3 capitalize">
-              {tab === "auth" ? "Autenticação" : tab === "messages" ? "Mensagens" : tab === "contacts" ? "Contatos" : tab === "conversations" ? "Conversas" : "Conexões"}
+          {tabItems.map((tab) => (
+            <TabsTrigger key={tab.value} value={tab.value} className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-3">
+              {tab.label}
             </TabsTrigger>
           ))}
         </TabsList>
 
         <div className="mt-6">
+          {/* Quick Start */}
+          <TabsContent value="inicio" className="mt-0 space-y-4">
+            <StepCard step={1} title="Configure a URL base do servidor">
+              <p className="text-sm text-muted-foreground mb-3">
+                Defina o endereço do seu servidor para que a API funcione corretamente.
+              </p>
+              <Link to="/configuracoes" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline">
+                Ir para Configurações → Opções <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+            </StepCard>
+
+            <StepCard step={2} title="Crie uma chave API">
+              <p className="text-sm text-muted-foreground mb-3">
+                Gere uma chave API com as permissões necessárias (read, write, send).
+              </p>
+              <Link to="/configuracoes" className="inline-flex items-center gap-1.5 text-sm text-primary hover:underline">
+                Ir para Configurações → API Keys <ExternalLink className="h-3.5 w-3.5" />
+              </Link>
+            </StepCard>
+
+            <StepCard step={3} title="Faça sua primeira chamada">
+              <p className="text-sm text-muted-foreground mb-3">
+                Teste a conexão com um health check:
+              </p>
+              <CodeBlock language="bash" code={`curl -H "X-API-Key: ${apiKey}" \\\n  ${baseUrl}/health`} />
+            </StepCard>
+
+            <StepCard step={4} title="Envie sua primeira mensagem">
+              <p className="text-sm text-muted-foreground mb-3">
+                Envie uma mensagem WhatsApp via API:
+              </p>
+              <CodeBlock language="bash" code={`curl -X POST ${baseUrl}/messages/send \\\n  -H "X-API-Key: ${apiKey}" \\\n  -H "Content-Type: application/json" \\\n  -d '{\n    "phone": "5511999999999",\n    "message": "Olá! Mensagem via API."\n  }'`} />
+            </StepCard>
+          </TabsContent>
+
           {/* Auth */}
           <TabsContent value="auth" className="mt-0 space-y-6">
             <Card>
@@ -87,9 +181,9 @@ export default function ApiDocs() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm">Adicione o header <code className="bg-muted px-2 py-1 rounded text-xs">X-API-Key</code> em cada requisição:</p>
-                <CodeBlock language="bash" code={`curl -H "X-API-Key: tf_sua_chave_aqui" \\\n  ${baseUrl}/health`} />
-                <CodeBlock language="javascript" code={`const response = await fetch("${baseUrl}/contacts", {\n  headers: {\n    "X-API-Key": "tf_sua_chave_aqui",\n    "Content-Type": "application/json"\n  }\n});\nconst data = await response.json();`} />
-                <CodeBlock language="python" code={`import requests\n\nheaders = {\n    "X-API-Key": "tf_sua_chave_aqui",\n    "Content-Type": "application/json"\n}\n\nresponse = requests.get("${baseUrl}/contacts", headers=headers)\ndata = response.json()`} />
+                <CodeBlock language="bash" code={`curl -H "X-API-Key: ${apiKey}" \\\n  ${baseUrl}/health`} />
+                <CodeBlock language="javascript" code={`const response = await fetch("${baseUrl}/contacts", {\n  headers: {\n    "X-API-Key": "${apiKey}",\n    "Content-Type": "application/json"\n  }\n});\nconst data = await response.json();`} />
+                <CodeBlock language="python" code={`import requests\n\nheaders = {\n    "X-API-Key": "${apiKey}",\n    "Content-Type": "application/json"\n}\n\nresponse = requests.get("${baseUrl}/contacts", headers=headers)\ndata = response.json()`} />
 
                 <Card className="bg-muted/30">
                   <CardContent className="pt-6">
