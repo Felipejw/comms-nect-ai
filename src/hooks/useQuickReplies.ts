@@ -17,6 +17,7 @@ export interface QuickReply {
 export function useQuickReplies() {
   return useQuery({
     queryKey: ['quick-replies'],
+    staleTime: 5 * 60 * 1000, // 5 minutes - quick replies rarely change
     queryFn: async () => {
       const { data, error } = await supabase
         .from('quick_replies')

@@ -18,6 +18,7 @@ export function useSystemSettings() {
 
   const { data: settings = [], isLoading } = useQuery({
     queryKey: ["system-settings"],
+    staleTime: 5 * 60 * 1000, // 5 minutes - system settings rarely change
     queryFn: async () => {
       const { data, error } = await supabase
         .from("system_settings")

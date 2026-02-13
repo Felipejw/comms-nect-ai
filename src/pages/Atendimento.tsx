@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, ChangeEvent, useCallback, useMemo, TouchEvent as ReactTouchEvent } from "react";
 import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Loader2, MessageCircle, Image, FileText, Mic, X, User, Trash2, Check, CheckCheck, Tag, ChevronUp, ChevronDown, ArrowLeft, Video, Calendar, MoreHorizontal, Bot, UserCheck, Building, PenLine, CheckSquare, Archive, Download, RefreshCw, Info, Users, AlertCircle, Eye } from "lucide-react";
+import { ConversationDialogs, BulkDialogs } from "@/components/atendimento/ConversationDialogs";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import Picker from '@emoji-mart/react';
@@ -492,15 +493,7 @@ export default function Atendimento() {
     }
   }, [conversations, selectedConversation]);
 
-  // Atualizar conversa selecionada quando os dados mudarem (real-time sync)
-  useEffect(() => {
-    if (selectedConversation && conversations) {
-      const updated = conversations.find(c => c.id === selectedConversation.id);
-      if (updated) {
-        setSelectedConversation(updated);
-      }
-    }
-  }, [conversations]);
+  // NOTE: Duplicate useEffect removed - sync already handled at line 266
 
   // Cleanup preview URL on unmount
   useEffect(() => {
@@ -2308,436 +2301,92 @@ export default function Atendimento() {
         </SheetContent>
       </Sheet>
 
-      {/* Delete Confirmation Dialog */}
-      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir conversa</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja excluir esta conversa? Esta ação não pode ser desfeita e todas as mensagens serão perdidas.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteConversation}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleteConversation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : (
-                <Trash2 className="w-4 h-4 mr-2" />
-              )}
-              Excluir
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {/* Conversation Dialogs */}
+      <ConversationDialogs
+        showDeleteDialog={showDeleteDialog}
+        setShowDeleteDialog={setShowDeleteDialog}
+        onDeleteConversation={handleDeleteConversation}
+        deleteLoading={deleteConversation.isPending}
+        showScheduleDialog={showScheduleDialog}
+        setShowScheduleDialog={setShowScheduleDialog}
+        scheduleTitle={scheduleTitle}
+        setScheduleTitle={setScheduleTitle}
+        scheduleDescription={scheduleDescription}
+        setScheduleDescription={setScheduleDescription}
+        scheduleDate={scheduleDate}
+        setScheduleDate={setScheduleDate}
+        scheduleTime={scheduleTime}
+        setScheduleTime={setScheduleTime}
+        onCreateSchedule={() => {
+          if (!selectedConversation || !user) return;
+          const scheduledAt = new Date(`${scheduleDate}T${scheduleTime}`);
+          createSchedule.mutate({
+            title: scheduleTitle,
+            description: scheduleDescription || undefined,
+            scheduled_at: scheduledAt.toISOString(),
+            user_id: user.id,
+            contact_id: selectedConversation.contact?.id,
+            conversation_id: selectedConversation.id,
+          });
+          setScheduleTitle("");
+          setScheduleDescription("");
+          setScheduleDate("");
+          setScheduleTime("");
+          setShowScheduleDialog(false);
+        }}
+        scheduleLoading={createSchedule.isPending}
+        showBotFlowDialog={showBotFlowDialog}
+        setShowBotFlowDialog={setShowBotFlowDialog}
+        selectedFlowId={selectedFlowId}
+        setSelectedFlowId={setSelectedFlowId}
+        activeFlows={activeFlows}
+        onConfirmTransferToBot={confirmTransferToBot}
+        transferLoading={updateConversation.isPending}
+        showQueueDialog={showQueueDialog}
+        setShowQueueDialog={setShowQueueDialog}
+        selectedQueueId={selectedQueueId}
+        setSelectedQueueId={setSelectedQueueId}
+        queues={queues || []}
+        onConfirmChangeQueue={confirmChangeQueue}
+        queueLoading={updateConversation.isPending}
+      />
 
-      {/* Schedule Message Dialog */}
-      <Dialog open={showScheduleDialog} onOpenChange={setShowScheduleDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Agendar Mensagem</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="p-3 rounded-lg bg-muted/50 border">
-              <p className="text-sm font-medium">Contato</p>
-              <p className="text-sm text-muted-foreground">
-                {selectedConversation?.contact?.name || "Sem nome"}
-              </p>
-            </div>
-            <div className="space-y-2">
-              <Label>Título *</Label>
-              <Input 
-                placeholder="Ex: Follow-up do pedido" 
-                value={scheduleTitle}
-                onChange={(e) => setScheduleTitle(e.target.value)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label>Descrição</Label>
-              <Textarea 
-                placeholder="Detalhes do agendamento" 
-                value={scheduleDescription}
-                onChange={(e) => setScheduleDescription(e.target.value)}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Data *</Label>
-                <Input 
-                  type="date" 
-                  value={scheduleDate}
-                  onChange={(e) => setScheduleDate(e.target.value)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Horário *</Label>
-                <Input 
-                  type="time" 
-                  value={scheduleTime}
-                  onChange={(e) => setScheduleTime(e.target.value)}
-                />
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowScheduleDialog(false)}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={async () => {
-                if (!scheduleTitle.trim() || !scheduleDate || !scheduleTime || !user?.id || !selectedConversation) return;
-                const scheduledAt = new Date(`${scheduleDate}T${scheduleTime}`);
-                await createSchedule.mutateAsync({
-                  title: scheduleTitle.trim(),
-                  description: scheduleDescription.trim() || null,
-                  contact_id: selectedConversation.contact_id,
-                  user_id: user.id,
-                  scheduled_at: scheduledAt.toISOString(),
-                  reminder: true,
-                });
-                setScheduleTitle("");
-                setScheduleDescription("");
-                setScheduleDate("");
-                setScheduleTime("");
-                setShowScheduleDialog(false);
-              }}
-              disabled={createSchedule.isPending || !scheduleTitle.trim() || !scheduleDate || !scheduleTime}
-            >
-              {createSchedule.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Agendar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Transfer to Bot Flow Dialog */}
-      <Dialog open={showBotFlowDialog} onOpenChange={setShowBotFlowDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Selecionar Fluxo do Chatbot</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Selecione o fluxo de chatbot para onde a conversa será transferida:
-            </p>
-            <Select value={selectedFlowId} onValueChange={setSelectedFlowId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um fluxo" />
-              </SelectTrigger>
-              <SelectContent>
-                {activeFlows.map(flow => (
-                  <SelectItem key={flow.id} value={flow.id}>
-                    <div className="flex items-center gap-2">
-                      <Bot className="w-4 h-4 text-primary" />
-                      {flow.name}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {activeFlows.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-2">
-                Nenhum fluxo ativo encontrado
-              </p>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowBotFlowDialog(false)}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={confirmTransferToBot}
-              disabled={updateConversation.isPending || !selectedFlowId}
-            >
-              {updateConversation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Transferir
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Change Queue Dialog */}
-      <Dialog open={showQueueDialog} onOpenChange={setShowQueueDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Mudar Setor</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Selecione o setor para onde a conversa será movida:
-            </p>
-            <Select value={selectedQueueId} onValueChange={setSelectedQueueId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um setor" />
-              </SelectTrigger>
-            <SelectContent>
-                <SelectItem value="none">Sem setor</SelectItem>
-                {queues?.map(queue => (
-                  <SelectItem key={queue.id} value={queue.id}>
-                    <div className="flex items-center gap-2">
-                      <div 
-                        className="w-3 h-3 rounded-full" 
-                        style={{ backgroundColor: queue.color }}
-                      />
-                      {queue.name}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowQueueDialog(false)}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={confirmChangeQueue}
-              disabled={updateConversation.isPending}
-            >
-              {updateConversation.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Confirmar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Delete Dialog */}
-      <AlertDialog open={showBulkDeleteDialog} onOpenChange={setShowBulkDeleteDialog}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir conversas em massa</AlertDialogTitle>
-            <AlertDialogDescription>
-              Tem certeza que deseja excluir {selectedConversationIds.size} conversa(s)? 
-              Esta ação não pode ser desfeita e todas as mensagens serão removidas.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction 
-              onClick={handleBulkDelete}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {bulkDeleteConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Excluir {selectedConversationIds.size} conversa(s)
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      {/* Bulk Status Dialog */}
-      <Dialog open={showBulkStatusDialog} onOpenChange={setShowBulkStatusDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Alterar Status em Massa</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Alterar o status de {selectedConversationIds.size} conversa(s) para:
-            </p>
-            <Select value={bulkStatusValue} onValueChange={setBulkStatusValue}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um status" />
-              </SelectTrigger>
-              <SelectContent>
-                {Object.entries(statusConfig).map(([key, config]) => (
-                  <SelectItem key={key} value={key}>
-                    <Badge className={cn("text-xs", config.className)}>
-                      {config.label}
-                    </Badge>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowBulkStatusDialog(false)}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={handleBulkStatusUpdate}
-              disabled={bulkUpdateConversations.isPending || !bulkStatusValue}
-            >
-              {bulkUpdateConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Aplicar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Assign Dialog */}
-      <Dialog open={showBulkAssignDialog} onOpenChange={setShowBulkAssignDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Atribuir Agente em Massa</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Atribuir {selectedConversationIds.size} conversa(s) para:
-            </p>
-            <Select value={bulkAssignValue} onValueChange={setBulkAssignValue}>
-              <SelectTrigger>
-                <SelectValue placeholder="Selecione um agente" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">
-                  <span className="text-muted-foreground">Sem atribuição</span>
-                </SelectItem>
-                {users?.map(u => (
-                  <SelectItem key={u.id} value={u.user_id}>
-                    <div className="flex items-center gap-2">
-                      <Avatar className="w-5 h-5">
-                        <AvatarImage src={u.avatar_url || undefined} />
-                        <AvatarFallback className="text-[10px]">
-                          {u.name?.slice(0, 2).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                      {u.name}
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowBulkAssignDialog(false)}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={handleBulkAssign}
-              disabled={bulkUpdateConversations.isPending}
-            >
-              {bulkUpdateConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Atribuir
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Bulk Tag Dialog */}
-      <Dialog open={showBulkTagDialog} onOpenChange={setShowBulkTagDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {bulkTagMode === 'add' ? 'Adicionar Tags em Massa' : 'Remover Tags em Massa'}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="flex gap-2">
-              <Button 
-                variant={bulkTagMode === 'add' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setBulkTagMode('add')}
-              >
-                Adicionar Tags
-              </Button>
-              <Button 
-                variant={bulkTagMode === 'remove' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setBulkTagMode('remove')}
-              >
-                Remover Tags
-              </Button>
-            </div>
-            
-            <p className="text-sm text-muted-foreground">
-              {bulkTagMode === 'add' 
-                ? `Selecione as tags para adicionar a ${selectedConversationIds.size} conversa(s):`
-                : `Selecione as tags para remover de ${selectedConversationIds.size} conversa(s):`
-              }
-            </p>
-            
-            <div className="max-h-60 overflow-y-auto space-y-2">
-              {tags?.map(tag => (
-                <div key={tag.id} className="flex items-center gap-2 p-2 rounded hover:bg-muted/50">
-                  <Checkbox
-                    checked={selectedBulkTags.has(tag.id)}
-                    onCheckedChange={(checked) => {
-                      setSelectedBulkTags(prev => {
-                        const newSet = new Set(prev);
-                        if (checked) newSet.add(tag.id);
-                        else newSet.delete(tag.id);
-                        return newSet;
-                      });
-                    }}
-                  />
-                  <Badge style={{ backgroundColor: tag.color }} className="text-white">
-                    {tag.name}
-                  </Badge>
-                  {tag.description && (
-                    <span className="text-xs text-muted-foreground">{tag.description}</span>
-                  )}
-                </div>
-              ))}
-              {(!tags || tags.length === 0) && (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  Nenhuma tag disponível
-                </p>
-              )}
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowBulkTagDialog(false)}>
-              Cancelar
-            </Button>
-            <Button 
-              onClick={handleBulkTagAction}
-              disabled={selectedBulkTags.size === 0 || bulkAddTags.isPending || bulkRemoveTags.isPending}
-            >
-              {(bulkAddTags.isPending || bulkRemoveTags.isPending) && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              {bulkTagMode === 'add' ? 'Adicionar' : 'Remover'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Export Dialog */}
-      <Dialog open={showExportDialog} onOpenChange={setShowExportDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Exportar Conversas</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-muted-foreground">
-              Exportar {selectedConversationIds.size} conversa(s) com todas as mensagens
-            </p>
-            
-            <div className="space-y-2">
-              <Label>Formato</Label>
-              <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as 'csv' | 'pdf')}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="csv">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
-                      CSV (Excel)
-                    </div>
-                  </SelectItem>
-                  <SelectItem value="pdf">
-                    <div className="flex items-center gap-2">
-                      <FileText className="w-4 h-4" />
-                      HTML (Relatório para PDF)
-                    </div>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowExportDialog(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleExport} disabled={exportConversations.isPending}>
-              {exportConversations.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Exportar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* Bulk Action Dialogs */}
+      <BulkDialogs
+        showBulkDeleteDialog={showBulkDeleteDialog}
+        setShowBulkDeleteDialog={setShowBulkDeleteDialog}
+        selectedCount={selectedConversationIds.size}
+        onBulkDelete={handleBulkDelete}
+        bulkDeleteLoading={bulkDeleteConversations.isPending}
+        showBulkStatusDialog={showBulkStatusDialog}
+        setShowBulkStatusDialog={setShowBulkStatusDialog}
+        bulkStatusValue={bulkStatusValue}
+        setBulkStatusValue={setBulkStatusValue}
+        onBulkStatusUpdate={handleBulkStatusUpdate}
+        bulkStatusLoading={bulkUpdateConversations.isPending}
+        showBulkAssignDialog={showBulkAssignDialog}
+        setShowBulkAssignDialog={setShowBulkAssignDialog}
+        bulkAssignValue={bulkAssignValue}
+        setBulkAssignValue={setBulkAssignValue}
+        onBulkAssign={handleBulkAssign}
+        bulkAssignLoading={bulkUpdateConversations.isPending}
+        users={users || []}
+        showBulkTagDialog={showBulkTagDialog}
+        setShowBulkTagDialog={setShowBulkTagDialog}
+        bulkTagMode={bulkTagMode}
+        setBulkTagMode={setBulkTagMode}
+        selectedBulkTags={selectedBulkTags}
+        setSelectedBulkTags={setSelectedBulkTags}
+        onBulkTagAction={handleBulkTagAction}
+        bulkTagLoading={bulkAddTags.isPending || bulkRemoveTags.isPending}
+        tags={tags || []}
+        showExportDialog={showExportDialog}
+        setShowExportDialog={setShowExportDialog}
+        exportFormat={exportFormat}
+        setExportFormat={setExportFormat}
+        onExport={handleExport}
+        exportLoading={exportConversations.isPending}
+      />
     </div>
   );
 }

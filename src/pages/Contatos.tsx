@@ -397,42 +397,38 @@ export default function Contatos() {
     }
 
     setIsImporting(true);
-    let successCount = 0;
-    let errorCount = 0;
 
-    for (const row of csvData.rows) {
-      const name = row[columnMapping.name]?.trim();
-      if (!name) continue;
+    const contacts = csvData.rows
+      .map(row => ({
+        name: row[columnMapping.name]?.trim() || "",
+        email: columnMapping.email >= 0 ? row[columnMapping.email]?.trim() || null : null,
+        phone: columnMapping.phone >= 0 ? row[columnMapping.phone]?.trim() || null : null,
+        company: columnMapping.company >= 0 ? row[columnMapping.company]?.trim() || null : null,
+      }))
+      .filter(c => c.name);
 
-      try {
-        const { error } = await supabase.from('contacts').insert({
-          name,
-          email: columnMapping.email >= 0 ? row[columnMapping.email]?.trim() || null : null,
-          phone: columnMapping.phone >= 0 ? row[columnMapping.phone]?.trim() || null : null,
-          company: columnMapping.company >= 0 ? row[columnMapping.company]?.trim() || null : null,
-        });
+    try {
+      const { data, error } = await supabase.functions.invoke("bulk-import-contacts", {
+        body: { contacts },
+      });
 
-        if (error) {
-          errorCount++;
-        } else {
-          successCount++;
-        }
-      } catch {
-        errorCount++;
+      if (error) throw error;
+
+      if (data?.imported > 0) {
+        toast.success(`${data.imported} contatos importados com sucesso!`);
+        queryClient.invalidateQueries({ queryKey: ["contacts"] });
       }
+      if (data?.failed > 0) {
+        toast.error(`${data.failed} contatos falharam ao importar`);
+      }
+    } catch (err: any) {
+      toast.error("Erro ao importar contatos: " + (err.message || "Erro desconhecido"));
     }
 
     setIsImporting(false);
     setIsImportDialogOpen(false);
     setCsvData(null);
     setColumnMapping({ name: -1, email: -1, phone: -1, company: -1 });
-    
-    if (successCount > 0) {
-      toast.success(`${successCount} contatos importados com sucesso!`);
-    }
-    if (errorCount > 0) {
-      toast.error(`${errorCount} contatos falharam ao importar`);
-    }
   };
 
   if (isLoading) {

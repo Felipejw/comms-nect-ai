@@ -16,7 +16,7 @@ import {
 import {
   RefreshCw, Server, Database, Wifi, WifiOff, CheckCircle2, XCircle,
   AlertTriangle, Activity, Clock, Users, FileText, ChevronLeft, ChevronRight,
-  Filter, MessageSquare, Phone, Globe, HardDrive,
+  Filter, MessageSquare, Phone, Globe, HardDrive, Key, Bot, Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, subDays, subHours } from "date-fns";
@@ -240,13 +240,16 @@ export default function Diagnostico() {
   } = useQuery({
     queryKey: ["table-counts"],
     queryFn: async () => {
-      const [contacts, conversations, messages, campaigns, queues, tags] = await Promise.all([
+      const [contacts, conversations, messages, campaigns, queues, tags, apiKeys, flows, integrations] = await Promise.all([
         supabase.from("contacts").select("*", { count: "exact", head: true }),
         supabase.from("conversations").select("*", { count: "exact", head: true }),
         supabase.from("messages").select("*", { count: "exact", head: true }),
         supabase.from("campaigns").select("*", { count: "exact", head: true }),
         supabase.from("queues").select("*", { count: "exact", head: true }),
         supabase.from("tags").select("*", { count: "exact", head: true }),
+        supabase.from("api_keys").select("*", { count: "exact", head: true }).eq("is_active", true),
+        supabase.from("chatbot_flows").select("*", { count: "exact", head: true }).eq("is_active", true),
+        supabase.from("integrations").select("*", { count: "exact", head: true }).eq("is_active", true),
       ]);
       return {
         contacts: contacts.count || 0,
@@ -255,6 +258,9 @@ export default function Diagnostico() {
         campaigns: campaigns.count || 0,
         queues: queues.count || 0,
         tags: tags.count || 0,
+        apiKeys: apiKeys.count || 0,
+        flows: flows.count || 0,
+        integrations: integrations.count || 0,
       };
     },
     refetchInterval: autoRefresh ? 60000 : false,
@@ -562,6 +568,21 @@ export default function Diagnostico() {
                   <Activity className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">Campanhas</span>
                   <span className="text-sm font-bold ml-auto">{tableCounts.campaigns.toLocaleString("pt-BR")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">API Keys</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.apiKeys.toLocaleString("pt-BR")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Bot className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Fluxos ativos</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.flows.toLocaleString("pt-BR")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Plug className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Integrações</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.integrations.toLocaleString("pt-BR")}</span>
                 </div>
               </div>
             ) : null}
