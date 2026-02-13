@@ -117,6 +117,62 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`[admin-write] Operation: ${operation} on table: ${table}`);
 
+    // 3.5 Handle ensure-bucket operation (storage)
+    if (operation === "ensure-bucket") {
+      const bucketId = data?.id;
+      const bucketName = data?.name || bucketId;
+      const isPublic = data?.public ?? true;
+
+      if (!bucketId) {
+        return new Response(
+          JSON.stringify({ error: "Missing bucket 'id' in data" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      console.log(`[admin-write] Ensuring bucket exists: ${bucketId}`);
+
+      // Check if bucket already exists
+      const { data: existingBuckets, error: listError } = await supabaseAdmin.storage.listBuckets();
+
+      if (listError) {
+        console.error(`[admin-write] Error listing buckets:`, listError.message);
+        return new Response(
+          JSON.stringify({ error: listError.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const bucketExists = existingBuckets?.some((b: any) => b.id === bucketId);
+
+      if (bucketExists) {
+        console.log(`[admin-write] Bucket '${bucketId}' already exists`);
+        return new Response(
+          JSON.stringify({ data: { id: bucketId, existed: true } }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Create bucket
+      const { error: createError } = await supabaseAdmin.storage.createBucket(bucketId, {
+        public: isPublic,
+      });
+
+      if (createError) {
+        console.error(`[admin-write] Error creating bucket:`, createError.message);
+        return new Response(
+          JSON.stringify({ error: createError.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      console.log(`[admin-write] Bucket '${bucketId}' created successfully`);
+      return new Response(
+        JSON.stringify({ data: { id: bucketId, created: true } }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // 4. Validate table
     if (!table || !ALLOWED_TABLES.includes(table)) {
       console.error(`[admin-write] Table not allowed: ${table}`);

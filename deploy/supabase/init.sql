@@ -986,10 +986,19 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres
 -- PARTE 9: STORAGE BUCKETS
 -- ============================================================
 
-DO $$ BEGIN
-  INSERT INTO storage.buckets (id, name, public)
-  VALUES ('chat-attachments', 'chat-attachments', true)
-  ON CONFLICT (id) DO NOTHING;
+DO $$
+DECLARE
+  _bucket_error TEXT;
+BEGIN
+  BEGIN
+    INSERT INTO storage.buckets (id, name, public)
+    VALUES ('chat-attachments', 'chat-attachments', true)
+    ON CONFLICT (id) DO NOTHING;
+    RAISE NOTICE 'Bucket chat-attachments OK';
+  EXCEPTION WHEN OTHERS THEN
+    GET STACKED DIAGNOSTICS _bucket_error = MESSAGE_TEXT;
+    RAISE WARNING 'Failed to create bucket chat-attachments: %', _bucket_error;
+  END;
 
   DROP POLICY IF EXISTS "Authenticated users can upload chat attachments" ON storage.objects;
   DROP POLICY IF EXISTS "Anyone can view chat attachments" ON storage.objects;
@@ -1052,7 +1061,10 @@ DO $$ BEGIN
   ON storage.objects FOR DELETE USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
 
 EXCEPTION WHEN undefined_table THEN
-  RAISE NOTICE 'storage schema not available yet - buckets will be created by storage service';
+  RAISE WARNING 'storage schema not available yet - buckets will be created automatically on first upload';
+WHEN OTHERS THEN
+  GET STACKED DIAGNOSTICS _bucket_error = MESSAGE_TEXT;
+  RAISE WARNING 'Storage bucket setup failed: % - buckets will be created automatically on first upload', _bucket_error;
 END $$;
 
 -- ============================================================
