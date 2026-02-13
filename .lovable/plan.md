@@ -1,31 +1,52 @@
 
 
-## Criar script `install.sh` na raiz do projeto
+## Corrigir conflito de container Baileys na reinstalacao
 
 ### Problema
-Comandos longos com nomes de arquivo como `bootstrap-local.sh` quebram em multiplas linhas no terminal, causando erros repetidos de "No such file or directory".
+Dois bugs causam o erro "container name /baileys-server is already in use":
+
+1. **bootstrap-local.sh**: O `docker compose down` na limpeza da instalacao anterior nao inclui `--profile baileys`, entao o container do Baileys nunca e parado/removido antes da reinstalacao.
+2. **install-unified.sh**: O `docker compose --profile baileys up -d` na Etapa 3 nao usa `--force-recreate`, entao se um container com o mesmo nome ja existe (de uma instalacao standalone anterior ou reinstalacao), o Docker recusa criar um novo.
+
+Isso faz o Nginx tambem falhar ao subir, resultando em ERR_CONNECTION_REFUSED no navegador.
 
 ### Solucao
-Criar um arquivo `install.sh` na raiz do projeto (ao lado de `package.json`) que serve como atalho para o `bootstrap-local.sh`. Assim o comando de instalacao fica curto e impossivel de quebrar.
 
-### Comando final de instalacao
+**Arquivo 1: `deploy/scripts/bootstrap-local.sh`**
+- Adicionar `--profile baileys` ao comando `docker compose down` na secao de backup
+- Adicionar um `docker rm -f baileys-server` como fallback para remover containers orfaos
 
-```text
-sudo bash -c "unzip chatbot.zip -d /tmp/sx && bash /tmp/sx/*/install.sh"
-```
+**Arquivo 2: `deploy/scripts/install-unified.sh`**
+- Adicionar `--force-recreate --remove-orphans` ao comando da Etapa 3 (linha 892)
+- Adicionar uma limpeza preventiva de containers orfaos no inicio da funcao `start_services()`
 
 ### Detalhes tecnicos
 
-**Novo arquivo: `install.sh` (raiz do projeto)**
-- Script de 5 linhas que detecta seu proprio diretorio
-- Redireciona para `deploy/scripts/bootstrap-local.sh`
-- Passa argumentos e stdin (`< /dev/tty`) para manter prompts interativos
-
-**Conteudo do script:**
+**bootstrap-local.sh** - Secao de backup (linhas 137-143):
 ```bash
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-exec bash "$DIR/deploy/scripts/bootstrap-local.sh" "$@" < /dev/tty
+# Antes (nao para o baileys):
+docker compose down
+
+# Depois:
+docker compose --profile baileys down --remove-orphans
+docker rm -f baileys-server 2>/dev/null || true
 ```
 
-Nenhum outro arquivo sera alterado.
+**install-unified.sh** - Funcao start_services (linha 892):
+```bash
+# Antes:
+docker compose --profile baileys up -d || true
+
+# Depois:
+docker rm -f baileys-server 2>/dev/null || true
+docker compose --profile baileys up -d --force-recreate --remove-orphans || true
+```
+
+### Comando para corrigir agora na VPS (sem precisar reinstalar)
+Voce pode rodar isso agora para desbloquear:
+```text
+cd /opt/sistema/deploy
+docker rm -f baileys-server
+docker compose --profile baileys up -d --force-recreate
+```
+
