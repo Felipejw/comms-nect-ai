@@ -80,7 +80,7 @@ function hasPermission(keyRow: ApiKeyRow, required: string): boolean {
 // ============ Route Handlers ============
 
 async function handleHealth() {
-  return json({ status: "ok", version: "1.0.0", timestamp: new Date().toISOString() });
+  return json({ status: "ok", version: "1.1.0", timestamp: new Date().toISOString() });
 }
 
 async function handleGetContacts(url: URL) {
@@ -118,6 +118,33 @@ async function handleCreateContact(body: any) {
   return json({ data }, 201);
 }
 
+async function handleUpdateContact(id: string, body: any) {
+  const supabase = getSupabaseAdmin();
+  const allowedFields = ["name", "phone", "email", "company", "notes", "status", "kanban_stage", "avatar_url"];
+  const updates: Record<string, any> = {};
+
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      updates[field] = body[field];
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return json({ error: "No valid fields to update" }, 400);
+  }
+
+  const { data, error } = await supabase.from("contacts").update(updates).eq("id", id).select().single();
+  if (error) return json({ error: error.message }, error.code === "PGRST116" ? 404 : 500);
+  return json({ data });
+}
+
+async function handleDeleteContact(id: string) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.from("contacts").delete().eq("id", id);
+  if (error) return json({ error: error.message }, 500);
+  return json({ success: true, message: "Contact deleted" });
+}
+
 async function handleGetConversations(url: URL) {
   const supabase = getSupabaseAdmin();
   const limit = parseInt(url.searchParams.get("limit") || "50");
@@ -132,6 +159,26 @@ async function handleGetConversations(url: URL) {
 
   if (error) return json({ error: error.message }, 500);
   return json({ data, total: count, limit, offset });
+}
+
+async function handleUpdateConversation(id: string, body: any) {
+  const supabase = getSupabaseAdmin();
+  const allowedFields = ["status", "assigned_to", "queue_id", "subject", "priority", "is_bot_active"];
+  const updates: Record<string, any> = {};
+
+  for (const field of allowedFields) {
+    if (body[field] !== undefined) {
+      updates[field] = body[field];
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return json({ error: "No valid fields to update" }, 400);
+  }
+
+  const { data, error } = await supabase.from("conversations").update(updates).eq("id", id).select().single();
+  if (error) return json({ error: error.message }, error.code === "PGRST116" ? 404 : 500);
+  return json({ data });
 }
 
 async function handleGetConversationMessages(conversationId: string, url: URL) {
@@ -185,6 +232,24 @@ async function handleSendMessage(body: any) {
   return json({ success: true, data: result });
 }
 
+async function handleGetStats() {
+  const supabase = getSupabaseAdmin();
+  
+  const [contacts, conversations, connections, messages] = await Promise.all([
+    supabase.from("contacts").select("*", { count: "exact", head: true }),
+    supabase.from("conversations").select("*", { count: "exact", head: true }),
+    supabase.from("connections").select("*", { count: "exact", head: true }),
+    supabase.from("messages").select("*", { count: "exact", head: true }),
+  ]);
+
+  return json({
+    contacts: contacts.count || 0,
+    conversations: conversations.count || 0,
+    connections: connections.count || 0,
+    messages: messages.count || 0,
+  });
+}
+
 // ============ Main Router ============
 
 const handler = async (req: Request): Promise<Response> => {
@@ -235,10 +300,30 @@ const handler = async (req: Request): Promise<Response> => {
       return handleCreateContact(body);
     }
 
+    // PUT /contacts/:id
+    if (method === "PUT" && parts[0] === "contacts" && parts.length === 2) {
+      if (!hasPermission(keyRow, "write")) return json({ error: "Permission 'write' required" }, 403);
+      const body = await req.json();
+      return handleUpdateContact(parts[1], body);
+    }
+
+    // DELETE /contacts/:id
+    if (method === "DELETE" && parts[0] === "contacts" && parts.length === 2) {
+      if (!hasPermission(keyRow, "write")) return json({ error: "Permission 'write' required" }, 403);
+      return handleDeleteContact(parts[1]);
+    }
+
     // GET /conversations
     if (method === "GET" && route === "conversations") {
       if (!hasPermission(keyRow, "read")) return json({ error: "Permission 'read' required" }, 403);
       return handleGetConversations(url);
+    }
+
+    // PUT /conversations/:id
+    if (method === "PUT" && parts[0] === "conversations" && parts.length === 2) {
+      if (!hasPermission(keyRow, "write")) return json({ error: "Permission 'write' required" }, 403);
+      const body = await req.json();
+      return handleUpdateConversation(parts[1], body);
     }
 
     // GET /conversations/:id/messages
@@ -258,6 +343,12 @@ const handler = async (req: Request): Promise<Response> => {
       if (!hasPermission(keyRow, "send")) return json({ error: "Permission 'send' required" }, 403);
       const body = await req.json();
       return handleSendMessage(body);
+    }
+
+    // GET /stats
+    if (method === "GET" && route === "stats") {
+      if (!hasPermission(keyRow, "read")) return json({ error: "Permission 'read' required" }, 403);
+      return handleGetStats();
     }
 
     return json({ error: "Route not found", path: route }, 404);

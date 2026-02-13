@@ -16,7 +16,7 @@ import {
 import {
   RefreshCw, Server, Database, Wifi, WifiOff, CheckCircle2, XCircle,
   AlertTriangle, Activity, Clock, Users, FileText, ChevronLeft, ChevronRight,
-  Filter,
+  Filter, MessageSquare, Phone, Globe, HardDrive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, subDays, subHours } from "date-fns";
@@ -232,6 +232,57 @@ export default function Diagnostico() {
     refetchInterval: autoRefresh ? 30000 : false,
   });
 
+  // Fetch table counts for system overview
+  const {
+    data: tableCounts,
+    isLoading: isLoadingCounts,
+    refetch: refetchCounts,
+  } = useQuery({
+    queryKey: ["table-counts"],
+    queryFn: async () => {
+      const [contacts, conversations, messages, campaigns, queues, tags] = await Promise.all([
+        supabase.from("contacts").select("*", { count: "exact", head: true }),
+        supabase.from("conversations").select("*", { count: "exact", head: true }),
+        supabase.from("messages").select("*", { count: "exact", head: true }),
+        supabase.from("campaigns").select("*", { count: "exact", head: true }),
+        supabase.from("queues").select("*", { count: "exact", head: true }),
+        supabase.from("tags").select("*", { count: "exact", head: true }),
+      ]);
+      return {
+        contacts: contacts.count || 0,
+        conversations: conversations.count || 0,
+        messages: messages.count || 0,
+        campaigns: campaigns.count || 0,
+        queues: queues.count || 0,
+        tags: tags.count || 0,
+      };
+    },
+    refetchInterval: autoRefresh ? 60000 : false,
+  });
+
+  // Fetch API Gateway health
+  const {
+    data: apiGatewayHealth,
+    isLoading: isLoadingApi,
+    refetch: refetchApi,
+  } = useQuery({
+    queryKey: ["api-gateway-health"],
+    queryFn: async () => {
+      const startTime = Date.now();
+      try {
+        const { data, error } = await supabase.functions.invoke("api-gateway", {
+          method: "GET",
+        });
+        const responseTime = Date.now() - startTime;
+        if (error) return { healthy: false, responseTime, error: error.message };
+        return { healthy: data?.status === "ok", responseTime, version: data?.version || null };
+      } catch (err: any) {
+        return { healthy: false, responseTime: Date.now() - startTime, error: err.message };
+      }
+    },
+    refetchInterval: autoRefresh ? 30000 : false,
+  });
+
   const activityLogs = activityLogsData?.logs || [];
   const totalCount = activityLogsData?.totalCount || 0;
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
@@ -247,6 +298,8 @@ export default function Diagnostico() {
     refetchDb();
     refetchConnections();
     refetchLogs();
+    refetchCounts();
+    refetchApi();
   };
 
   const hasError = (metadata: unknown): { hasError: boolean; errorMessage: string | null } => {
@@ -431,6 +484,87 @@ export default function Diagnostico() {
             <p className="text-xs text-muted-foreground mt-2">
               {PERIOD_OPTIONS.find(p => p.value === periodFilter)?.label || "Últimos 7 dias"}
             </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* API Gateway & Table Counts */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* API Gateway Health */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Globe className="w-5 h-5" />
+              API Gateway
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingApi ? (
+              <Skeleton className="h-16 w-full" />
+            ) : (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-muted-foreground">Status</span>
+                  <div className="flex items-center gap-2">
+                    {apiGatewayHealth?.healthy ? (
+                      <><CheckCircle2 className="w-4 h-4 text-green-500" /><span className="text-sm font-medium text-green-500">Online</span></>
+                    ) : (
+                      <><XCircle className="w-4 h-4 text-red-500" /><span className="text-sm font-medium text-red-500">Offline</span></>
+                    )}
+                  </div>
+                </div>
+                {apiGatewayHealth?.responseTime && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Latência</span>
+                    <span className="text-sm font-medium">{apiGatewayHealth.responseTime}ms</span>
+                  </div>
+                )}
+                {apiGatewayHealth?.version && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Versão</span>
+                    <span className="text-sm font-medium">{apiGatewayHealth.version}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Table Counts */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <HardDrive className="w-5 h-5" />
+              Registros no Banco
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isLoadingCounts ? (
+              <Skeleton className="h-16 w-full" />
+            ) : tableCounts ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Contatos</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.contacts.toLocaleString("pt-BR")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Conversas</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.conversations.toLocaleString("pt-BR")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Mensagens</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.messages.toLocaleString("pt-BR")}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm text-muted-foreground">Campanhas</span>
+                  <span className="text-sm font-bold ml-auto">{tableCounts.campaigns.toLocaleString("pt-BR")}</span>
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       </div>
