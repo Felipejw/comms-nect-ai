@@ -73,20 +73,10 @@ const cleanPhone = (phone: string | null | undefined): string | undefined => {
   return phone;
 };
 
-// Format phone number for display
+// Format phone number for display - uses centralized function
 const formatPhoneDisplay = (phone: string | null | undefined) => {
   if (!phone) return "-";
-  const cleaned = phone.replace(/\D/g, '');
-  if (cleaned.length === 13) {
-    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9)}`;
-  } else if (cleaned.length === 12) {
-    return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-  } else if (cleaned.length === 11) {
-    return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2, 7)}-${cleaned.slice(7)}`;
-  } else if (cleaned.length === 10) {
-    return `(${cleaned.slice(0, 2)}) ${cleaned.slice(2, 6)}-${cleaned.slice(6)}`;
-  }
-  return phone;
+  return formatPhoneForDisplay(phone);
 };
 
 // Parse CSV content
