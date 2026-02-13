@@ -1,3 +1,4 @@
+import { Suspense, lazy } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -8,29 +9,34 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { BrandingProvider } from "@/components/BrandingProvider";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { Loader2 } from "lucide-react";
+
+// Eager-loaded routes (critical path)
 import Index from "./pages/Index";
 import Login from "./pages/Login";
-import AcessoNegado from "./pages/AcessoNegado";
-import Dashboard from "./pages/Dashboard";
-import Atendimento from "./pages/Atendimento";
-import Kanban from "./pages/Kanban";
-import Contatos from "./pages/Contatos";
-import Tags from "./pages/Tags";
-import RespostasRapidas from "./pages/RespostasRapidas";
-import Agendamentos from "./pages/Agendamentos";
-import ChatInterno from "./pages/ChatInterno";
-import Campanhas from "./pages/Campanhas";
-import Chatbot from "./pages/Chatbot";
-import Usuarios from "./pages/Usuarios";
-import FilasChatbot from "./pages/FilasChatbot";
-import Integracoes from "./pages/Integracoes";
-import Conexoes from "./pages/Conexoes";
-import Relatorios from "./pages/Relatorios";
-import Painel from "./pages/Painel";
-import Configuracoes from "./pages/Configuracoes";
-import Diagnostico from "./pages/Diagnostico";
-import ApiDocs from "./pages/ApiDocs";
-import NotFound from "./pages/NotFound";
+
+// Lazy-loaded routes
+const AcessoNegado = lazy(() => import("./pages/AcessoNegado"));
+const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Atendimento = lazy(() => import("./pages/Atendimento"));
+const Kanban = lazy(() => import("./pages/Kanban"));
+const Contatos = lazy(() => import("./pages/Contatos"));
+const Tags = lazy(() => import("./pages/Tags"));
+const RespostasRapidas = lazy(() => import("./pages/RespostasRapidas"));
+const Agendamentos = lazy(() => import("./pages/Agendamentos"));
+const ChatInterno = lazy(() => import("./pages/ChatInterno"));
+const Campanhas = lazy(() => import("./pages/Campanhas"));
+const Chatbot = lazy(() => import("./pages/Chatbot"));
+const Usuarios = lazy(() => import("./pages/Usuarios"));
+const FilasChatbot = lazy(() => import("./pages/FilasChatbot"));
+const Integracoes = lazy(() => import("./pages/Integracoes"));
+const Conexoes = lazy(() => import("./pages/Conexoes"));
+const Relatorios = lazy(() => import("./pages/Relatorios"));
+const Painel = lazy(() => import("./pages/Painel"));
+const Configuracoes = lazy(() => import("./pages/Configuracoes"));
+const Diagnostico = lazy(() => import("./pages/Diagnostico"));
+const ApiDocs = lazy(() => import("./pages/ApiDocs"));
+const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,6 +48,12 @@ const queryClient = new QueryClient({
   },
 });
 
+const PageLoader = () => (
+  <div className="min-h-screen flex items-center justify-center bg-background">
+    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+  </div>
+);
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider attribute="class" defaultTheme="light" enableSystem={false}>
@@ -51,6 +63,7 @@ const App = () => (
             <Toaster />
             <Sonner />
           <BrowserRouter>
+            <Suspense fallback={<PageLoader />}>
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/login" element={<Login />} />
@@ -81,6 +94,7 @@ const App = () => (
               
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </Suspense>
           </BrowserRouter>
           </TooltipProvider>
         </BrandingProvider>

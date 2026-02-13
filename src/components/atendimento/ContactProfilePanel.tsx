@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { formatPhoneForDisplay } from '@/hooks/useContactDisplayName';
 import { X, Camera, Save, Loader2, Mail, Phone, Building, Tag as TagIcon, MessageSquare, Clock, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -108,13 +109,7 @@ export default function ContactProfilePanel({ contactId, conversationId, onClose
 
   const formatPhoneDisplay = (phone?: string | null) => {
     if (!phone) return null;
-    const cleaned = phone.replace(/\D/g, '');
-    if (cleaned.length === 13) {
-      return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 9)}-${cleaned.slice(9)}`;
-    } else if (cleaned.length === 12) {
-      return `+${cleaned.slice(0, 2)} (${cleaned.slice(2, 4)}) ${cleaned.slice(4, 8)}-${cleaned.slice(8)}`;
-    }
-    return phone;
+    return formatPhoneForDisplay(phone);
   };
 
   // Get tags not yet assigned to contact

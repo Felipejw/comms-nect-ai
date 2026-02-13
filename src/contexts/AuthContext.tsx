@@ -170,7 +170,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const hasPermission = (module: string, action: 'view' | 'edit'): boolean => {
     if (isAdmin) return true;
-    if (permissions.length === 0) return true;
+    if (permissions.length === 0) return false;
     
     const permission = permissions.find(p => p.module === module);
     if (!permission) return false;

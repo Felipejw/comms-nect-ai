@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { useAuth } from "@/contexts/AuthContext";
+import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { toast } from "sonner";
 
 const loginSchema = z.object({
@@ -20,8 +21,13 @@ type LoginFormData = z.infer<typeof loginSchema>;
 export default function Login() {
   const navigate = useNavigate();
   const { user, loading: authLoading, signIn } = useAuth();
+  const { getSetting } = useSystemSettings();
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  const platformName = getSetting("platform_name") || "TalkFlow";
+  const platformLogo = getSetting("platform_logo");
+  const currentYear = new Date().getFullYear();
 
   const loginForm = useForm<LoginFormData>({ resolver: zodResolver(loginSchema), defaultValues: { email: "", password: "" } });
 
@@ -49,24 +55,32 @@ export default function Login() {
     <div className="min-h-screen flex">
       <div className="hidden lg:flex lg:w-1/2 bg-sidebar flex-col justify-between p-12">
         <div className="flex items-center gap-2">
-          <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center"><MessageSquare className="w-6 h-6 text-primary-foreground" /></div>
-          <span className="font-bold text-xl text-sidebar-foreground">TalkFlow</span>
+          {platformLogo ? (
+            <img src={platformLogo} alt={platformName} className="w-10 h-10 rounded-lg object-contain" />
+          ) : (
+            <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center"><MessageSquare className="w-6 h-6 text-primary-foreground" /></div>
+          )}
+          <span className="font-bold text-xl text-sidebar-foreground">{platformName}</span>
         </div>
         <div className="space-y-6">
           <h1 className="text-4xl font-bold text-sidebar-foreground leading-tight">Gerencie todas as suas conversas em um só lugar</h1>
           <p className="text-lg text-sidebar-muted">Plataforma completa de atendimento, campanhas e automação com inteligência artificial.</p>
         </div>
-        <p className="text-sm text-sidebar-muted">© 2024 TalkFlow. Todos os direitos reservados.</p>
+        <p className="text-sm text-sidebar-muted">© {currentYear} {platformName}. Todos os direitos reservados.</p>
       </div>
 
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="w-full max-w-md space-y-8">
           <div className="text-center lg:text-left">
             <div className="lg:hidden flex items-center justify-center gap-2 mb-8">
-              <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center"><MessageSquare className="w-6 h-6 text-primary-foreground" /></div>
-              <span className="font-bold text-xl">TalkFlow</span>
+              {platformLogo ? (
+                <img src={platformLogo} alt={platformName} className="w-10 h-10 rounded-lg object-contain" />
+              ) : (
+                <div className="w-10 h-10 rounded-lg bg-primary flex items-center justify-center"><MessageSquare className="w-6 h-6 text-primary-foreground" /></div>
+              )}
+              <span className="font-bold text-xl">{platformName}</span>
             </div>
-            <h2 className="text-2xl font-bold">Bem-vindo ao TalkFlow</h2>
+            <h2 className="text-2xl font-bold">Bem-vindo ao {platformName}</h2>
             <p className="text-muted-foreground mt-2">Entre com suas credenciais para acessar o painel</p>
           </div>
 
