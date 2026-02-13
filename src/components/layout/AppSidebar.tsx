@@ -48,6 +48,7 @@ const navSections: NavSection[] = [
       { title: "Setores", href: "/filas-chatbot", icon: Building2, module: "setores" },
       { title: "Integrações", href: "/integracoes", icon: Plug, module: "integracoes" },
       { title: "Conexões", href: "/conexoes", icon: QrCode, module: "conexoes" },
+      { title: "API Docs", href: "/api-docs", icon: FileText, module: "integracoes" },
     ],
   },
 ];

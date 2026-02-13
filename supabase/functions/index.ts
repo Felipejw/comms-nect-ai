@@ -14,6 +14,7 @@ const corsHeaders = {
 // Whitelist of valid function names (security: prevents loading arbitrary files)
 const VALID_FUNCTIONS = new Set([
   'admin-write',
+  'api-gateway',
   'baileys-create-session',
   'baileys-instance',
   'baileys-webhook',
