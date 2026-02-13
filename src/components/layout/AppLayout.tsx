@@ -36,11 +36,11 @@ export function AppLayout() {
           <span className="font-semibold flex-1">{platformName}</span>
           <Button
             variant="ghost"
-            size="icon"
-            className="text-sidebar-foreground"
+            size="sm"
+            className="text-sidebar-muted hover:text-sidebar-foreground h-8 w-8 p-0"
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
           >
-            {theme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
         </header>
         

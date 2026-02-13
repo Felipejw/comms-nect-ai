@@ -167,6 +167,30 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
               <p className="text-sm font-medium truncate">{profile.name}</p>
               <p className="text-xs text-sidebar-muted truncate">{profile.email}</p>
             </div>
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="p-1.5 rounded-md text-sidebar-muted hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors flex-shrink-0"
+              title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+            >
+              {theme === "dark" ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+          </div>
+        )}
+        {isCollapsed && profile && (
+          <div className="relative flex justify-center px-3 py-3">
+            <Avatar className="h-8 w-8">
+              <AvatarImage src={profile.avatar_url || undefined} />
+              <AvatarFallback className="text-xs bg-primary/10 text-primary">
+                {(profile.name || profile.email || "U").charAt(0).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <button
+              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+              className="absolute -top-1 -right-1 p-0.5 rounded-full bg-sidebar text-sidebar-muted hover:text-sidebar-foreground transition-colors"
+              title={theme === "dark" ? "Modo claro" : "Modo escuro"}
+            >
+              {theme === "dark" ? <Sun className="w-3 h-3" /> : <Moon className="w-3 h-3" />}
+            </button>
           </div>
         )}
         <div className="p-3 space-y-1">
@@ -174,14 +198,6 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
             <Settings className="w-5 h-5" />
             {!isCollapsed && <span>Configurações</span>}
           </NavLink>
-          <button
-            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className={cn("sidebar-link w-full", isCollapsed && "justify-center px-2")}
-            title={theme === "dark" ? "Modo claro" : "Modo escuro"}
-          >
-            {theme === "dark" ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            {!isCollapsed && <span>{theme === "dark" ? "Modo Claro" : "Modo Escuro"}</span>}
-          </button>
           <button
             onClick={async () => {
               try {
