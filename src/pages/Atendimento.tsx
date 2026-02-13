@@ -111,6 +111,71 @@ interface MediaPreview {
   previewUrl?: string;
 }
 
+// Auto-download audio component for VPS where media_url is missing
+function AudioAutoDownloader({ messageId, conversationId, sessionName }: { messageId: string; conversationId: string; sessionName: string }) {
+  const [status, setStatus] = useState<'loading' | 'error' | 'idle'>('loading');
+  const queryClient = useQueryClient();
+  const retryCounter = useRef(0);
+
+  useEffect(() => {
+    if (status !== 'loading') return;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
+          body: { messageId, mediaType: 'audio', sessionName },
+        });
+        if (cancelled) return;
+        if (error) throw error;
+        if (data?.success && data?.url) {
+          await supabase.from('messages').update({ media_url: data.url }).eq('id', messageId);
+          queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
+          setStatus('idle');
+        } else {
+          setStatus('error');
+        }
+      } catch {
+        if (!cancelled) setStatus('error');
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [status, messageId, conversationId, sessionName, queryClient]);
+
+  if (status === 'loading') {
+    return (
+      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
+        <Loader2 className="w-4 h-4 animate-spin text-primary" />
+        <span className="text-sm text-muted-foreground">Carregando áudio...</span>
+      </div>
+    );
+  }
+
+  if (status === 'error') {
+    return (
+      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
+        <Mic className="w-4 h-4 text-muted-foreground" />
+        <span className="text-sm text-muted-foreground">Mensagem de áudio</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-6 px-2 text-xs"
+          onClick={() => {
+            retryCounter.current++;
+            setStatus('loading');
+          }}
+        >
+          <RefreshCw className="w-3 h-3 mr-1" />
+          Tentar novamente
+        </Button>
+      </div>
+    );
+  }
+
+  return null;
+}
+
 // Helper to normalize phone for search
 const normalizePhone = (phone: string) => {
   return phone.replace(/\D/g, '');
@@ -1084,36 +1149,11 @@ export default function Atendimento() {
             <AudioPlayer src={message.media_url} className="mb-2" />
           )}
           {message.message_type === "audio" && !message.media_url && (
-            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-              <Mic className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Mensagem de áudio</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={async () => {
-                  try {
-                    const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
-                      body: { 
-                        messageId: message.id, 
-                        mediaType: 'audio',
-                        sessionName: selectedConversation?.connection?.name || 'default'
-                      },
-                    });
-                    if (error) throw error;
-                    if (data?.success && data?.url) {
-                      await supabase.from('messages').update({ media_url: data.url }).eq('id', message.id);
-                      queryClient.invalidateQueries({ queryKey: ['messages', message.conversation_id] });
-                    }
-                  } catch (err) {
-                    console.error('Error downloading audio:', err);
-                  }
-                }}
-              >
-                <Download className="w-3 h-3 mr-1" />
-                Baixar
-              </Button>
-            </div>
+            <AudioAutoDownloader
+              messageId={message.id}
+              conversationId={message.conversation_id}
+              sessionName={selectedConversation?.connection?.name || 'default'}
+            />
           )}
           {message.message_type === "video" && message.media_url && (
             <video 
