@@ -1,6 +1,5 @@
+import { useMemo } from "react";
 import {
-  LineChart,
-  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -9,18 +8,68 @@ import {
   Area,
   AreaChart,
 } from "recharts";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { SkeletonChart } from "@/components/ui/SkeletonCard";
 
-const data = [
-  { name: "Seg", conversas: 45, resolvidas: 38 },
-  { name: "Ter", conversas: 52, resolvidas: 45 },
-  { name: "Qua", conversas: 48, resolvidas: 42 },
-  { name: "Qui", conversas: 61, resolvidas: 55 },
-  { name: "Sex", conversas: 55, resolvidas: 48 },
-  { name: "Sáb", conversas: 32, resolvidas: 30 },
-  { name: "Dom", conversas: 28, resolvidas: 25 },
-];
+const DAY_LABELS = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+function useWeeklyActivity() {
+  return useQuery({
+    queryKey: ["weekly-activity"],
+    queryFn: async () => {
+      const now = new Date();
+      const weekAgo = new Date(now);
+      weekAgo.setDate(weekAgo.getDate() - 6);
+      weekAgo.setHours(0, 0, 0, 0);
+
+      const { data: conversations } = await supabase
+        .from("conversations")
+        .select("created_at, status")
+        .gte("created_at", weekAgo.toISOString());
+
+      const buckets: Record<string, { conversas: number; resolvidas: number }> = {};
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekAgo);
+        d.setDate(d.getDate() + i);
+        const key = d.toISOString().slice(0, 10);
+        buckets[key] = { conversas: 0, resolvidas: 0 };
+      }
+
+      conversations?.forEach((c) => {
+        const key = c.created_at.slice(0, 10);
+        if (buckets[key]) {
+          buckets[key].conversas++;
+          if (c.status === "resolved") buckets[key].resolvidas++;
+        }
+      });
+
+      return Object.entries(buckets).map(([date, vals]) => ({
+        name: DAY_LABELS[new Date(date + "T12:00:00").getDay()],
+        ...vals,
+      }));
+    },
+    refetchInterval: 60000,
+  });
+}
 
 export function ActivityChart() {
+  const { data, isLoading } = useWeeklyActivity();
+
+  const cssVars = useMemo(() => {
+    if (typeof window === "undefined") return { primary: "#3b82f6", success: "#22c55e", border: "#e5e7eb", card: "#fff", muted: "#6b7280" };
+    const style = getComputedStyle(document.documentElement);
+    return {
+      primary: `hsl(${style.getPropertyValue("--primary").trim()})`,
+      success: `hsl(${style.getPropertyValue("--success").trim()})`,
+      border: `hsl(${style.getPropertyValue("--border").trim()})`,
+      card: `hsl(${style.getPropertyValue("--card").trim()})`,
+      muted: `hsl(${style.getPropertyValue("--muted-foreground").trim()})`,
+    };
+  }, []);
+
+  if (isLoading) return <SkeletonChart />;
+
   return (
     <div className="bg-card rounded-xl border border-border p-6 animate-fade-in">
       <div className="flex items-center justify-between mb-6">
@@ -41,51 +90,26 @@ export function ActivityChart() {
           <AreaChart data={data}>
             <defs>
               <linearGradient id="colorConversas" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="hsl(221, 83%, 53%)" stopOpacity={0} />
+                <stop offset="5%" stopColor={cssVars.primary} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={cssVars.primary} stopOpacity={0} />
               </linearGradient>
               <linearGradient id="colorResolvidas" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="5%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0.3} />
-                <stop offset="95%" stopColor="hsl(142, 76%, 36%)" stopOpacity={0} />
+                <stop offset="5%" stopColor={cssVars.success} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={cssVars.success} stopOpacity={0} />
               </linearGradient>
             </defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(214, 32%, 91%)" />
-            <XAxis
-              dataKey="name"
-              stroke="hsl(215, 16%, 47%)"
-              fontSize={12}
-              tickLine={false}
-              axisLine={false}
-            />
-            <YAxis
-              stroke="hsl(215, 16%, 47%)"
-              fontSize={12}
-              tickLine={false}
-              axisLine={false}
-            />
+            <CartesianGrid strokeDasharray="3 3" stroke={cssVars.border} />
+            <XAxis dataKey="name" stroke={cssVars.muted} fontSize={12} tickLine={false} axisLine={false} />
+            <YAxis stroke={cssVars.muted} fontSize={12} tickLine={false} axisLine={false} />
             <Tooltip
               contentStyle={{
-                backgroundColor: "hsl(0, 0%, 100%)",
-                border: "1px solid hsl(214, 32%, 91%)",
+                backgroundColor: cssVars.card,
+                border: `1px solid ${cssVars.border}`,
                 borderRadius: "8px",
               }}
             />
-            <Area
-              type="monotone"
-              dataKey="conversas"
-              stroke="hsl(221, 83%, 53%)"
-              fillOpacity={1}
-              fill="url(#colorConversas)"
-              strokeWidth={2}
-            />
-            <Area
-              type="monotone"
-              dataKey="resolvidas"
-              stroke="hsl(142, 76%, 36%)"
-              fillOpacity={1}
-              fill="url(#colorResolvidas)"
-              strokeWidth={2}
-            />
+            <Area type="monotone" dataKey="conversas" stroke={cssVars.primary} fillOpacity={1} fill="url(#colorConversas)" strokeWidth={2} />
+            <Area type="monotone" dataKey="resolvidas" stroke={cssVars.success} fillOpacity={1} fill="url(#colorResolvidas)" strokeWidth={2} />
           </AreaChart>
         </ResponsiveContainer>
       </div>

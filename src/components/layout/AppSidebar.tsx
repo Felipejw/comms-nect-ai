@@ -14,6 +14,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { type ModuleKey } from "@/hooks/usePermissions";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { toast } from "@/components/ui/sonner";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 interface NavItem { title: string; href: string; icon: React.ElementType; module?: ModuleKey; }
 interface NavSection { title: string; items: NavItem[]; }
@@ -67,6 +69,21 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
   const platformName = getSetting("platform_name") || "TalkFlow";
   const platformLogo = getSetting("platform_logo");
 
+  // Unread conversations count for badge
+  const { data: unreadCount } = useQuery({
+    queryKey: ["sidebar-unread-count"],
+    queryFn: async () => {
+      const { count } = await supabase
+        .from("conversations")
+        .select("*", { count: "exact", head: true })
+        .gt("unread_count", 0)
+        .in("status", ["new", "in_progress"]);
+      return count || 0;
+    },
+    refetchInterval: 15000,
+    staleTime: 10000,
+  });
+
   const toggleSection = (title: string) => {
     setExpandedSections((prev) => prev.includes(title) ? prev.filter((t) => t !== title) : [...prev, title]);
   };
@@ -117,9 +134,17 @@ export function AppSidebar({ onNavigate }: AppSidebarProps) {
               <ul className="space-y-1 mt-1">
                 {section.items.map((item) => (
                   <li key={item.href}>
-                    <NavLink to={item.href} onClick={onNavigate} className={cn("sidebar-link", isActive(item.href) && "sidebar-link-active", isCollapsed && "justify-center px-2")} title={isCollapsed ? item.title : undefined}>
+                    <NavLink to={item.href} onClick={onNavigate} className={cn("sidebar-link relative", isActive(item.href) && "sidebar-link-active", isCollapsed && "justify-center px-2")} title={isCollapsed ? item.title : undefined}>
                       <item.icon className="w-5 h-5 flex-shrink-0" />
                       {!isCollapsed && <span className="truncate">{item.title}</span>}
+                      {item.href === "/atendimento" && unreadCount && unreadCount > 0 ? (
+                        <span className={cn(
+                          "bg-destructive text-destructive-foreground text-[10px] font-bold rounded-full flex items-center justify-center",
+                          isCollapsed ? "absolute -top-1 -right-1 w-4 h-4" : "ml-auto w-5 h-5"
+                        )}>
+                          {unreadCount > 99 ? "99+" : unreadCount}
+                        </span>
+                      ) : null}
                     </NavLink>
                   </li>
                 ))}
