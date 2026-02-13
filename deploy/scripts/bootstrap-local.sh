@@ -136,11 +136,12 @@ if [ -d "$INSTALL_DIR" ]; then
 
     if [ -f "$INSTALL_DIR/deploy/docker-compose.yml" ]; then
         cd /tmp
-        (cd "$INSTALL_DIR/deploy" && docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true)
+        (cd "$INSTALL_DIR/deploy" && docker compose --profile baileys down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true)
     elif [ -f "$INSTALL_DIR/docker-compose.yml" ]; then
         cd /tmp
-        (cd "$INSTALL_DIR" && docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true)
+        (cd "$INSTALL_DIR" && docker compose --profile baileys down --remove-orphans 2>/dev/null || docker-compose down 2>/dev/null || true)
     fi
+    docker rm -f baileys-server 2>/dev/null || true
 
     rm -rf "$INSTALL_DIR"
 fi

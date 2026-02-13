@@ -889,7 +889,8 @@ start_services() {
     # ETAPA 3: Todos os outros serviços
     # =============================================
     log_info "Etapa 3/3: Iniciando demais serviços..."
-    docker compose --profile baileys up -d || true
+    docker rm -f baileys-server 2>/dev/null || true
+    docker compose --profile baileys up -d --force-recreate --remove-orphans || true
     
     sleep 5
     
