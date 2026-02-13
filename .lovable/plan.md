@@ -1,51 +1,86 @@
 
-# Correção: Player de áudio automático no servidor VPS
 
-## Problema
+# Correção completa: Player de áudio automatico + Status Card
 
-Quando uma mensagem de áudio chega via WhatsApp no servidor VPS, o webhook do Baileys nem sempre inclui a URL da mídia. Sem `media_url`, o sistema exibe um fallback com texto "Mensagem de áudio" e um botão "Baixar" manual, em vez do player bonito com waveform.
+## Resumo
 
-Na Lovable, como os dados de teste já têm `media_url` preenchido, o AudioPlayer aparece normalmente.
+Tres frentes de trabalho para alinhar o comportamento de audio entre VPS e Lovable:
 
-## Solução
+1. **Componente `MediaAutoDownloader` generico** - Substitui o `AudioAutoDownloader` atual e tambem cobre imagem e video
+2. **Melhoria no `useFileUpload`** - Garantir que o upload de audio gravado funcione com fallback
+3. **Card de status de processamento de audio** - Indicador visual no painel de conversa
 
-Fazer o download da mídia acontecer **automaticamente** quando uma mensagem de áudio sem `media_url` é exibida, eliminando a necessidade de clique manual.
+---
 
-## Detalhes Técnicos
+## Detalhes Tecnicos
 
-**Arquivo:** `src/pages/Atendimento.tsx`
+### 1. Componente `MediaAutoDownloader` (refatorar `AudioAutoDownloader`)
 
-### Mudança: Auto-download de áudio sem media_url
+**Arquivo:** `src/components/atendimento/MediaAutoDownloader.tsx` (novo)
 
-Substituir o bloco estático de fallback (linhas 1086-1115) por um componente que:
+Extrair o componente do Atendimento.tsx para um arquivo proprio, tornando-o generico para qualquer tipo de midia:
 
-1. Ao montar, detecta que `media_url` está vazio
-2. Automaticamente chama a Edge Function `download-whatsapp-media`
-3. Mostra um indicador de carregamento (spinner + "Carregando áudio...")
-4. Quando o download termina e o banco é atualizado, a query é invalidada e o `AudioPlayer` aparece no lugar
+- Props: `messageId`, `conversationId`, `sessionName`, `mediaType` (audio | image | video | document)
+- Auto-download via `useEffect` ao montar
+- Maximo de 3 tentativas automaticas com delay exponencial (2s, 4s, 8s)
+- Estados visuais:
+  - `loading`: spinner + "Carregando audio/imagem/video..."
+  - `error`: icone + texto + botao "Tentar novamente"
+  - `success`: nada (a query e invalidada e o componente pai renderiza o player/imagem/video)
+- Para audio especificamente, mostra o `AudioPlayer` inline ao obter a URL (sem depender de invalidar query)
+
+### 2. Atualizar `src/pages/Atendimento.tsx`
+
+- Remover o `AudioAutoDownloader` inline
+- Importar o novo `MediaAutoDownloader`
+- Usar `MediaAutoDownloader` nos tres blocos de fallback (audio, imagem, video) substituindo tanto o `AudioAutoDownloader` quanto os blocos manuais com botao "Baixar"
+- Adicionar o card de status de processamento (item 4)
+
+### 3. Ajuste no `src/hooks/useFileUpload.ts`
+
+- Sem mudancas estruturais - o fluxo de fallback com `chat-attachments` -> `admin-write` -> `whatsapp-media` ja esta correto
+- Adicionar log mais claro no catch para facilitar diagnostico no VPS
+
+### 4. Card de status de processamento de audio
+
+**Arquivo:** `src/components/atendimento/AudioProcessingStatus.tsx` (novo)
+
+Um componente leve que aparece no topo da area de mensagens quando existem mensagens de audio pendentes (sem `media_url`) na conversa atual:
 
 ```text
-Fluxo atual:
-  audio sem media_url -> texto "Mensagem de áudio" + botão Baixar (manual)
-
-Fluxo novo:
-  audio sem media_url -> spinner "Carregando áudio..." (auto-download)
-  -> media_url preenchido -> AudioPlayer com waveform
++------------------------------------------+
+| 🔄 2 audios sendo processados...         |
+| ✅ 5 audios prontos                       |
++------------------------------------------+
 ```
 
-### Implementação
+- Conta mensagens de audio da conversa atual com e sem `media_url`
+- Aparece apenas quando ha audios pendentes (count > 0)
+- Usa dados ja disponíveis no array `messages` (sem queries extras)
+- Estilo compacto usando cores `muted` para nao poluir a interface
 
-Criar um pequeno componente inline `AudioAutoDownloader` que:
-- Recebe `messageId`, `conversationId`, `sessionName`
-- Usa `useEffect` para disparar o download automaticamente ao montar
-- Controla estados: `loading`, `error`, `idle`
-- Se falhar, mostra o fallback atual com botão manual de retry
-- Se sucesso, invalida a query de mensagens (o que fará o AudioPlayer renderizar)
+### Fluxo final
 
-O componente ficará no mesmo arquivo `Atendimento.tsx` para manter a simplicidade.
+```text
+Mensagem de audio chega sem media_url:
+  1. MediaAutoDownloader monta automaticamente
+  2. Chama download-whatsapp-media (ate 3 tentativas)
+  3. Se sucesso: atualiza messages.media_url -> invalida query -> AudioPlayer renderiza
+  4. Se falha: mostra botao "Tentar novamente"
+  5. Card no topo mostra "X audios sendo processados..."
 
-### Resultado
+Upload de audio pelo usuario:
+  1. Grava audio no navegador
+  2. useFileUpload tenta chat-attachments
+  3. Se bucket nao existe: cria via admin-write ou usa whatsapp-media
+  4. Envia mensagem com media_url preenchida
+```
 
-- Áudios no servidor VPS carregam automaticamente e exibem o player bonito
-- Se o download falhar, o botão manual de retry continua disponível
-- Nenhuma mudança na experiência da Lovable (já funciona)
+### Arquivos modificados/criados
+
+| Arquivo | Acao |
+|---------|------|
+| `src/components/atendimento/MediaAutoDownloader.tsx` | Criar |
+| `src/components/atendimento/AudioProcessingStatus.tsx` | Criar |
+| `src/pages/Atendimento.tsx` | Editar (remover AudioAutoDownloader, importar novos componentes, adicionar status card) |
+
