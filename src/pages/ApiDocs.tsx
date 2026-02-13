@@ -51,8 +51,8 @@ function EndpointCard({ method, path, description, permission, body, response, c
 
 export default function ApiDocs() {
   const { getSetting } = useSystemSettings();
-  const apiUrl = getSetting("api_base_url") || window.location.origin;
-  const baseUrl = `${apiUrl.replace(/\/$/, "")}/functions/v1/api-gateway`;
+  const apiUrl = getSetting("api_base_url");
+  const baseUrl = `${(apiUrl || "https://seu-dominio.com").replace(/\/$/, "")}/functions/v1/api-gateway`;
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -60,6 +60,13 @@ export default function ApiDocs() {
         <h2 className="text-2xl font-bold">Documentação da API</h2>
         <p className="text-muted-foreground">Integre sistemas externos com o TalkFlow via API REST.</p>
       </div>
+
+      {!apiUrl && (
+        <div className="bg-accent/50 border border-border text-foreground rounded-lg p-4 text-sm">
+          <strong>⚠️ URL base da API não configurada.</strong>{" "}
+          Vá em <strong>Configurações → Opções</strong> e defina o endereço do seu servidor no campo "URL Base da API" para que os exemplos abaixo reflitam o endereço correto.
+        </div>
+      )}
 
       <Tabs defaultValue="auth" className="w-full">
         <TabsList className="w-full justify-start border-b rounded-none h-auto p-0 bg-transparent flex-wrap">

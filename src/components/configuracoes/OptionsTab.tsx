@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useSystemSettings } from "@/hooks/useSystemSettings";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -12,7 +13,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Loader2, RefreshCw, Users } from "lucide-react";
+import { Loader2, RefreshCw, Users, Globe } from "lucide-react";
 import { BaileysConfigSection } from "./BaileysConfigSection";
 
 interface SettingOptionProps {
@@ -53,8 +54,9 @@ function SettingOption({
 }
 
 export function OptionsTab() {
-  const { getSetting, updateSetting, isLoading } = useSystemSettings();
+  const { getSetting, updateSetting, createOrUpdateSetting, isLoading } = useSystemSettings();
   const [isSyncingContacts, setIsSyncingContacts] = useState(false);
+  const [apiBaseUrl, setApiBaseUrl] = useState("");
 
   const handleChange = (key: string, value: string) => {
     updateSetting.mutate({ key, value });
@@ -93,6 +95,37 @@ export function OptionsTab() {
 
   return (
     <div className="space-y-6">
+      {/* URL Base da API */}
+      <div className="bg-card rounded-lg p-6">
+        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+          <Globe className="w-5 h-5" />
+          URL Base da API
+        </h3>
+        <div className="flex flex-col sm:flex-row gap-3">
+          <div className="flex-1">
+            <Label htmlFor="api_base_url" className="text-sm text-muted-foreground mb-1 block">
+              Endereço do seu servidor (usado na documentação da API)
+            </Label>
+            <Input
+              id="api_base_url"
+              placeholder="https://api.seudominio.com"
+              defaultValue={getSetting("api_base_url")}
+              onChange={(e) => setApiBaseUrl(e.target.value)}
+              onBlur={() => {
+                if (apiBaseUrl) {
+                  createOrUpdateSetting.mutate({
+                    key: "api_base_url",
+                    value: apiBaseUrl,
+                    description: "URL base do servidor para a API externa",
+                    category: "api",
+                  });
+                }
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
       {/* Configuração do Servidor Baileys */}
       <BaileysConfigSection />
 
