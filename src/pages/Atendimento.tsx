@@ -3,6 +3,8 @@ import { Search, Filter, MoreVertical, Send, Smile, Paperclip, CheckCircle, Load
 import { ConversationDialogs, BulkDialogs } from "@/components/atendimento/ConversationDialogs";
 import { ReadOnlyBadge } from "@/components/ui/ReadOnlyBadge";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
+import { MediaAutoDownloader } from "@/components/atendimento/MediaAutoDownloader";
+import { AudioProcessingStatus } from "@/components/atendimento/AudioProcessingStatus";
 import Picker from '@emoji-mart/react';
 import data from '@emoji-mart/data';
 import { Checkbox } from "@/components/ui/checkbox";
@@ -111,70 +113,7 @@ interface MediaPreview {
   previewUrl?: string;
 }
 
-// Auto-download audio component for VPS where media_url is missing
-function AudioAutoDownloader({ messageId, conversationId, sessionName }: { messageId: string; conversationId: string; sessionName: string }) {
-  const [status, setStatus] = useState<'loading' | 'error' | 'idle'>('loading');
-  const queryClient = useQueryClient();
-  const retryCounter = useRef(0);
-
-  useEffect(() => {
-    if (status !== 'loading') return;
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
-          body: { messageId, mediaType: 'audio', sessionName },
-        });
-        if (cancelled) return;
-        if (error) throw error;
-        if (data?.success && data?.url) {
-          await supabase.from('messages').update({ media_url: data.url }).eq('id', messageId);
-          queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
-          setStatus('idle');
-        } else {
-          setStatus('error');
-        }
-      } catch {
-        if (!cancelled) setStatus('error');
-      }
-    })();
-
-    return () => { cancelled = true; };
-  }, [status, messageId, conversationId, sessionName, queryClient]);
-
-  if (status === 'loading') {
-    return (
-      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-        <Loader2 className="w-4 h-4 animate-spin text-primary" />
-        <span className="text-sm text-muted-foreground">Carregando áudio...</span>
-      </div>
-    );
-  }
-
-  if (status === 'error') {
-    return (
-      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-        <Mic className="w-4 h-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Mensagem de áudio</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-6 px-2 text-xs"
-          onClick={() => {
-            retryCounter.current++;
-            setStatus('loading');
-          }}
-        >
-          <RefreshCw className="w-3 h-3 mr-1" />
-          Tentar novamente
-        </Button>
-      </div>
-    );
-  }
-
-  return null;
-}
+// AudioAutoDownloader replaced by MediaAutoDownloader component
 
 // Helper to normalize phone for search
 const normalizePhone = (phone: string) => {
@@ -1103,36 +1042,12 @@ export default function Atendimento() {
             />
           )}
           {message.message_type === "image" && !message.media_url && (
-            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-              <Image className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Imagem</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={async () => {
-                  try {
-                    const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
-                      body: { 
-                        messageId: message.id, 
-                        mediaType: 'image',
-                        sessionName: selectedConversation?.connection?.name || 'default'
-                      },
-                    });
-                    if (error) throw error;
-                    if (data?.success && data?.url) {
-                      await supabase.from('messages').update({ media_url: data.url }).eq('id', message.id);
-                      queryClient.invalidateQueries({ queryKey: ['messages', message.conversation_id] });
-                    }
-                  } catch (err) {
-                    console.error('Error downloading image:', err);
-                  }
-                }}
-              >
-                <Download className="w-3 h-3 mr-1" />
-                Baixar
-              </Button>
-            </div>
+            <MediaAutoDownloader
+              messageId={message.id}
+              conversationId={message.conversation_id}
+              sessionName={selectedConversation?.connection?.name || 'default'}
+              mediaType="image"
+            />
           )}
           {message.message_type === "document" && message.media_url && (
             <a 
@@ -1149,10 +1064,11 @@ export default function Atendimento() {
             <AudioPlayer src={message.media_url} className="mb-2" />
           )}
           {message.message_type === "audio" && !message.media_url && (
-            <AudioAutoDownloader
+            <MediaAutoDownloader
               messageId={message.id}
               conversationId={message.conversation_id}
               sessionName={selectedConversation?.connection?.name || 'default'}
+              mediaType="audio"
             />
           )}
           {message.message_type === "video" && message.media_url && (
@@ -1166,36 +1082,12 @@ export default function Atendimento() {
             </video>
           )}
           {message.message_type === "video" && !message.media_url && (
-            <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-              <Video className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Vídeo</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={async () => {
-                  try {
-                    const { data, error } = await supabase.functions.invoke('download-whatsapp-media', {
-                      body: { 
-                        messageId: message.id, 
-                        mediaType: 'video',
-                        sessionName: selectedConversation?.connection?.name || 'default'
-                      },
-                    });
-                    if (error) throw error;
-                    if (data?.success && data?.url) {
-                      await supabase.from('messages').update({ media_url: data.url }).eq('id', message.id);
-                      queryClient.invalidateQueries({ queryKey: ['messages', message.conversation_id] });
-                    }
-                  } catch (err) {
-                    console.error('Error downloading video:', err);
-                  }
-                }}
-              >
-                <Download className="w-3 h-3 mr-1" />
-                Baixar
-              </Button>
-            </div>
+            <MediaAutoDownloader
+              messageId={message.id}
+              conversationId={message.conversation_id}
+              sessionName={selectedConversation?.connection?.name || 'default'}
+              mediaType="video"
+            />
           )}
           {message.content && (
             <p className="text-sm break-words">
@@ -2050,6 +1942,9 @@ export default function Atendimento() {
             </div>
           )}
 
+
+          {/* Audio Processing Status */}
+          {messages && <AudioProcessingStatus messages={messages} />}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 bg-muted/30 scrollbar-thin">
