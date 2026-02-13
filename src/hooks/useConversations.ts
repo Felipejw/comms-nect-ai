@@ -92,6 +92,7 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         },
         () => {
           queryClient.invalidateQueries({ queryKey: ['conversations'] });
+          queryClient.invalidateQueries({ queryKey: ['messages'] });
         }
       )
       .subscribe();
@@ -268,8 +269,27 @@ export function useMessages(conversationId: string) {
       )
       .subscribe();
 
+    // Backup channel without filter for reliability
+    const backupChannel = supabase
+      .channel(`messages-backup-${conversationId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages',
+        },
+        (payload) => {
+          if ((payload.new as any).conversation_id === conversationId) {
+            queryClient.invalidateQueries({ queryKey: ['messages', conversationId] });
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(channel);
+      supabase.removeChannel(backupChannel);
     };
   }, [conversationId, queryClient]);
 
@@ -287,6 +307,7 @@ export function useMessages(conversationId: string) {
       return (data || []) as Message[];
     },
     enabled: !!conversationId,
+    refetchInterval: 10000,
   });
 }
 
