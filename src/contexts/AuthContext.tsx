@@ -97,13 +97,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
       
       const dbRole = (roleData?.role as string) ?? null;
-      let mappedRole: AppRole;
       
       if (!dbRole) {
-        // Fallback: se não tem role no banco, tratar como operator (menor permissão)
-        console.warn('Nenhum role encontrado para o usuário, usando fallback: operator');
-        mappedRole = 'operator';
-      } else if (dbRole === 'super_admin' || dbRole === 'admin') {
+        // Sem role no banco: pode ser RLS bloqueando ou usuário sem role configurado
+        // Manter role como null para que ProtectedRoute mostre tela de retry
+        console.warn('Nenhum role encontrado para o usuário - verifique user_roles e RLS');
+        setRole(null);
+        setPermissions([]);
+        return;
+      }
+      
+      let mappedRole: AppRole;
+      if (dbRole === 'super_admin' || dbRole === 'admin') {
         mappedRole = 'admin';
       } else if (dbRole === 'manager') {
         mappedRole = 'manager';
