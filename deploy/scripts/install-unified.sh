@@ -65,9 +65,9 @@ check_requirements() {
     
     # Verificar disco
     DISK_FREE=$(df -BG / | awk 'NR==2{print $4}' | sed 's/G//')
-    if [ "$DISK_FREE" -lt 20 ]; then
-        log_error "Espaço em disco insuficiente: ${DISK_FREE}GB (mínimo: 20GB)"
-        exit 1
+    if [ "$DISK_FREE" -lt 5 ]; then
+        log_warn "Espaço em disco baixo: ${DISK_FREE}GB (recomendado: 10GB+)"
+        log_warn "A instalação continuará, mas pode faltar espaço para logs e sessões."
     else
         log_success "Espaço em disco: ${DISK_FREE}GB"
     fi
