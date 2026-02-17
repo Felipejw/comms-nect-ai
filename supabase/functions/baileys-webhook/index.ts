@@ -227,7 +227,7 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    // Find connection by session name
+    // Find connection by session name (with fallback matching)
     const { data: connections } = await supabaseClient
       .from("connections")
       .select("*")
@@ -236,7 +236,14 @@ const handler = async (req: Request): Promise<Response> => {
     // deno-lint-ignore no-explicit-any
     const connection = connections?.find((c: any) => {
       const sessionData = c.session_data;
-      return sessionData?.sessionName === session;
+      // Primary: match by sessionName in session_data
+      if (sessionData?.sessionName === session) return true;
+      // Fallback 1: match by connection name (exact)
+      if (c.name === session) return true;
+      // Fallback 2: case-insensitive match
+      if (sessionData?.sessionName?.toLowerCase() === session.toLowerCase()) return true;
+      if (c.name?.toLowerCase() === session.toLowerCase()) return true;
+      return false;
     });
 
     if (!connection) {
@@ -247,6 +254,19 @@ const handler = async (req: Request): Promise<Response> => {
     }
 
     console.log(`[Baileys Webhook] Found connection: ${connection.id} (${connection.name})`);
+
+    // Auto-fix: if matched by fallback, update sessionName to match Baileys
+    const connSessionData = connection.session_data;
+    if (connSessionData?.sessionName !== session) {
+      console.log(`[Baileys Webhook] Auto-fixing sessionName: ${connSessionData?.sessionName} -> ${session}`);
+      await supabaseClient
+        .from("connections")
+        .update({
+          session_data: { ...connSessionData, sessionName: session },
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", connection.id);
+    }
 
     // ========== Handle QR Code Update ==========
     if (event === "qr.update") {
