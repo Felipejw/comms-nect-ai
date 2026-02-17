@@ -1,53 +1,66 @@
 
+# Corrigir Upload e Download de Audio na VPS
 
-# Corrigir build da VPS - `.env` sobrepondo variáveis de ambiente
+## Problema 1: "Bucket not found" ao enviar arquivo
 
-## Problema raiz
+O hook `useFileUpload.ts` tenta usar o bucket `chat-attachments` primeiro. Se falha, tenta criar o bucket via edge function `admin-write` -- que na VPS pode apontar para o Lovable Cloud em vez do Supabase local. O fallback final usa `whatsapp-media`, mas so chega la apos duas falhas.
 
-O comando `docker run -v "$(pwd)":/app` monta o diretorio inteiro do projeto dentro do container, **incluindo o arquivo `.env`**. O Vite le esse `.env` automaticamente e as URLs do Lovable Cloud contidas nele acabam sendo embutidas no JavaScript, mesmo com as flags `-e` do Docker.
+### Solucao
 
-Embora a documentacao do Vite diga que variaveis de ambiente do processo tem prioridade sobre `.env`, na pratica o comportamento dentro do Docker pode variar dependendo de como o shell processa as variaveis.
+Alterar `useFileUpload.ts` para tentar `whatsapp-media` como bucket primario (que e o bucket garantido no `init.sql` da VPS com todas as policies corretas) e `chat-attachments` como fallback.
 
-## Solucao
+**Arquivo:** `src/hooks/useFileUpload.ts`
+- Inverter a ordem dos buckets: `whatsapp-media` primeiro, `chat-attachments` depois
+- Remover a tentativa de criar bucket via `admin-write` (desnecessaria e causa problemas na VPS)
+- Simplificar a logica de fallback
 
-Alterar o comando de build no `deploy/scripts/update.sh` para **substituir temporariamente o conteudo do `.env`** dentro do container antes de compilar, garantindo que o Vite leia apenas valores placeholder.
+---
 
-### Alteracao no arquivo `deploy/scripts/update.sh` (linhas 86-90)
+## Problema 2: Audios recebidos nao carregam
 
-Trocar:
+O `MediaAutoDownloader` chama a edge function `download-whatsapp-media` via `supabase.functions.invoke()`. Na VPS, o cliente Supabase agora aponta para o banco local, mas as edge functions do Lovable Cloud nao tem acesso ao Baileys server da VPS.
+
+O problema e que o `download-whatsapp-media` precisa:
+1. Consultar `system_settings` para obter a URL do Baileys server
+2. Fazer download da midia do Baileys
+3. Salvar no storage local
+
+Na VPS, as edge functions rodam no Lovable Cloud e nao conseguem acessar o Baileys server (que esta na rede interna da VPS).
+
+### Solucao
+
+Alterar o `MediaAutoDownloader` para tentar baixar a midia diretamente do Baileys server local antes de chamar a edge function. Isso funciona porque o navegador do usuario ja tem acesso ao dominio da VPS.
+
+**Arquivo:** `src/components/atendimento/MediaAutoDownloader.tsx`
+- Adicionar tentativa de download direto via Baileys API (lendo `baileys_server_url` das `system_settings`)
+- Se o download direto funcionar, fazer upload para o storage local e atualizar a mensagem
+- Manter a edge function como fallback
+
+---
+
+## Resumo das alteracoes
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `src/hooks/useFileUpload.ts` | Inverter ordem dos buckets, remover criacao via admin-write |
+| `src/components/atendimento/MediaAutoDownloader.tsx` | Adicionar download direto via Baileys antes da edge function |
+
+## Detalhes tecnicos
+
+### useFileUpload.ts - Nova logica
 
 ```text
-docker run --rm -v "$(pwd)":/app -w /app \
-  -e VITE_SUPABASE_URL=placeholder \
-  -e VITE_SUPABASE_PUBLISHABLE_KEY=placeholder \
-  -e VITE_SUPABASE_PROJECT_ID=self-hosted \
-  node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
+1. Tentar upload no bucket 'whatsapp-media' (garantido no init.sql)
+2. Se falhar com erro de bucket, tentar 'chat-attachments'
+3. Se ambos falharem, mostrar erro
 ```
 
-Por:
+### MediaAutoDownloader.tsx - Nova logica
 
 ```text
-docker run --rm -v "$(pwd)":/app -w /app \
-  node:20-alpine sh -c "\
-    cp .env .env.lovable.bak 2>/dev/null || true && \
-    echo 'VITE_SUPABASE_URL=placeholder' > .env && \
-    echo 'VITE_SUPABASE_PUBLISHABLE_KEY=placeholder' >> .env && \
-    echo 'VITE_SUPABASE_PROJECT_ID=self-hosted' >> .env && \
-    npm install --legacy-peer-deps && npm run build; \
-    EXIT_CODE=\$?; \
-    cp .env.lovable.bak .env 2>/dev/null || true && \
-    rm -f .env.lovable.bak; \
-    exit \$EXIT_CODE"
+1. Buscar configuracao do Baileys nas system_settings
+2. Tentar download direto: GET {baileysUrl}/sessions/{session}/messages/{msgId}/media
+3. Se obtiver o arquivo, fazer upload para storage local (whatsapp-media)
+4. Se falhar, tentar via edge function (fallback original)
+5. Se tudo falhar, mostrar botao "Tentar novamente"
 ```
-
-### O que faz
-
-1. Faz backup do `.env` original
-2. Sobrescreve o `.env` com valores placeholder
-3. Executa o build (Vite agora le "placeholder" do `.env`)
-4. Restaura o `.env` original ao final
-
-### Por que isso resolve
-
-O Vite carrega o `.env` do diretorio de trabalho antes de verificar variaveis de ambiente do processo. Ao sobrescrever o arquivo diretamente, garantimos que nao importa a ordem de prioridade -- o unico valor disponivel e "placeholder", ativando o fallback para `config.js`.
-
