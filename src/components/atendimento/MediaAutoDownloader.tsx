@@ -12,8 +12,9 @@ interface MediaAutoDownloaderProps {
   mediaType: "audio" | "image" | "video" | "document";
 }
 
-const MAX_RETRIES = 3;
-const RETRY_DELAYS = [2000, 4000, 8000];
+const MAX_RETRIES = 2;
+const RETRY_DELAYS = [3000, 6000];
+const GIVE_UP_TIMEOUT = 15000; // After 15s total, show fallback
 
 const mediaLabels: Record<string, string> = {
   audio: "áudio",
@@ -42,6 +43,7 @@ export function MediaAutoDownloader({
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const retryCount = useRef(0);
   const cancelledRef = useRef(false);
+  const startTimeRef = useRef(Date.now());
   const queryClient = useQueryClient();
 
   const attemptDownload = useCallback(async () => {
@@ -82,12 +84,22 @@ export function MediaAutoDownloader({
   useEffect(() => {
     cancelledRef.current = false;
     retryCount.current = 0;
+    startTimeRef.current = Date.now();
     setStatus("loading");
     setResolvedUrl(null);
     attemptDownload();
 
+    // Safety timeout: if still loading after GIVE_UP_TIMEOUT, show fallback
+    const safetyTimer = setTimeout(() => {
+      if (!cancelledRef.current && status === "loading") {
+        console.log(`[MediaAutoDownloader] Safety timeout reached for ${messageId}, showing fallback`);
+        setStatus("error");
+      }
+    }, GIVE_UP_TIMEOUT);
+
     return () => {
       cancelledRef.current = true;
+      clearTimeout(safetyTimer);
     };
   }, [messageId, attemptDownload]);
 
