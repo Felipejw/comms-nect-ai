@@ -96,26 +96,35 @@ log_success "Frontend compilado"
 log_info "Copiando frontend para o volume do Nginx..."
 
 # Preservar config.js existente
-if [ -f "$DEPLOY_DIR/volumes/frontend/config.js" ]; then
-    cp "$DEPLOY_DIR/volumes/frontend/config.js" /tmp/config.js.bak
+if [ -f "$DEPLOY_DIR/frontend/dist/config.js" ]; then
+    cp "$DEPLOY_DIR/frontend/dist/config.js" /tmp/config.js.bak
 fi
 
 # Criar diretório se não existir
-mkdir -p "$DEPLOY_DIR/volumes/frontend"
+mkdir -p "$DEPLOY_DIR/frontend/dist"
 
 # Copiar novo build
-cp -r dist/* "$DEPLOY_DIR/volumes/frontend/"
+cp -r dist/* "$DEPLOY_DIR/frontend/dist/"
 
 # Restaurar config.js
 if [ -f /tmp/config.js.bak ]; then
-    cp /tmp/config.js.bak "$DEPLOY_DIR/volumes/frontend/config.js"
+    cp /tmp/config.js.bak "$DEPLOY_DIR/frontend/dist/config.js"
     rm /tmp/config.js.bak
 fi
 
 # Injetar config.js no index.html (se ainda não estiver)
-if ! grep -q 'config.js' "$DEPLOY_DIR/volumes/frontend/index.html" 2>/dev/null; then
-    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/volumes/frontend/index.html"
+if ! grep -q 'config.js' "$DEPLOY_DIR/frontend/dist/index.html" 2>/dev/null; then
+    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/frontend/dist/index.html"
     log_success "config.js injetado no index.html"
+fi
+
+# Recarregar Nginx para servir o conteúdo novo
+log_info "Recarregando Nginx..."
+NGINX_CONTAINER=$($DOCKER_COMPOSE ps -q nginx 2>/dev/null || echo "")
+if [ -n "$NGINX_CONTAINER" ]; then
+    docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null && log_success "Nginx recarregado" || log_warning "Não foi possível recarregar Nginx (será reiniciado adiante)"
+else
+    log_warning "Container Nginx não encontrado (será iniciado adiante)"
 fi
 
 log_success "Frontend deployado"
