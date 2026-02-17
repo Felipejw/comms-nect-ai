@@ -1,48 +1,62 @@
 
+# Correcao: QR Code nao aparece apos instalacao limpa
 
-# Analise Completa do Sistema de Deploy VPS
+## Causa Raiz
 
-## Status: ✅ CONCLUÍDO
+O install-unified.sh tenta configurar as credenciais do Baileys no banco usando `UPDATE`, mas as linhas nao existem ainda na tabela `system_settings` (instalacao do zero). O resultado e `UPDATE 0` -- zero linhas afetadas. Sem essas configuracoes, a edge function `baileys-instance` nao sabe a URL nem a API Key do servidor Baileys, e falha ao tentar gerar o QR Code.
 
-Todas as correções foram implementadas.
+Alem disso, o script so configura `baileys_api_key` mas **nunca configura `baileys_server_url`**, que tambem e necessario.
 
-## Correções Aplicadas
+## Correcoes
 
-### ✅ Passo 1: `index.html` - Script tag permanente
-- Adicionado `<script src="/config.js"></script>` diretamente no source `index.html`
-- No Lovable Cloud, o arquivo não existe (404 silencioso, sem efeito)
-- Na VPS, o `config.js` é servido pelo Nginx com headers no-cache
+### 1. Corrigir `deploy/scripts/install-unified.sh` (linhas 1059-1066)
 
-### ✅ Passo 2: `deploy/scripts/update.sh` - Caminhos corrigidos + config.js automático
-- Trocado `volumes/frontend/` por `frontend/dist/` (alinhado com docker-compose.yml)
-- Adicionada geração automática do `config.js` a partir do `ANON_KEY` do `.env`
-- Mantida injeção da script tag como fallback no index.html
+Trocar o `UPDATE` por `INSERT ... ON CONFLICT DO UPDATE` e incluir ambas as chaves (`baileys_server_url` e `baileys_api_key`):
 
-### ✅ Passo 3: `deploy/scripts/install.sh` - Redirecionamento
-- Substituído por redirect para `install-unified.sh`
-- Mantida compatibilidade para quem chamar o antigo script
+```sql
+INSERT INTO public.system_settings (key, value)
+VALUES
+  ('baileys_server_url', 'http://baileys:3000'),
+  ('baileys_api_key', '<BAILEYS_API_KEY>')
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+```
 
-### ✅ Passo 4: `deploy/scripts/install-unified.sh` - Kong com ACLs
-- Kong config agora inclui `consumers`, `acls`, `key-auth` e `acl` plugin em todas as rotas
-- Auth com rotas abertas (verify, callback, authorize) + rota principal com key-auth
-- Alinhado com o formato do antigo `install.sh`
+A URL usa `http://baileys:3000` (rede Docker interna) porque a edge function roda dentro do container `supabase-functions` na mesma rede Docker.
 
-### ✅ Passo 5: `deploy/nginx/nginx.conf` - Sem alteração necessária
-- Já contém `location = /config.js` com headers no-cache
-- Suporta HTTP e HTTPS
+### 2. Adicionar fallback por variavel de ambiente na edge function `baileys-instance`
 
-## Fluxo Automatizado Resultante
+Modificar `supabase/functions/baileys-instance/index.ts` para que, se `system_settings` nao tiver a URL/Key, use as variaveis de ambiente `BAILEYS_API_URL` e `BAILEYS_API_KEY` (que ja estao configuradas no docker-compose.yml):
 
-### Instalação nova (`install-unified.sh`):
-1. Gera JWT keys, .env, kong.yml com ACLs
-2. Compila frontend com placeholders
-3. Gera `config.js` com `window.location.origin` e `anonKey`
-4. Injeta `<script src="/config.js">` no index.html (fallback, já está no source)
-5. Inicia todos os serviços
+```typescript
+const baileysUrl = settings?.value || Deno.env.get("BAILEYS_API_URL");
+const baileysApiKey = apiKeySettings?.value || Deno.env.get("BAILEYS_API_KEY");
+```
 
-### Atualização (`update.sh`):
-1. Git pull + rebuild frontend
-2. Copia build para `frontend/dist/` (caminho correto)
-3. Preserva `config.js` existente OU gera novo automaticamente
-4. Injeta script tag no index.html se ausente (fallback)
-5. Reinicia containers
+Isso garante que funcione mesmo se o banco nao tiver as settings (failsafe).
+
+### 3. Corrigir `deploy/scripts/update.sh`
+
+Adicionar a mesma logica de UPSERT no script de update, para que atualizacoes futuras tambem sincronizem as credenciais.
+
+## Resumo das Alteracoes
+
+| Arquivo | Alteracao |
+|---------|-----------|
+| `deploy/scripts/install-unified.sh` | Trocar UPDATE por INSERT ON CONFLICT para baileys_server_url e baileys_api_key |
+| `supabase/functions/baileys-instance/index.ts` | Adicionar fallback para env vars BAILEYS_API_URL e BAILEYS_API_KEY |
+| `deploy/scripts/update.sh` | Adicionar UPSERT das credenciais Baileys no banco apos restart |
+
+## Correcao Imediata (VPS)
+
+Enquanto o codigo e atualizado, rode isso na VPS para corrigir agora:
+
+```bash
+source /opt/sistema/deploy/.env
+docker exec supabase-db psql -U postgres -c "
+  INSERT INTO public.system_settings (key, value)
+  VALUES
+    ('baileys_server_url', 'http://baileys:3000'),
+    ('baileys_api_key', '$BAILEYS_API_KEY')
+  ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+"
+```
