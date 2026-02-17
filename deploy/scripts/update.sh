@@ -96,25 +96,44 @@ log_success "Frontend compilado"
 log_info "Copiando frontend para o volume do Nginx..."
 
 # Preservar config.js existente
-if [ -f "$DEPLOY_DIR/volumes/frontend/config.js" ]; then
-    cp "$DEPLOY_DIR/volumes/frontend/config.js" /tmp/config.js.bak
+if [ -f "$DEPLOY_DIR/frontend/dist/config.js" ]; then
+    cp "$DEPLOY_DIR/frontend/dist/config.js" /tmp/config.js.bak
 fi
 
 # Criar diretório se não existir
-mkdir -p "$DEPLOY_DIR/volumes/frontend"
+mkdir -p "$DEPLOY_DIR/frontend/dist"
 
 # Copiar novo build
-cp -r dist/* "$DEPLOY_DIR/volumes/frontend/"
+cp -r dist/* "$DEPLOY_DIR/frontend/dist/"
 
-# Restaurar config.js
+# Restaurar config.js existente ou gerar novo automaticamente
 if [ -f /tmp/config.js.bak ]; then
-    cp /tmp/config.js.bak "$DEPLOY_DIR/volumes/frontend/config.js"
+    cp /tmp/config.js.bak "$DEPLOY_DIR/frontend/dist/config.js"
     rm /tmp/config.js.bak
+    log_success "config.js restaurado do backup"
+else
+    # Gerar config.js automaticamente a partir do .env
+    if [ -f "$DEPLOY_DIR/.env" ]; then
+        RUNTIME_ANON_KEY=$(grep -E "^ANON_KEY=" "$DEPLOY_DIR/.env" | cut -d= -f2 | tr -d '"' | tr -d "'")
+        if [ -n "$RUNTIME_ANON_KEY" ]; then
+            cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
+window.__SUPABASE_CONFIG__ = {
+  url: window.location.origin,
+  anonKey: "${RUNTIME_ANON_KEY}"
+};
+CONFIGEOF
+            log_success "config.js gerado automaticamente a partir do .env"
+        else
+            log_warning "ANON_KEY não encontrada no .env - config.js não gerado"
+        fi
+    else
+        log_warning ".env não encontrado - config.js não gerado"
+    fi
 fi
 
-# Injetar config.js no index.html (se ainda não estiver)
-if ! grep -q 'config.js' "$DEPLOY_DIR/volumes/frontend/index.html" 2>/dev/null; then
-    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/volumes/frontend/index.html"
+# Injetar config.js no index.html (fallback se não estiver no source)
+if ! grep -q 'config.js' "$DEPLOY_DIR/frontend/dist/index.html" 2>/dev/null; then
+    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/frontend/dist/index.html"
     log_success "config.js injetado no index.html"
 fi
 

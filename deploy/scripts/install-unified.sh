@@ -462,71 +462,6 @@ configure_kong() {
 _format_version: "2.1"
 _transform: true
 
-services:
-  - name: auth-v1
-    url: http://auth:9999/verify
-    routes:
-      - name: auth-v1-route
-        strip_path: true
-        paths:
-          - /auth/v1/verify
-    plugins:
-      - name: cors
-  - name: auth-v1-all
-    url: http://auth:9999
-    routes:
-      - name: auth-v1-all-route
-        strip_path: true
-        paths:
-          - /auth/v1
-    plugins:
-      - name: cors
-
-  - name: rest-v1
-    url: http://rest:3000
-    routes:
-      - name: rest-v1-route
-        strip_path: true
-        paths:
-          - /rest/v1
-    plugins:
-      - name: cors
-      - name: key-auth
-        config:
-          hide_credentials: false
-          key_names:
-            - apikey
-
-  - name: realtime-v1
-    url: http://realtime:4000/socket
-    routes:
-      - name: realtime-v1-route
-        strip_path: true
-        paths:
-          - /realtime/v1
-    plugins:
-      - name: cors
-
-  - name: storage-v1
-    url: http://storage:5000
-    routes:
-      - name: storage-v1-route
-        strip_path: true
-        paths:
-          - /storage/v1
-    plugins:
-      - name: cors
-
-  - name: functions-v1
-    url: http://functions:8000
-    routes:
-      - name: functions-v1-route
-        strip_path: true
-        paths:
-          - /functions/v1
-    plugins:
-      - name: cors
-
 consumers:
   - username: anon
     keyauth_credentials:
@@ -535,34 +470,137 @@ consumers:
     keyauth_credentials:
       - key: $SERVICE_ROLE_KEY
 
-plugins:
-  - name: cors
-    config:
-      origins:
-        - "*"
-      methods:
-        - GET
-        - HEAD
-        - PUT
-        - PATCH
-        - POST
-        - DELETE
-        - OPTIONS
-      headers:
-        - Accept
-        - Accept-Version
-        - Authorization
-        - Content-Length
-        - Content-MD5
-        - Content-Type
-        - Date
-        - X-Auth-Token
-        - apikey
-        - X-Client-Info
-      exposed_headers:
-        - X-Supabase-Api-Version
-      credentials: true
-      max_age: 3600
+acls:
+  - consumer: anon
+    group: anon
+  - consumer: service_role
+    group: admin
+
+services:
+  - name: auth-v1-open
+    url: http://auth:9999/verify
+    routes:
+      - name: auth-v1-open
+        strip_path: true
+        paths:
+          - /auth/v1/verify
+    plugins:
+      - name: cors
+
+  - name: auth-v1-open-callback
+    url: http://auth:9999/callback
+    routes:
+      - name: auth-v1-open-callback
+        strip_path: true
+        paths:
+          - /auth/v1/callback
+    plugins:
+      - name: cors
+
+  - name: auth-v1-open-authorize
+    url: http://auth:9999/authorize
+    routes:
+      - name: auth-v1-open-authorize
+        strip_path: true
+        paths:
+          - /auth/v1/authorize
+    plugins:
+      - name: cors
+
+  - name: auth-v1
+    url: http://auth:9999/
+    routes:
+      - name: auth-v1
+        strip_path: true
+        paths:
+          - /auth/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  - name: rest-v1
+    url: http://rest:3000/
+    routes:
+      - name: rest-v1
+        strip_path: true
+        paths:
+          - /rest/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  - name: realtime-v1
+    url: http://realtime:4000/socket/
+    routes:
+      - name: realtime-v1
+        strip_path: true
+        paths:
+          - /realtime/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  - name: storage-v1
+    url: http://storage:5000/
+    routes:
+      - name: storage-v1
+        strip_path: true
+        paths:
+          - /storage/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
+
+  - name: functions-v1
+    url: http://functions:8000/
+    routes:
+      - name: functions-v1
+        strip_path: true
+        paths:
+          - /functions/v1/
+    plugins:
+      - name: cors
+      - name: key-auth
+        config:
+          hide_credentials: false
+      - name: acl
+        config:
+          hide_groups_header: true
+          allow:
+            - admin
+            - anon
 EOF
     
     log_success "Kong configurado"

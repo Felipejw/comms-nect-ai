@@ -2,100 +2,47 @@
 
 # Analise Completa do Sistema de Deploy VPS
 
-## Problemas Identificados
+## Status: ✅ CONCLUÍDO
 
-### 1. CRITICO: Caminho do frontend inconsistente entre scripts
+Todas as correções foram implementadas.
 
-O `docker-compose.yml` monta o frontend de **dois caminhos diferentes** dependendo do script usado:
+## Correções Aplicadas
 
-- **docker-compose.yml** (Nginx volume): `./frontend/dist:/usr/share/nginx/html:ro`
-- **install-unified.sh**: copia para `deploy/frontend/dist/` (correto)
-- **update.sh**: copia para `deploy/volumes/frontend/` (ERRADO - caminho inexistente no docker-compose)
-- **install.sh**: copia para `deploy/frontend/dist/` (correto)
+### ✅ Passo 1: `index.html` - Script tag permanente
+- Adicionado `<script src="/config.js"></script>` diretamente no source `index.html`
+- No Lovable Cloud, o arquivo não existe (404 silencioso, sem efeito)
+- Na VPS, o `config.js` é servido pelo Nginx com headers no-cache
 
-O `update.sh` precisa ser corrigido para copiar para `deploy/frontend/dist/` em vez de `deploy/volumes/frontend/`.
+### ✅ Passo 2: `deploy/scripts/update.sh` - Caminhos corrigidos + config.js automático
+- Trocado `volumes/frontend/` por `frontend/dist/` (alinhado com docker-compose.yml)
+- Adicionada geração automática do `config.js` a partir do `ANON_KEY` do `.env`
+- Mantida injeção da script tag como fallback no index.html
 
-### 2. CRITICO: config.js nao e gerado automaticamente no update
+### ✅ Passo 3: `deploy/scripts/install.sh` - Redirecionamento
+- Substituído por redirect para `install-unified.sh`
+- Mantida compatibilidade para quem chamar o antigo script
 
-O `update.sh` preserva `config.js` de `volumes/frontend/` (caminho errado). Se o config.js nao existir nesse local, o frontend fica sem configuracao runtime e conecta no Lovable Cloud ou falha.
+### ✅ Passo 4: `deploy/scripts/install-unified.sh` - Kong com ACLs
+- Kong config agora inclui `consumers`, `acls`, `key-auth` e `acl` plugin em todas as rotas
+- Auth com rotas abertas (verify, callback, authorize) + rota principal com key-auth
+- Alinhado com o formato do antigo `install.sh`
 
-### 3. CRITICO: index.html nao inclui `<script src="/config.js">` no source
+### ✅ Passo 5: `deploy/nginx/nginx.conf` - Sem alteração necessária
+- Já contém `location = /config.js` com headers no-cache
+- Suporta HTTP e HTTPS
 
-O arquivo `index.html` do repositorio NAO tem a tag `<script src="/config.js">`. Ela so e injetada via `sed` durante a instalacao. Se o build sobrescreve o `index.html`, a tag se perde e precisa ser re-injetada.
+## Fluxo Automatizado Resultante
 
-### 4. MEDIO: Dois scripts de instalacao duplicados e divergentes
+### Instalação nova (`install-unified.sh`):
+1. Gera JWT keys, .env, kong.yml com ACLs
+2. Compila frontend com placeholders
+3. Gera `config.js` com `window.location.origin` e `anonKey`
+4. Injeta `<script src="/config.js">` no index.html (fallback, já está no source)
+5. Inicia todos os serviços
 
-Existem **dois scripts de instalacao** com logicas diferentes:
-- `deploy/scripts/install.sh` (1240 linhas) - gera nginx.conf inline, nao usa `generate_frontend_config()`
-- `deploy/scripts/install-unified.sh` (1185 linhas) - mais robusto, gera `config.js` com `window.location.origin`
-
-O `bootstrap-local.sh` chama `install-unified.sh`. O `install.sh` fica orfao mas pode ser chamado por engano.
-
-### 5. MEDIO: Nginx config divergente entre install.sh e o arquivo em disco
-
-O `install.sh` gera um `nginx.conf` inline (linhas 547-766) que e **diferente** do `deploy/nginx/nginx.conf` em disco:
-- O inline redireciona HTTP->HTTPS e NAO tem `location = /config.js`
-- O em disco serve em HTTP e HTTPS, com `location = /config.js` e headers no-cache
-
-### 6. MENOR: Kong config inconsistente
-
-O `install-unified.sh` gera kong.yml **sem ACLs** (sem `acl` plugin nas rotas REST/Storage). O `install.sh` gera kong.yml **com ACLs** e consumers com `keyauth_credentials`. Ambos devem ter a mesma config.
-
----
-
-## Plano de Correcoes
-
-### Passo 1: Corrigir `update.sh` - Caminho do frontend
-
-Alterar todas as referencias de `volumes/frontend/` para `frontend/dist/` no `update.sh`, alinhando com o docker-compose.yml.
-
-### Passo 2: Gerar config.js automaticamente no `update.sh`
-
-Apos copiar o build, o `update.sh` deve:
-1. Ler `ANON_KEY` do `.env`
-2. Gerar `config.js` com `window.location.origin` e a `anonKey`
-3. Injetar `<script src="/config.js">` no `index.html` se ausente
-
-### Passo 3: Adicionar `<script src="/config.js">` ao `index.html` no source
-
-Incluir a tag diretamente no `index.html` do repositorio. Assim, nao depende de `sed` pos-build. O Lovable Cloud simplesmente ignora o arquivo (404 silencioso, sem efeito). Na VPS, o `config.js` sera servido pelo Nginx.
-
-### Passo 4: Eliminar `install.sh` duplicado
-
-Renomear ou remover `deploy/scripts/install.sh` (o antigo). O `install-unified.sh` e o script principal e mais robusto. Criar um symlink `install.sh -> install-unified.sh` para compatibilidade.
-
-### Passo 5: Sincronizar `nginx.conf` unico
-
-O `install-unified.sh` e o `install.sh` ambos geram nginx.conf inline. Remover a geracao inline e usar o arquivo `deploy/nginx/nginx.conf` que ja existe e e mais completo (tem `location = /config.js`, suporta HTTP e HTTPS, headers corretos).
-
-### Passo 6: Tornar Kong config consistente
-
-Unificar a geracao do `kong.yml` para incluir ACLs e consumers em ambos os scripts (na pratica, so no `install-unified.sh` apos remover o duplicado).
-
----
-
-## Detalhes Tecnicos das Alteracoes
-
-### Arquivo: `index.html`
-Adicionar antes de `</head>`:
-```html
-<script src="/config.js"></script>
-```
-
-### Arquivo: `deploy/scripts/update.sh`
-- Linha 99-113: Trocar `volumes/frontend/` por `frontend/dist/`
-- Adicionar geracao automatica do `config.js` usando ANON_KEY do `.env`
-- Manter a logica de injecao do script tag como fallback
-
-### Arquivo: `deploy/scripts/install-unified.sh`
-- Remover geracao inline do nginx.conf (usar o arquivo existente em `deploy/nginx/nginx.conf`)
-- Adicionar ACLs no kong.yml gerado
-- Na funcao `generate_frontend_config()`, tambem copiar para `frontend/dist/` (ja faz)
-
-### Arquivo: `deploy/scripts/install.sh`
-- Substituir conteudo por redirect para `install-unified.sh` (manter compatibilidade)
-
-### Arquivo: `deploy/nginx/nginx.conf`
-- Ja esta correto (tem `location = /config.js`, suporta HTTP+HTTPS)
-- Nenhuma alteracao necessaria
-
+### Atualização (`update.sh`):
+1. Git pull + rebuild frontend
+2. Copia build para `frontend/dist/` (caminho correto)
+3. Preserva `config.js` existente OU gera novo automaticamente
+4. Injeta script tag no index.html se ausente (fallback)
+5. Reinicia containers
