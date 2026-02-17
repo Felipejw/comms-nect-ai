@@ -242,6 +242,23 @@ $DOCKER_COMPOSE --profile baileys up -d --force-recreate
 log_success "Containers reiniciados"
 
 # ==========================================
+# 6b. Sincronizar credenciais Baileys no banco
+# ==========================================
+log_info "Sincronizando credenciais Baileys no banco..."
+
+if [ -n "$BAILEYS_API_KEY" ]; then
+    $DOCKER_COMPOSE exec -T db psql -U postgres -c "
+        INSERT INTO public.system_settings (key, value)
+        VALUES
+          ('baileys_server_url', 'http://baileys:3000'),
+          ('baileys_api_key', '$BAILEYS_API_KEY')
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+    " 2>/dev/null && log_success "Credenciais Baileys sincronizadas" || log_warning "Falha ao sincronizar credenciais Baileys"
+else
+    log_warning "BAILEYS_API_KEY não encontrada no .env - credenciais não sincronizadas"
+fi
+
+# ==========================================
 # 7. Aguardar Serviços
 # ==========================================
 log_info "Aguardando serviços iniciarem..."

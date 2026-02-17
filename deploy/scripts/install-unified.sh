@@ -1056,12 +1056,14 @@ create_admin() {
     " 2>/dev/null
     log_success "Usuário promovido para admin"
     
-    # 3. Configurar credenciais do Baileys no system_settings
+    # 3. Configurar credenciais do Baileys no system_settings (UPSERT)
     log_info "Configurando credenciais do Baileys no banco..."
     docker exec supabase-db psql -U postgres -c "
-        UPDATE public.system_settings
-        SET value = '$BAILEYS_API_KEY'
-        WHERE key = 'baileys_api_key';
+        INSERT INTO public.system_settings (key, value)
+        VALUES
+          ('baileys_server_url', 'http://baileys:3000'),
+          ('baileys_api_key', '$BAILEYS_API_KEY')
+        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
     " 2>/dev/null
     log_success "Credenciais do Baileys configuradas"
 }
