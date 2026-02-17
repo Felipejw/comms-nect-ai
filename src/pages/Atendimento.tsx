@@ -1089,7 +1089,7 @@ export default function Atendimento() {
               mediaType="video"
             />
           )}
-          {message.content && (
+          {message.content && message.message_type !== "audio" && (
             <p className="text-sm break-words">
               {messageSearchQuery ? highlightText(message.content, messageSearchQuery) : message.content}
             </p>
