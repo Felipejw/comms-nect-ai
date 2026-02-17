@@ -12,6 +12,9 @@
 
 set -e
 
+# Garantir diretorio de trabalho seguro (evita erro se /opt/sistema for deletado)
+cd /tmp 2>/dev/null || cd /
+
 # Cores
 RED='\033[0;31m'
 GREEN='\033[0;32m'
