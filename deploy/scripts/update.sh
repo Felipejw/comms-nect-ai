@@ -81,14 +81,20 @@ log_success "Código atualizado"
 log_info "Compilando frontend..."
 
 # Limpar build anterior para garantir build limpo
-rm -rf dist
+rm -rf dist node_modules/.vite .vite
 
 docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build" || {
     log_error "Falha ao compilar o frontend"
     exit 1
 }
 
-log_success "Frontend compilado"
+# Verificar se o build gerou o index.html
+if [ ! -f "dist/index.html" ]; then
+    log_error "Build nao gerou dist/index.html. Abortando."
+    exit 1
+fi
+
+log_success "Frontend compilado ($(ls dist/assets/*.js 2>/dev/null | wc -l) arquivos JS)"
 
 # ==========================================
 # 3. Deploy do Frontend
@@ -120,12 +126,7 @@ fi
 
 # Recarregar Nginx para servir o conteúdo novo
 log_info "Recarregando Nginx..."
-NGINX_CONTAINER=$($DOCKER_COMPOSE ps -q nginx 2>/dev/null || echo "")
-if [ -n "$NGINX_CONTAINER" ]; then
-    docker exec "$NGINX_CONTAINER" nginx -s reload 2>/dev/null && log_success "Nginx recarregado" || log_warning "Não foi possível recarregar Nginx (será reiniciado adiante)"
-else
-    log_warning "Container Nginx não encontrado (será iniciado adiante)"
-fi
+docker exec app-nginx nginx -s reload 2>/dev/null && log_success "Nginx recarregado" || log_warning "Não foi possível recarregar Nginx (será reiniciado adiante)"
 
 log_success "Frontend deployado"
 
