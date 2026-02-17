@@ -1,21 +1,26 @@
 
-# Fix: Adicionar `cd /tmp` no inicio do bootstrap.sh
+
+# Corrigir configuracoes do Baileys no banco de dados
 
 ## Problema
+As configuracoes `baileys_server_url` e `baileys_api_key` no banco de dados ainda apontam para o dominio antigo (`chatbotvital.store`) e a API key antiga. A Edge Function `baileys-instance` le esses valores do banco para se comunicar com o servidor Baileys no VPS, por isso o QR Code nao aparece.
 
-Quando o usuario executa o bootstrap estando dentro de `/opt/sistema/deploy`, o script deleta esse diretorio durante a reinstalacao. O shell perde a referencia ao diretorio atual, causando o erro `getcwd: cannot access parent directories`.
+## Solucao
 
-## Correcao
+### 1. Atualizar os dados no banco
+Executar UPDATE nas duas linhas da tabela `system_settings`:
 
-Adicionar `cd /tmp 2>/dev/null || cd /` logo apos o `set -e` (linha 13) no arquivo `deploy/scripts/bootstrap.sh`. Isso garante que o script sempre rode de um diretorio seguro antes de deletar `/opt/sistema`.
+- `baileys_server_url` -> `https://app.chatbotwhatsapp.store/baileys`
+- `baileys_api_key` -> `fe29d431262a3e70540b180151e846011a13577f2e8226d9b60eadf7e31c26bb`
 
-### Arquivo: `deploy/scripts/bootstrap.sh`
+### 2. Melhorar o script de instalacao (opcional)
+Adicionar ao `deploy/scripts/install-unified.sh` um passo que tambem atualiza o banco Lovable Cloud (via API REST do Supabase) com a URL e API Key corretas, evitando esse problema no futuro.
 
-Apos a linha `set -e`, adicionar:
+## Secao Tecnica
 
-```bash
-# Garantir diretorio de trabalho seguro (evita erro se /opt/sistema for deletado)
-cd /tmp 2>/dev/null || cd /
-```
+A Edge Function `baileys-instance` (linha 65-78) busca `baileys_server_url` e `baileys_api_key` da tabela `system_settings`. Atualmente retorna os valores antigos, fazendo com que toda chamada ao servidor Baileys falhe (dominio errado + chave errada).
 
-Uma unica alteracao, uma unica linha. Resolve o problema permanentemente.
+Arquivos alterados:
+- Nenhum arquivo de codigo precisa mudar
+- Apenas os dados na tabela `system_settings` precisam ser atualizados via SQL
+
