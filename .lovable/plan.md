@@ -1,25 +1,20 @@
 
-# Corrigir VPS conectando ao banco do Lovable Cloud
 
-## Problema
+# Corrigir build da VPS - `.env` sobrepondo variáveis de ambiente
 
-Quando o `update.sh` compila o frontend na VPS, o Vite embute as variaveis de ambiente do arquivo `.env` diretamente no codigo JavaScript. Como o `.env` contem a URL do Lovable Cloud (`qducanwbpleoceynmend.supabase.co`), o frontend da VPS conecta ao banco errado.
+## Problema raiz
 
-O mecanismo de `config.js` (que define `window.__SUPABASE_CONFIG__` com a URL correta da VPS) existe, mas e ignorado porque o `client.ts` so usa o runtime config quando a URL do env e "placeholder" ou vazia.
+O comando `docker run -v "$(pwd)":/app` monta o diretorio inteiro do projeto dentro do container, **incluindo o arquivo `.env`**. O Vite le esse `.env` automaticamente e as URLs do Lovable Cloud contidas nele acabam sendo embutidas no JavaScript, mesmo com as flags `-e` do Docker.
+
+Embora a documentacao do Vite diga que variaveis de ambiente do processo tem prioridade sobre `.env`, na pratica o comportamento dentro do Docker pode variar dependendo de como o shell processa as variaveis.
 
 ## Solucao
 
-Alterar o comando de build no `deploy/scripts/update.sh` para passar variaveis de ambiente placeholder, forcando o `client.ts` a usar o `config.js` em vez dos valores embutidos.
+Alterar o comando de build no `deploy/scripts/update.sh` para **substituir temporariamente o conteudo do `.env`** dentro do container antes de compilar, garantindo que o Vite leia apenas valores placeholder.
 
-### Alteracao no arquivo `deploy/scripts/update.sh` (linha 86)
+### Alteracao no arquivo `deploy/scripts/update.sh` (linhas 86-90)
 
 Trocar:
-
-```text
-docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
-```
-
-Por:
 
 ```text
 docker run --rm -v "$(pwd)":/app -w /app \
@@ -29,24 +24,30 @@ docker run --rm -v "$(pwd)":/app -w /app \
   node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
 ```
 
-### Por que funciona
-
-O `client.ts` tem esta logica:
+Por:
 
 ```text
-if (!envUrl || envUrl.includes('placeholder') || envUrl === 'undefined') {
-    // Usar runtime config (window.__SUPABASE_CONFIG__)
-}
+docker run --rm -v "$(pwd)":/app -w /app \
+  node:20-alpine sh -c "\
+    cp .env .env.lovable.bak 2>/dev/null || true && \
+    echo 'VITE_SUPABASE_URL=placeholder' > .env && \
+    echo 'VITE_SUPABASE_PUBLISHABLE_KEY=placeholder' >> .env && \
+    echo 'VITE_SUPABASE_PROJECT_ID=self-hosted' >> .env && \
+    npm install --legacy-peer-deps && npm run build; \
+    EXIT_CODE=\$?; \
+    cp .env.lovable.bak .env 2>/dev/null || true && \
+    rm -f .env.lovable.bak; \
+    exit \$EXIT_CODE"
 ```
 
-Ao compilar com `VITE_SUPABASE_URL=placeholder`, o codigo embutido contera "placeholder", ativando o fallback para o `config.js` que aponta para o banco local da VPS.
+### O que faz
 
-### Resumo
+1. Faz backup do `.env` original
+2. Sobrescreve o `.env` com valores placeholder
+3. Executa o build (Vite agora le "placeholder" do `.env`)
+4. Restaura o `.env` original ao final
 
-| Antes | Depois |
-|-------|--------|
-| Build usa URL do Lovable Cloud | Build usa "placeholder" |
-| `config.js` e ignorado | `config.js` assume o controle |
-| VPS conecta ao banco errado | VPS conecta ao banco local |
+### Por que isso resolve
 
-Nenhuma alteracao no frontend ou no `client.ts` e necessaria. Apenas o script de build precisa ser ajustado.
+O Vite carrega o `.env` do diretorio de trabalho antes de verificar variaveis de ambiente do processo. Ao sobrescrever o arquivo diretamente, garantimos que nao importa a ordem de prioridade -- o unico valor disponivel e "placeholder", ativando o fallback para `config.js`.
+
