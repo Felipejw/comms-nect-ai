@@ -1,38 +1,59 @@
 
+# Correcao Definitiva do Script de Update
 
-# Correcao do Script de Update - Diretorio Errado do Frontend
+## Diagnostico
 
-## Problema identificado
+O script atual tem problemas que impedem a atualizacao correta:
 
-O `docker-compose.yml` monta o volume do Nginx assim:
-
-```text
-./frontend/dist:/usr/share/nginx/html:ro
-```
-
-Isso significa que o Nginx serve os arquivos de `deploy/frontend/dist/`.
-
-Porem, o `update.sh` copia o build para `deploy/volumes/frontend/`, que e um diretorio completamente diferente. O resultado: o Nginx continua servindo a versao antiga que esta em `deploy/frontend/dist/`.
+1. **Cache do Vite**: O build pode usar cache antigo. O script limpa `dist/` mas nao limpa `.vite` cache nem `node_modules/.vite`
+2. **Diretorio errado para docker-compose**: Os comandos de reload do Nginx rodam de `$PROJECT_DIR`, mas o `docker-compose.yml` esta em `$DEPLOY_DIR`. Embora o force-recreate posterior resolva, o fluxo e fragil
+3. **Sem verificacao de build**: O script nao verifica se o `dist/` realmente foi gerado com conteudo novo
 
 ## Solucao
 
-Corrigir o `update.sh` para copiar os arquivos compilados para o caminho correto: `deploy/frontend/dist/`.
+Corrigir o `deploy/scripts/update.sh` com as seguintes melhorias:
 
-### Arquivo: `deploy/scripts/update.sh`
+### Alteracoes no arquivo `deploy/scripts/update.sh`
 
-Alterar a secao "Deploy do Frontend" (linhas ~100-120) para usar o caminho correto:
+1. **Limpar caches antes do build** (secao 2 - Rebuild):
+   - Adicionar `rm -rf node_modules/.vite .vite` antes do build
+   - Manter o `rm -rf dist` existente
 
-| Antes | Depois |
-|-------|--------|
-| `$DEPLOY_DIR/volumes/frontend/` | `$DEPLOY_DIR/frontend/dist/` |
+2. **Executar docker-compose do diretorio correto** (secao 3 - Deploy):
+   - Mover o `cd "$DEPLOY_DIR"` para ANTES dos comandos docker-compose de reload do Nginx
+   - Ou usar `$DOCKER_COMPOSE -f "$DEPLOY_DIR/docker-compose.yml"` explicitamente
 
-As referencias a `config.js` tambem serao atualizadas para usar o caminho correto.
+3. **Adicionar verificacao de build**:
+   - Apos o build, verificar se `dist/index.html` existe
+   - Se nao existir, abortar com erro
 
-Alem disso, adicionar um `docker exec` para recarregar o Nginx apos copiar os arquivos, garantindo que ele sirva o conteudo novo imediatamente (ja que o volume esta montado como read-only, um reload do Nginx e suficiente).
+4. **Forcar limpeza do cache do navegador via hash**:
+   - O Vite ja gera hashes nos nomes dos arquivos, mas garantir que o `index.html` nao esteja sendo cacheado pelo Nginx
 
-### Resumo das alteracoes
+### Detalhes tecnicos
 
-| Arquivo | Acao |
-|---------|------|
-| `deploy/scripts/update.sh` | Corrigir caminho de deploy do frontend + reload do Nginx |
+```text
+Secao 2 - Antes do build:
+  Adicionar: rm -rf node_modules/.vite .vite
+  
+Secao 2 - Apos o build:
+  Adicionar verificacao: 
+    if [ ! -f "dist/index.html" ]; then
+        log_error "Build nao gerou dist/index.html"
+        exit 1
+    fi
 
+Secao 3 - Reload do Nginx:
+  Usar: docker exec app-nginx nginx -s reload
+  (nome fixo do container conforme docker-compose.yml: container_name: app-nginx)
+```
+
+A mudanca mais importante e usar `docker exec app-nginx` em vez de `$DOCKER_COMPOSE ps -q nginx`, pois o container tem nome fixo `app-nginx` definido no docker-compose.yml (linha 345). Isso elimina a dependencia do diretorio atual.
+
+### Resumo
+
+| Problema | Correcao |
+|----------|----------|
+| Cache do Vite | Limpar `.vite` e `node_modules/.vite` |
+| Nginx nao recarrega | Usar `docker exec app-nginx` diretamente |
+| Build sem verificacao | Checar se `dist/index.html` existe |
