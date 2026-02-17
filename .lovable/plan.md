@@ -1,59 +1,46 @@
 
-# Correcao Definitiva do Script de Update
 
-## Diagnostico
+# Remover texto "[Audio]" e melhorar visual do player
 
-O script atual tem problemas que impedem a atualizacao correta:
+## Problema
 
-1. **Cache do Vite**: O build pode usar cache antigo. O script limpa `dist/` mas nao limpa `.vite` cache nem `node_modules/.vite`
-2. **Diretorio errado para docker-compose**: Os comandos de reload do Nginx rodam de `$PROJECT_DIR`, mas o `docker-compose.yml` esta em `$DEPLOY_DIR`. Embora o force-recreate posterior resolva, o fluxo e fragil
-3. **Sem verificacao de build**: O script nao verifica se o `dist/` realmente foi gerado com conteudo novo
+Quando uma mensagem de audio e renderizada, o texto do conteudo (ex: "🎤 Audio") aparece abaixo do player de audio. Isso acontece porque na linha 1092 do `Atendimento.tsx`, o `message.content` e sempre exibido, mesmo quando ja existe um player de audio visivel.
 
 ## Solucao
 
-Corrigir o `deploy/scripts/update.sh` com as seguintes melhorias:
+### 1. Ocultar texto para mensagens de audio (`src/pages/Atendimento.tsx`)
 
-### Alteracoes no arquivo `deploy/scripts/update.sh`
+Alterar a condicao de renderizacao do conteudo de texto (linha 1092) para nao exibir quando a mensagem for do tipo audio:
 
-1. **Limpar caches antes do build** (secao 2 - Rebuild):
-   - Adicionar `rm -rf node_modules/.vite .vite` antes do build
-   - Manter o `rm -rf dist` existente
+```
+// De:
+{message.content && (
 
-2. **Executar docker-compose do diretorio correto** (secao 3 - Deploy):
-   - Mover o `cd "$DEPLOY_DIR"` para ANTES dos comandos docker-compose de reload do Nginx
-   - Ou usar `$DOCKER_COMPOSE -f "$DEPLOY_DIR/docker-compose.yml"` explicitamente
-
-3. **Adicionar verificacao de build**:
-   - Apos o build, verificar se `dist/index.html` existe
-   - Se nao existir, abortar com erro
-
-4. **Forcar limpeza do cache do navegador via hash**:
-   - O Vite ja gera hashes nos nomes dos arquivos, mas garantir que o `index.html` nao esteja sendo cacheado pelo Nginx
-
-### Detalhes tecnicos
-
-```text
-Secao 2 - Antes do build:
-  Adicionar: rm -rf node_modules/.vite .vite
-  
-Secao 2 - Apos o build:
-  Adicionar verificacao: 
-    if [ ! -f "dist/index.html" ]; then
-        log_error "Build nao gerou dist/index.html"
-        exit 1
-    fi
-
-Secao 3 - Reload do Nginx:
-  Usar: docker exec app-nginx nginx -s reload
-  (nome fixo do container conforme docker-compose.yml: container_name: app-nginx)
+// Para:
+{message.content && message.message_type !== "audio" && (
 ```
 
-A mudanca mais importante e usar `docker exec app-nginx` em vez de `$DOCKER_COMPOSE ps -q nginx`, pois o container tem nome fixo `app-nginx` definido no docker-compose.yml (linha 345). Isso elimina a dependencia do diretorio atual.
+### 2. Melhorar visual do AudioPlayer (`src/components/atendimento/AudioPlayer.tsx`)
 
-### Resumo
+Atualizar o design do player para um visual mais moderno com ondas animadas:
 
-| Problema | Correcao |
-|----------|----------|
-| Cache do Vite | Limpar `.vite` e `node_modules/.vite` |
-| Nginx nao recarrega | Usar `docker exec app-nginx` diretamente |
-| Build sem verificacao | Checar se `dist/index.html` existe |
+- Aumentar levemente o tamanho do botao play/pause e adicionar gradiente primario
+- Melhorar as barras do waveform com animacao de onda suave durante reproducao
+- Adicionar transicoes mais fluidas nas barras
+- Arredondar mais o container e adicionar sombra sutil
+- Melhorar contraste e espacamento dos elementos de tempo
+
+## Detalhes tecnicos
+
+### Arquivo: `src/pages/Atendimento.tsx` (linha 1092)
+
+Adicionar `message.message_type !== "audio"` na condicao de renderizacao do conteudo textual.
+
+### Arquivo: `src/components/atendimento/AudioPlayer.tsx`
+
+- Container: bordas mais arredondadas (`rounded-xl`), padding maior, fundo com gradiente sutil
+- Botao play: circular com fundo primario solido, icone branco
+- Waveform: barras com animacao de onda (`scaleY` oscilante) durante reproducao, cantos mais arredondados, cores mais vibrantes
+- Tipografia: tempo atual em destaque, duracao total mais sutil
+- Remover botao de mute (simplificar interface)
+- Aumentar quantidade de barras de 32 para 40 para visual mais detalhado
