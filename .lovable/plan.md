@@ -1,86 +1,97 @@
 
+# Correcao: Media no VPS + Mensagens em Tempo Real
 
-# Correção completa: Player de áudio automatico + Status Card
+## Problema 1: Media nao carrega no VPS
 
-## Resumo
+**Causa raiz**: O webhook do Baileys salva a mensagem com `media_url: null` quando o campo `base64` nao vem no payload. O `MediaAutoDownloader` tenta baixar via endpoint `/sessions/{session}/messages/{messageId}/media` do servidor Baileys, mas esse endpoint nao existe ou o messageId nao corresponde ao formato esperado pelo Baileys.
 
-Tres frentes de trabalho para alinhar o comportamento de audio entre VPS e Lovable:
+**Solucao**: O webhook do Baileys precisa ser mais agressivo em tentar baixar a midia no momento do recebimento. Quando `hasMedia` ou `mediaType` indica midia mas nao tem `base64`, o webhook deve tentar chamar o download-whatsapp-media internamente. Alem disso, o `MediaAutoDownloader` precisa de um fallback melhor - quando a edge function falha, deve mostrar o conteudo da mensagem (texto como "[Imagem]") sem ficar em loop infinito.
 
-1. **Componente `MediaAutoDownloader` generico** - Substitui o `AudioAutoDownloader` atual e tambem cobre imagem e video
-2. **Melhoria no `useFileUpload`** - Garantir que o upload de audio gravado funcione com fallback
-3. **Card de status de processamento de audio** - Indicador visual no painel de conversa
+## Problema 2: Mensagens nao atualizam em tempo real
+
+**Causa raiz**: O webhook do Baileys insere a mensagem no banco mas **NAO** atualiza a conversation (`last_message_at`, `unread_count`, `subject`). Sem essa atualizacao:
+- A subscription realtime na tabela `conversations` nao dispara
+- A lista de conversas nao re-ordena
+- O badge de nao-lidas nao aparece
+
+O `useMessages` tem polling de 10 segundos, mas ele so funciona para a conversa **selecionada** - se o usuario nao estiver olhando aquela conversa, nao ve nada.
+
+## Alteracoes Planejadas
+
+### 1. Webhook Baileys - Atualizar conversa ao receber mensagem
+
+**Arquivo**: `supabase/functions/baileys-webhook/index.ts`
+
+Apos inserir a mensagem (linha ~591), adicionar logica para atualizar a conversa:
+
+- Incrementar `unread_count` (apenas para mensagens de contato, nao `fromMe`)
+- Atualizar `last_message_at` com timestamp atual
+- Atualizar `subject` com preview da mensagem (emojis para midia)
+
+Isso fara o realtime na tabela `conversations` disparar, que por sua vez invalida as queries de mensagens no frontend.
+
+### 2. Webhook Baileys - Tentar download de midia inline
+
+**Arquivo**: `supabase/functions/baileys-webhook/index.ts`
+
+Quando detecta midia mas nao tem `base64`, tentar buscar do Baileys server imediatamente dentro do webhook (usando a mesma logica de `download-whatsapp-media`), em vez de deixar para o frontend.
+
+### 3. MediaAutoDownloader - Melhorar tratamento de erro
+
+**Arquivo**: `src/components/atendimento/MediaAutoDownloader.tsx`
+
+- Quando todas as tentativas falham, mostrar o conteudo da mensagem (ex: "[Imagem]", "[Audio]") em vez de ficar indefinidamente no estado de erro
+- Reduzir o numero maximo de tentativas automaticas quando no VPS (detectar via URL do Supabase)
+
+### 4. useMessages - Garantir polling robusto
+
+**Arquivo**: `src/hooks/useConversations.ts`
+
+O polling de 10 segundos ja existe (linha 310). Vamos verificar se esta funcionando corretamente e adicionar um refetch mais frequente (5 segundos) para a conversa ativa.
 
 ---
 
 ## Detalhes Tecnicos
 
-### 1. Componente `MediaAutoDownloader` (refatorar `AudioAutoDownloader`)
+### Atualizacao do webhook (passo 1 - mais critico)
 
-**Arquivo:** `src/components/atendimento/MediaAutoDownloader.tsx` (novo)
+Apos a linha 591 do webhook, inserir:
 
-Extrair o componente do Atendimento.tsx para um arquivo proprio, tornando-o generico para qualquer tipo de midia:
+```typescript
+// Update conversation with latest message info
+const subjectPreview = msgType === 'audio' ? '🎵 Audio' 
+  : msgType === 'image' ? '📷 Imagem'
+  : msgType === 'video' ? '🎬 Video' 
+  : msgType === 'document' ? '📎 Documento'
+  : messageContent.substring(0, 100);
 
-- Props: `messageId`, `conversationId`, `sessionName`, `mediaType` (audio | image | video | document)
-- Auto-download via `useEffect` ao montar
-- Maximo de 3 tentativas automaticas com delay exponencial (2s, 4s, 8s)
-- Estados visuais:
-  - `loading`: spinner + "Carregando audio/imagem/video..."
-  - `error`: icone + texto + botao "Tentar novamente"
-  - `success`: nada (a query e invalidada e o componente pai renderiza o player/imagem/video)
-- Para audio especificamente, mostra o `AudioPlayer` inline ao obter a URL (sem depender de invalidar query)
+const convUpdates = {
+  last_message_at: new Date().toISOString(),
+  subject: subjectPreview,
+};
 
-### 2. Atualizar `src/pages/Atendimento.tsx`
+if (!isFromMe) {
+  // Increment unread count using RPC or raw update
+  await supabaseClient.rpc('increment_unread', { conv_id: conversation.id });
+  // OR fallback: update with current + 1
+}
 
-- Remover o `AudioAutoDownloader` inline
-- Importar o novo `MediaAutoDownloader`
-- Usar `MediaAutoDownloader` nos tres blocos de fallback (audio, imagem, video) substituindo tanto o `AudioAutoDownloader` quanto os blocos manuais com botao "Baixar"
-- Adicionar o card de status de processamento (item 4)
-
-### 3. Ajuste no `src/hooks/useFileUpload.ts`
-
-- Sem mudancas estruturais - o fluxo de fallback com `chat-attachments` -> `admin-write` -> `whatsapp-media` ja esta correto
-- Adicionar log mais claro no catch para facilitar diagnostico no VPS
-
-### 4. Card de status de processamento de audio
-
-**Arquivo:** `src/components/atendimento/AudioProcessingStatus.tsx` (novo)
-
-Um componente leve que aparece no topo da area de mensagens quando existem mensagens de audio pendentes (sem `media_url`) na conversa atual:
-
-```text
-+------------------------------------------+
-| 🔄 2 audios sendo processados...         |
-| ✅ 5 audios prontos                       |
-+------------------------------------------+
+await supabaseClient
+  .from('conversations')
+  .update(convUpdates)
+  .eq('id', conversation.id);
 ```
 
-- Conta mensagens de audio da conversa atual com e sem `media_url`
-- Aparece apenas quando ha audios pendentes (count > 0)
-- Usa dados ja disponíveis no array `messages` (sem queries extras)
-- Estilo compacto usando cores `muted` para nao poluir a interface
+Como nao temos uma funcao RPC, faremos o incremento manualmente buscando o valor atual e somando 1.
 
-### Fluxo final
+### Download de midia inline no webhook (passo 2)
 
-```text
-Mensagem de audio chega sem media_url:
-  1. MediaAutoDownloader monta automaticamente
-  2. Chama download-whatsapp-media (ate 3 tentativas)
-  3. Se sucesso: atualiza messages.media_url -> invalida query -> AudioPlayer renderiza
-  4. Se falha: mostra botao "Tentar novamente"
-  5. Card no topo mostra "X audios sendo processados..."
+Quando `hasMedia` e true mas `base64Data` e vazio, e `baileysUrl` esta configurado, tentar baixar a midia no proprio webhook antes de salvar a mensagem com `media_url: null`.
 
-Upload de audio pelo usuario:
-  1. Grava audio no navegador
-  2. useFileUpload tenta chat-attachments
-  3. Se bucket nao existe: cria via admin-write ou usa whatsapp-media
-  4. Envia mensagem com media_url preenchida
-```
-
-### Arquivos modificados/criados
+### Arquivos modificados
 
 | Arquivo | Acao |
 |---------|------|
-| `src/components/atendimento/MediaAutoDownloader.tsx` | Criar |
-| `src/components/atendimento/AudioProcessingStatus.tsx` | Criar |
-| `src/pages/Atendimento.tsx` | Editar (remover AudioAutoDownloader, importar novos componentes, adicionar status card) |
-
+| `supabase/functions/baileys-webhook/index.ts` | Editar - atualizar conversa + download inline |
+| `src/components/atendimento/MediaAutoDownloader.tsx` | Editar - melhorar fallback |
+| `src/hooks/useConversations.ts` | Editar - polling mais frequente |
