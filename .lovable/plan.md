@@ -1,46 +1,52 @@
 
-
-# Remover texto "[Audio]" e melhorar visual do player
+# Corrigir VPS conectando ao banco do Lovable Cloud
 
 ## Problema
 
-Quando uma mensagem de audio e renderizada, o texto do conteudo (ex: "🎤 Audio") aparece abaixo do player de audio. Isso acontece porque na linha 1092 do `Atendimento.tsx`, o `message.content` e sempre exibido, mesmo quando ja existe um player de audio visivel.
+Quando o `update.sh` compila o frontend na VPS, o Vite embute as variaveis de ambiente do arquivo `.env` diretamente no codigo JavaScript. Como o `.env` contem a URL do Lovable Cloud (`qducanwbpleoceynmend.supabase.co`), o frontend da VPS conecta ao banco errado.
+
+O mecanismo de `config.js` (que define `window.__SUPABASE_CONFIG__` com a URL correta da VPS) existe, mas e ignorado porque o `client.ts` so usa o runtime config quando a URL do env e "placeholder" ou vazia.
 
 ## Solucao
 
-### 1. Ocultar texto para mensagens de audio (`src/pages/Atendimento.tsx`)
+Alterar o comando de build no `deploy/scripts/update.sh` para passar variaveis de ambiente placeholder, forcando o `client.ts` a usar o `config.js` em vez dos valores embutidos.
 
-Alterar a condicao de renderizacao do conteudo de texto (linha 1092) para nao exibir quando a mensagem for do tipo audio:
+### Alteracao no arquivo `deploy/scripts/update.sh` (linha 86)
 
-```
-// De:
-{message.content && (
+Trocar:
 
-// Para:
-{message.content && message.message_type !== "audio" && (
+```text
+docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
 ```
 
-### 2. Melhorar visual do AudioPlayer (`src/components/atendimento/AudioPlayer.tsx`)
+Por:
 
-Atualizar o design do player para um visual mais moderno com ondas animadas:
+```text
+docker run --rm -v "$(pwd)":/app -w /app \
+  -e VITE_SUPABASE_URL=placeholder \
+  -e VITE_SUPABASE_PUBLISHABLE_KEY=placeholder \
+  -e VITE_SUPABASE_PROJECT_ID=self-hosted \
+  node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
+```
 
-- Aumentar levemente o tamanho do botao play/pause e adicionar gradiente primario
-- Melhorar as barras do waveform com animacao de onda suave durante reproducao
-- Adicionar transicoes mais fluidas nas barras
-- Arredondar mais o container e adicionar sombra sutil
-- Melhorar contraste e espacamento dos elementos de tempo
+### Por que funciona
 
-## Detalhes tecnicos
+O `client.ts` tem esta logica:
 
-### Arquivo: `src/pages/Atendimento.tsx` (linha 1092)
+```text
+if (!envUrl || envUrl.includes('placeholder') || envUrl === 'undefined') {
+    // Usar runtime config (window.__SUPABASE_CONFIG__)
+}
+```
 
-Adicionar `message.message_type !== "audio"` na condicao de renderizacao do conteudo textual.
+Ao compilar com `VITE_SUPABASE_URL=placeholder`, o codigo embutido contera "placeholder", ativando o fallback para o `config.js` que aponta para o banco local da VPS.
 
-### Arquivo: `src/components/atendimento/AudioPlayer.tsx`
+### Resumo
 
-- Container: bordas mais arredondadas (`rounded-xl`), padding maior, fundo com gradiente sutil
-- Botao play: circular com fundo primario solido, icone branco
-- Waveform: barras com animacao de onda (`scaleY` oscilante) durante reproducao, cantos mais arredondados, cores mais vibrantes
-- Tipografia: tempo atual em destaque, duracao total mais sutil
-- Remover botao de mute (simplificar interface)
-- Aumentar quantidade de barras de 32 para 40 para visual mais detalhado
+| Antes | Depois |
+|-------|--------|
+| Build usa URL do Lovable Cloud | Build usa "placeholder" |
+| `config.js` e ignorado | `config.js` assume o controle |
+| VPS conecta ao banco errado | VPS conecta ao banco local |
+
+Nenhuma alteracao no frontend ou no `client.ts` e necessaria. Apenas o script de build precisa ser ajustado.
