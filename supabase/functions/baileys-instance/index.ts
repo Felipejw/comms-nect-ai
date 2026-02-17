@@ -74,8 +74,8 @@ const handler = async (req: Request): Promise<Response> => {
       .eq("key", "baileys_api_key")
       .single();
 
-    const baileysUrl = settings?.value;
-    const baileysApiKey = apiKeySettings?.value;
+    const baileysUrl = settings?.value || Deno.env.get("BAILEYS_API_URL");
+    const baileysApiKey = apiKeySettings?.value || Deno.env.get("BAILEYS_API_KEY");
 
     if (!baileysUrl) {
       return new Response(
