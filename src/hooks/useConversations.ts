@@ -307,7 +307,7 @@ export function useMessages(conversationId: string) {
       return (data || []) as Message[];
     },
     enabled: !!conversationId,
-    refetchInterval: 10000,
+    refetchInterval: 5000,
   });
 }
 

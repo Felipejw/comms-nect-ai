@@ -352,6 +352,69 @@ const handler = async (req: Request): Promise<Response> => {
           const sessName = sessionData?.sessionName || session;
           mediaUrl = await storeMediaFromBase64(supabaseClient, sessName, messageId, base64Data);
         }
+
+        // If no base64 but has media, try downloading from Baileys server inline
+        if (!mediaUrl && (msgPayload.hasMedia || msgPayload.mediaType)) {
+          try {
+            const { data: settings } = await supabaseClient
+              .from("system_settings")
+              .select("value")
+              .eq("key", "baileys_server_url")
+              .single();
+
+            const { data: apiKeySettings } = await supabaseClient
+              .from("system_settings")
+              .select("value")
+              .eq("key", "baileys_api_key")
+              .single();
+
+            const baileysUrl = settings?.value;
+            const baileysApiKey = apiKeySettings?.value;
+
+            if (baileysUrl) {
+              const sessionData = connection.session_data as { sessionName?: string } | null;
+              const sessName = sessionData?.sessionName || session;
+              const dlHeaders: Record<string, string> = { "Content-Type": "application/json" };
+              if (baileysApiKey) dlHeaders["X-API-Key"] = baileysApiKey;
+
+              console.log(`[Baileys Webhook] Attempting inline media download from ${baileysUrl}/sessions/${sessName}/messages/${messageId}/media`);
+              const mediaResp = await fetch(
+                `${baileysUrl}/sessions/${sessName}/messages/${messageId}/media`,
+                { method: "GET", headers: dlHeaders }
+              );
+
+              if (mediaResp.ok) {
+                const respCT = mediaResp.headers.get("content-type") || "";
+                if (respCT.includes("application/json")) {
+                  const jsonResp = await mediaResp.json();
+                  if (jsonResp.base64) {
+                    const dataUri = `data:${jsonResp.mimetype || "application/octet-stream"};base64,${jsonResp.base64}`;
+                    mediaUrl = await storeMediaFromBase64(supabaseClient, sessName, messageId, dataUri);
+                    console.log(`[Baileys Webhook] Inline media download success: ${mediaUrl ? 'stored' : 'failed'}`);
+                  }
+                } else {
+                  const arrayBuf = await mediaResp.arrayBuffer();
+                  const buffer = new Uint8Array(arrayBuf);
+                  if (buffer.length > 0) {
+                    const ext = msgType === "audio" ? "ogg" : msgType === "image" ? "jpg" : msgType === "video" ? "mp4" : "bin";
+                    const storagePath = `${sessName}/${messageId}.${ext}`;
+                    await supabaseClient.storage.from("whatsapp-media").upload(storagePath, buffer, {
+                      contentType: respCT || "application/octet-stream",
+                      upsert: true,
+                    });
+                    const { data: pubUrl } = supabaseClient.storage.from("whatsapp-media").getPublicUrl(storagePath);
+                    mediaUrl = pubUrl.publicUrl;
+                    console.log(`[Baileys Webhook] Inline binary media stored: ${mediaUrl}`);
+                  }
+                }
+              } else {
+                console.log(`[Baileys Webhook] Inline media download failed: ${mediaResp.status}`);
+              }
+            }
+          } catch (inlineMediaErr) {
+            console.error("[Baileys Webhook] Inline media download error:", inlineMediaErr);
+          }
+        }
       }
 
       // If no content at all, use a fallback
@@ -594,6 +657,36 @@ const handler = async (req: Request): Promise<Response> => {
         console.error("[Baileys Webhook] Error saving message:", msgError.message);
       } else {
         console.log(`[Baileys Webhook] Message saved to conversation ${conversation.id}`);
+      }
+
+      // ---- Update conversation with latest message info ----
+      try {
+        const subjectPreview = msgType === 'audio' ? '🎵 Áudio'
+          : msgType === 'image' ? '📷 Imagem'
+          : msgType === 'video' ? '🎬 Vídeo'
+          : msgType === 'document' ? '📎 Documento'
+          : messageContent.substring(0, 100);
+
+        const convUpdates: Record<string, unknown> = {
+          last_message_at: new Date().toISOString(),
+          subject: subjectPreview,
+          updated_at: new Date().toISOString(),
+        };
+
+        if (!isFromMe) {
+          // Increment unread_count
+          const currentUnread = conversation.unread_count || 0;
+          convUpdates.unread_count = currentUnread + 1;
+        }
+
+        await supabaseClient
+          .from("conversations")
+          .update(convUpdates)
+          .eq("id", conversation.id);
+
+        console.log(`[Baileys Webhook] Conversation ${conversation.id} updated: subject="${subjectPreview}", unread=${isFromMe ? 'unchanged' : 'incremented'}`);
+      } catch (convUpdateError) {
+        console.error("[Baileys Webhook] Error updating conversation:", convUpdateError);
       }
 
       // Update contact last_contact_at
