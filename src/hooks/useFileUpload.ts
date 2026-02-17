@@ -2,28 +2,8 @@ import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-const PRIMARY_BUCKET = 'chat-attachments';
-const FALLBACK_BUCKET = 'whatsapp-media';
-
-async function ensureBucketViaAdmin(bucketId: string): Promise<boolean> {
-  try {
-    console.log(`[useFileUpload] Attempting to create bucket '${bucketId}' via admin-write...`);
-    const { data, error } = await supabase.functions.invoke('admin-write', {
-      body: {
-        operation: 'ensure-bucket',
-        data: { id: bucketId, name: bucketId, public: true },
-      },
-    });
-    if (error || data?.error) {
-      console.warn('[useFileUpload] admin-write ensure-bucket failed:', data?.error || error?.message);
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.warn('[useFileUpload] admin-write call failed:', e);
-    return false;
-  }
-}
+const PRIMARY_BUCKET = 'whatsapp-media';
+const FALLBACK_BUCKET = 'chat-attachments';
 
 async function tryUpload(bucket: string, file: File): Promise<string> {
   const fileExt = file.name.split('.').pop();
@@ -46,7 +26,7 @@ async function tryUpload(bucket: string, file: File): Promise<string> {
 export function useFileUpload() {
   return useMutation({
     mutationFn: async (file: File) => {
-      // Try primary bucket first
+      // Try primary bucket (whatsapp-media - guaranteed on VPS)
       try {
         return await tryUpload(PRIMARY_BUCKET, file);
       } catch (err: any) {
@@ -54,20 +34,10 @@ export function useFileUpload() {
         if (!msg.includes('bucket') && !msg.includes('not found')) {
           throw err; // Not a bucket issue
         }
+        console.warn('[useFileUpload] Primary bucket failed, trying fallback:', msg);
       }
 
-      // Primary bucket missing — try to create it
-      const created = await ensureBucketViaAdmin(PRIMARY_BUCKET);
-      if (created) {
-        try {
-          return await tryUpload(PRIMARY_BUCKET, file);
-        } catch {
-          // fall through to fallback
-        }
-      }
-
-      // Use fallback bucket (whatsapp-media) which exists on VPS
-      console.log('[useFileUpload] Using fallback bucket:', FALLBACK_BUCKET);
+      // Fallback to chat-attachments
       return await tryUpload(FALLBACK_BUCKET, file);
     },
     onError: (error: Error) => {

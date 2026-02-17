@@ -14,7 +14,7 @@ interface MediaAutoDownloaderProps {
 
 const MAX_RETRIES = 2;
 const RETRY_DELAYS = [3000, 6000];
-const GIVE_UP_TIMEOUT = 15000; // After 15s total, show fallback
+const GIVE_UP_TIMEOUT = 15000;
 
 const mediaLabels: Record<string, string> = {
   audio: "áudio",
@@ -33,6 +33,99 @@ const MediaIcon = ({ type }: { type: string }) => {
   }
 };
 
+/** Try downloading media directly from the Baileys server and uploading to local storage */
+async function tryDirectBaileysDownload(
+  messageId: string,
+  mediaType: string,
+  sessionName: string,
+): Promise<string | null> {
+  try {
+    // Get Baileys server URL from system_settings
+    const { data: urlSetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_server_url")
+      .single();
+
+    if (!urlSetting?.value) {
+      console.log("[MediaAutoDownloader] No baileys_server_url configured, skipping direct download");
+      return null;
+    }
+
+    const baileysUrl = urlSetting.value.replace(/\/$/, "");
+
+    // Get API key if configured
+    const { data: keySetting } = await supabase
+      .from("system_settings")
+      .select("value")
+      .eq("key", "baileys_api_key")
+      .single();
+
+    const headers: Record<string, string> = {};
+    if (keySetting?.value) {
+      headers["X-API-Key"] = keySetting.value;
+    }
+
+    console.log(`[MediaAutoDownloader] Trying direct Baileys download: ${baileysUrl}/sessions/${sessionName}/messages/${messageId}/media`);
+
+    const response = await fetch(
+      `${baileysUrl}/sessions/${sessionName}/messages/${messageId}/media`,
+      { method: "GET", headers },
+    );
+
+    if (!response.ok) {
+      console.warn(`[MediaAutoDownloader] Direct Baileys download failed: ${response.status}`);
+      return null;
+    }
+
+    const contentType = response.headers.get("content-type") || "";
+    let mediaBlob: Blob;
+    let finalMimetype = "application/octet-stream";
+
+    if (contentType.includes("application/json")) {
+      const json = await response.json();
+      if (!json.base64) return null;
+      const binary = atob(json.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      finalMimetype = json.mimetype || "application/octet-stream";
+      mediaBlob = new Blob([bytes], { type: finalMimetype });
+    } else {
+      mediaBlob = await response.blob();
+      finalMimetype = contentType.split(";")[0].trim() || "application/octet-stream";
+    }
+
+    // Determine extension
+    const extMap: Record<string, string> = {
+      "audio/ogg": "ogg", "audio/mpeg": "mp3", "audio/mp4": "m4a",
+      "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp",
+      "video/mp4": "mp4", "application/pdf": "pdf",
+    };
+    const ext = extMap[finalMimetype] || mediaType || "bin";
+    const storagePath = `${sessionName}/${messageId}.${ext}`;
+
+    console.log(`[MediaAutoDownloader] Uploading ${mediaBlob.size} bytes to storage: ${storagePath}`);
+
+    const { error: uploadError } = await supabase.storage
+      .from("whatsapp-media")
+      .upload(storagePath, mediaBlob, { contentType: finalMimetype, upsert: true });
+
+    if (uploadError) {
+      console.warn("[MediaAutoDownloader] Storage upload failed:", uploadError.message);
+      return null;
+    }
+
+    const { data: publicUrlData } = supabase.storage
+      .from("whatsapp-media")
+      .getPublicUrl(storagePath);
+
+    return publicUrlData.publicUrl;
+  } catch (err) {
+    console.warn("[MediaAutoDownloader] Direct Baileys download error:", err);
+    return null;
+  }
+}
+
 export function MediaAutoDownloader({
   messageId,
   conversationId,
@@ -43,12 +136,28 @@ export function MediaAutoDownloader({
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const retryCount = useRef(0);
   const cancelledRef = useRef(false);
-  const startTimeRef = useRef(Date.now());
   const queryClient = useQueryClient();
+
+  const handleSuccess = useCallback(async (url: string) => {
+    await supabase.from("messages").update({ media_url: url }).eq("id", messageId);
+    setResolvedUrl(url);
+    setStatus("success");
+    queryClient.invalidateQueries({ queryKey: ["messages", conversationId] });
+  }, [messageId, conversationId, queryClient]);
 
   const attemptDownload = useCallback(async () => {
     try {
       console.log(`[MediaAutoDownloader] Attempt ${retryCount.current + 1}/${MAX_RETRIES} for ${mediaType} ${messageId}`);
+
+      // 1. Try direct Baileys download first (works when browser can reach VPS)
+      const directUrl = await tryDirectBaileysDownload(messageId, mediaType, sessionName);
+      if (cancelledRef.current) return;
+      if (directUrl) {
+        await handleSuccess(directUrl);
+        return;
+      }
+
+      // 2. Fallback: edge function
       const { data, error } = await supabase.functions.invoke("download-whatsapp-media", {
         body: { messageId, mediaType, sessionName },
       });
@@ -57,10 +166,7 @@ export function MediaAutoDownloader({
       if (error) throw error;
 
       if (data?.success && data?.url) {
-        await supabase.from("messages").update({ media_url: data.url }).eq("id", messageId);
-        setResolvedUrl(data.url);
-        setStatus("success");
-        queryClient.invalidateQueries({ queryKey: ["messages", conversationId] });
+        await handleSuccess(data.url);
         return;
       }
       throw new Error("No URL returned");
@@ -71,7 +177,6 @@ export function MediaAutoDownloader({
       retryCount.current++;
       if (retryCount.current < MAX_RETRIES) {
         const delay = RETRY_DELAYS[retryCount.current - 1] || 8000;
-        console.log(`[MediaAutoDownloader] Retrying in ${delay}ms...`);
         setTimeout(() => {
           if (!cancelledRef.current) attemptDownload();
         }, delay);
@@ -79,20 +184,17 @@ export function MediaAutoDownloader({
         setStatus("error");
       }
     }
-  }, [messageId, mediaType, sessionName, conversationId, queryClient]);
+  }, [messageId, mediaType, sessionName, conversationId, queryClient, handleSuccess]);
 
   useEffect(() => {
     cancelledRef.current = false;
     retryCount.current = 0;
-    startTimeRef.current = Date.now();
     setStatus("loading");
     setResolvedUrl(null);
     attemptDownload();
 
-    // Safety timeout: if still loading after GIVE_UP_TIMEOUT, show fallback
     const safetyTimer = setTimeout(() => {
       if (!cancelledRef.current && status === "loading") {
-        console.log(`[MediaAutoDownloader] Safety timeout reached for ${messageId}, showing fallback`);
         setStatus("error");
       }
     }, GIVE_UP_TIMEOUT);
@@ -110,12 +212,10 @@ export function MediaAutoDownloader({
     attemptDownload();
   };
 
-  // For audio: show inline player when resolved
   if (mediaType === "audio" && status === "success" && resolvedUrl) {
     return <AudioPlayer src={resolvedUrl} className="mb-2" />;
   }
 
-  // Success for non-audio: parent will re-render with media_url from query invalidation
   if (status === "success") return null;
 
   if (status === "loading") {
@@ -129,7 +229,6 @@ export function MediaAutoDownloader({
     );
   }
 
-  // Error state
   return (
     <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
       <MediaIcon type={mediaType} />
