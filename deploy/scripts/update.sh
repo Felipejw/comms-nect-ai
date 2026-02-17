@@ -96,44 +96,25 @@ log_success "Frontend compilado"
 log_info "Copiando frontend para o volume do Nginx..."
 
 # Preservar config.js existente
-if [ -f "$DEPLOY_DIR/frontend/dist/config.js" ]; then
-    cp "$DEPLOY_DIR/frontend/dist/config.js" /tmp/config.js.bak
+if [ -f "$DEPLOY_DIR/volumes/frontend/config.js" ]; then
+    cp "$DEPLOY_DIR/volumes/frontend/config.js" /tmp/config.js.bak
 fi
 
 # Criar diretório se não existir
-mkdir -p "$DEPLOY_DIR/frontend/dist"
+mkdir -p "$DEPLOY_DIR/volumes/frontend"
 
 # Copiar novo build
-cp -r dist/* "$DEPLOY_DIR/frontend/dist/"
+cp -r dist/* "$DEPLOY_DIR/volumes/frontend/"
 
-# Restaurar config.js existente ou gerar novo automaticamente
+# Restaurar config.js
 if [ -f /tmp/config.js.bak ]; then
-    cp /tmp/config.js.bak "$DEPLOY_DIR/frontend/dist/config.js"
+    cp /tmp/config.js.bak "$DEPLOY_DIR/volumes/frontend/config.js"
     rm /tmp/config.js.bak
-    log_success "config.js restaurado do backup"
-else
-    # Gerar config.js automaticamente a partir do .env
-    if [ -f "$DEPLOY_DIR/.env" ]; then
-        RUNTIME_ANON_KEY=$(grep -E "^ANON_KEY=" "$DEPLOY_DIR/.env" | cut -d= -f2 | tr -d '"' | tr -d "'")
-        if [ -n "$RUNTIME_ANON_KEY" ]; then
-            cat > "$DEPLOY_DIR/frontend/dist/config.js" << CONFIGEOF
-window.__SUPABASE_CONFIG__ = {
-  url: window.location.origin,
-  anonKey: "${RUNTIME_ANON_KEY}"
-};
-CONFIGEOF
-            log_success "config.js gerado automaticamente a partir do .env"
-        else
-            log_warning "ANON_KEY não encontrada no .env - config.js não gerado"
-        fi
-    else
-        log_warning ".env não encontrado - config.js não gerado"
-    fi
 fi
 
-# Injetar config.js no index.html (fallback se não estiver no source)
-if ! grep -q 'config.js' "$DEPLOY_DIR/frontend/dist/index.html" 2>/dev/null; then
-    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/frontend/dist/index.html"
+# Injetar config.js no index.html (se ainda não estiver)
+if ! grep -q 'config.js' "$DEPLOY_DIR/volumes/frontend/index.html" 2>/dev/null; then
+    sed -i 's|</head>|<script src="/config.js"></script></head>|' "$DEPLOY_DIR/volumes/frontend/index.html"
     log_success "config.js injetado no index.html"
 fi
 
@@ -190,46 +171,6 @@ if [ $attempt -lt $max_attempts ]; then
     else
         log_info "Nenhuma migration de atualização encontrada"
     fi
-
-    # ==========================================
-    # 5b. Garantir Buckets de Storage
-    # ==========================================
-    log_info "Garantindo buckets de storage..."
-    $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} <<'EOSQL' || {
-        INSERT INTO storage.buckets (id, name, public)
-        VALUES ('whatsapp-media', 'whatsapp-media', true)
-        ON CONFLICT (id) DO NOTHING;
-
-        INSERT INTO storage.buckets (id, name, public)
-        VALUES ('chat-attachments', 'chat-attachments', true)
-        ON CONFLICT (id) DO NOTHING;
-
-        INSERT INTO storage.buckets (id, name, public)
-        VALUES ('platform-assets', 'platform-assets', true)
-        ON CONFLICT (id) DO NOTHING;
-
-        -- Drop politicas antigas sem TO authenticated e recriar corretamente
-        DROP POLICY IF EXISTS "Auth upload whatsapp-media" ON storage.objects;
-        DROP POLICY IF EXISTS "Auth upload chat-attachments" ON storage.objects;
-        DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
-
-        -- Policies de leitura (ignora se já existem)
-        DO $$ BEGIN
-          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public read whatsapp-media' AND tablename = 'objects') THEN
-            CREATE POLICY "Public read whatsapp-media" ON storage.objects FOR SELECT USING (bucket_id = 'whatsapp-media');
-          END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public read chat-attachments' AND tablename = 'objects') THEN
-            CREATE POLICY "Public read chat-attachments" ON storage.objects FOR SELECT USING (bucket_id = 'chat-attachments');
-          END IF;
-        END $$;
-
-        -- Policies de upload COM TO authenticated
-        CREATE POLICY "Auth upload whatsapp-media" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'whatsapp-media');
-        CREATE POLICY "Auth upload chat-attachments" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'chat-attachments');
-EOSQL
-        log_warning "Verificação de buckets pode ter falhado parcialmente"
-    }
-    log_success "Buckets de storage verificados"
 fi
 
 # ==========================================
@@ -240,23 +181,6 @@ log_info "Reiniciando todos os containers..."
 $DOCKER_COMPOSE --profile baileys up -d --force-recreate
 
 log_success "Containers reiniciados"
-
-# ==========================================
-# 6b. Sincronizar credenciais Baileys no banco
-# ==========================================
-log_info "Sincronizando credenciais Baileys no banco..."
-
-if [ -n "$BAILEYS_API_KEY" ]; then
-    $DOCKER_COMPOSE exec -T db psql -U postgres -c "
-        INSERT INTO public.system_settings (key, value)
-        VALUES
-          ('baileys_server_url', 'http://baileys:3000'),
-          ('baileys_api_key', '$BAILEYS_API_KEY')
-        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
-    " 2>/dev/null && log_success "Credenciais Baileys sincronizadas" || log_warning "Falha ao sincronizar credenciais Baileys"
-else
-    log_warning "BAILEYS_API_KEY não encontrada no .env - credenciais não sincronizadas"
-fi
 
 # ==========================================
 # 7. Aguardar Serviços

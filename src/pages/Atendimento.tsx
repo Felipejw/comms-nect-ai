@@ -1089,10 +1089,7 @@ export default function Atendimento() {
               mediaType="video"
             />
           )}
-          {message.content && !(
-            message.message_type !== 'text' && 
-            /^\[(Audio|Áudio|Imagem|Image|Video|Vídeo|Documento|Document|Sticker|Figurinha)\]$/i.test(message.content.trim())
-          ) && (
+          {message.content && (
             <p className="text-sm break-words">
               {messageSearchQuery ? highlightText(message.content, messageSearchQuery) : message.content}
             </p>
@@ -1946,7 +1943,8 @@ export default function Atendimento() {
           )}
 
 
-          {/* Audio Processing Status - removido a pedido do usuario */}
+          {/* Audio Processing Status */}
+          {messages && <AudioProcessingStatus messages={messages} />}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 bg-muted/30 scrollbar-thin">
