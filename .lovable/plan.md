@@ -1,23 +1,38 @@
 
-# Atualização em tempo real mais rápida (1 segundo)
 
-## Situação atual
+# Correcao do Script de Update - Diretorio Errado do Frontend
 
-O sistema já tem duas camadas de atualização:
-1. **Realtime (WebSocket)** - deveria ser instantâneo, mas no VPS nem sempre funciona
-2. **Polling** - atualmente a cada 5 segundos como fallback
+## Problema identificado
 
-## O que será feito
+O `docker-compose.yml` monta o volume do Nginx assim:
 
-Reduzir o intervalo de polling de **5 segundos para 1 segundo** na conversa ativa, garantindo que mensagens novas apareçam quase instantaneamente mesmo quando o realtime falha.
+```text
+./frontend/dist:/usr/share/nginx/html:ro
+```
 
-Para a lista de conversas, manter um intervalo um pouco maior (3 segundos) para não sobrecarregar o banco.
+Isso significa que o Nginx serve os arquivos de `deploy/frontend/dist/`.
 
-## Detalhes técnicos
+Porem, o `update.sh` copia o build para `deploy/volumes/frontend/`, que e um diretorio completamente diferente. O resultado: o Nginx continua servindo a versao antiga que esta em `deploy/frontend/dist/`.
 
-### Arquivo: `src/hooks/useConversations.ts`
+## Solucao
 
-| Alteração | Antes | Depois |
-|-----------|-------|--------|
-| Polling de mensagens (`useMessages`) | 5000ms | 1000ms |
-| Polling da lista de conversas (`useConversations`) | sem polling | 3000ms |
+Corrigir o `update.sh` para copiar os arquivos compilados para o caminho correto: `deploy/frontend/dist/`.
+
+### Arquivo: `deploy/scripts/update.sh`
+
+Alterar a secao "Deploy do Frontend" (linhas ~100-120) para usar o caminho correto:
+
+| Antes | Depois |
+|-------|--------|
+| `$DEPLOY_DIR/volumes/frontend/` | `$DEPLOY_DIR/frontend/dist/` |
+
+As referencias a `config.js` tambem serao atualizadas para usar o caminho correto.
+
+Alem disso, adicionar um `docker exec` para recarregar o Nginx apos copiar os arquivos, garantindo que ele sirva o conteudo novo imediatamente (ja que o volume esta montado como read-only, um reload do Nginx e suficiente).
+
+### Resumo das alteracoes
+
+| Arquivo | Acao |
+|---------|------|
+| `deploy/scripts/update.sh` | Corrigir caminho de deploy do frontend + reload do Nginx |
+
