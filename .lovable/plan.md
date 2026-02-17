@@ -1,24 +1,18 @@
 
 
-# Correcoes: Erro de Bucket + Audio Visual + Script de Update
+# Correcao: RLS de Upload + Visual do Audio
 
-## Problema 1: "Bucket not found" ao enviar audio
+## Problema 1: "new row violates row-level security policy"
 
-**Causa raiz**: O bucket `chat-attachments` deveria ser criado pelo `init.sql` na instalacao, mas o bloco de criacao de buckets pode ter falhado silenciosamente (as policies sao criadas com `CREATE POLICY` sem `IF NOT EXISTS`, causando erro se executado mais de uma vez). O `useFileUpload` tenta o bucket primario, falha, tenta criar via `admin-write`, e como a edge function roda no Lovable Cloud (nao no VPS local), o bucket e criado no lugar errado.
+O bucket `whatsapp-media` tem politica de INSERT sem restricao de role (`WITH CHECK (bucket_id = 'whatsapp-media')`) -- isso funciona apenas para `service_role`, nao para usuarios autenticados via frontend. O bucket `chat-attachments` tem a politica correta (`TO authenticated`).
 
-**Solucao**: Mudar o `useFileUpload` para tentar o `whatsapp-media` como primeira opcao (este bucket tem mais chance de existir no VPS por ser usado pelo webhook). Tambem adicionar ao script de update um comando para garantir que os buckets existam.
+**Solucao**: Inverter a prioridade no `useFileUpload.ts` -- tentar `chat-attachments` primeiro (que tem politica correta para usuarios autenticados), e usar `whatsapp-media` como fallback. Alem disso, tambem aceitar erros de "security policy" como sinal para tentar o proximo bucket.
 
-## Problema 2: Audio nao carrega / visual ruim
+## Problema 2: Texto "[Audio]" aparecendo abaixo do player
 
-**Causa raiz**: No print, o audio aparece como "[Audio]" com botao "Tentar novamente" — isso significa que o `MediaAutoDownloader` falhou em baixar a midia. O audio recebido do WhatsApp nao teve sua midia processada pelo webhook. Alem disso, quando o usuario envia audio do sistema, o upload falha (problema 1), entao nao existe URL para o player renderizar.
+Na renderizacao de mensagens (Atendimento.tsx, linha 1092), o `message.content` e exibido para TODAS as mensagens, incluindo audio. Quando o webhook salva uma mensagem de audio, o content vem como "[Audio]" -- e esse texto aparece abaixo do player/downloader, ficando feio.
 
-**Solucao**: Melhorar o visual do estado de erro do `MediaAutoDownloader` e do `AudioPlayer` para ficarem mais limpos e bonitos, estilo WhatsApp.
-
-## Problema 3: Script de update incompleto
-
-**Causa raiz**: O `update.sh` faz git pull, rebuild do frontend, e reinicia containers — mas NAO garante que os buckets de storage existam nem executa o init.sql para corrigir configuracoes faltantes.
-
-**Solucao**: Adicionar ao script de update um passo que garante a existencia dos buckets via SQL.
+**Solucao**: Esconder o `message.content` quando `message_type` for "audio", "image" ou "video" E o conteudo for um placeholder generico como "[Audio]", "[Imagem]", "[Video]", etc.
 
 ---
 
@@ -26,34 +20,19 @@
 
 ### Arquivo 1: `src/hooks/useFileUpload.ts`
 
-- Inverter a prioridade: tentar `whatsapp-media` primeiro (que e criado pelo webhook e pelo init.sql com mais robustez)
-- Manter `chat-attachments` como fallback
-- Melhorar o caminho do upload para incluir subpasta por tipo (audio, image, etc.)
+- Inverter prioridade: `chat-attachments` como primario (tem RLS correta para authenticated)
+- `whatsapp-media` como fallback
+- Incluir "security" e "policy" na lista de erros que disparam fallback
 
-### Arquivo 2: `src/components/atendimento/MediaAutoDownloader.tsx`
+### Arquivo 2: `src/pages/Atendimento.tsx`
 
-- Melhorar o visual do estado de erro para ficar mais limpo
-- Mostrar um placeholder bonito em vez de texto generico
-- Adicionar icone contextual maior e mais visivel
+- Na linha 1092, adicionar condicao para esconder o content quando for placeholder de midia:
+  - Nao mostrar content se `message_type !== 'text'` E content for `[Audio]`, `[Áudio]`, `[Imagem]`, `[Image]`, `[Video]`, `[Vídeo]`, `[Documento]`, `[Document]`
 
-### Arquivo 3: `src/components/atendimento/AudioPlayer.tsx`
-
-- Melhorar o visual geral do player — bordas, cores, tamanho
-- Ajustar o estado de erro para mostrar algo mais bonito
-- Garantir que o player funcione corretamente quando nao ha URL
-
-### Arquivo 4: `deploy/scripts/update.sh`
-
-- Adicionar passo apos migrations para garantir que os buckets `chat-attachments` e `whatsapp-media` existam no storage
-- Executar SQL que cria os buckets se nao existirem
-- Adicionar verificacao de saude do storage
-
-### Resumo de alteracoes
+### Resumo
 
 | Arquivo | Acao |
 |---------|------|
-| `src/hooks/useFileUpload.ts` | Inverter prioridade de buckets |
-| `src/components/atendimento/MediaAutoDownloader.tsx` | Melhorar visual de erro |
-| `src/components/atendimento/AudioPlayer.tsx` | Melhorar visual geral |
-| `deploy/scripts/update.sh` | Adicionar criacao de buckets no update |
+| `src/hooks/useFileUpload.ts` | Inverter prioridade de buckets e melhorar deteccao de erros |
+| `src/pages/Atendimento.tsx` | Esconder placeholder de midia no content |
 
