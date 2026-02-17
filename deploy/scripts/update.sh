@@ -84,10 +84,16 @@ log_info "Compilando frontend..."
 rm -rf dist node_modules/.vite .vite
 
 docker run --rm -v "$(pwd)":/app -w /app \
-  -e VITE_SUPABASE_URL=placeholder \
-  -e VITE_SUPABASE_PUBLISHABLE_KEY=placeholder \
-  -e VITE_SUPABASE_PROJECT_ID=self-hosted \
-  node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build" || {
+  node:20-alpine sh -c "\
+    cp .env .env.lovable.bak 2>/dev/null || true && \
+    echo 'VITE_SUPABASE_URL=placeholder' > .env && \
+    echo 'VITE_SUPABASE_PUBLISHABLE_KEY=placeholder' >> .env && \
+    echo 'VITE_SUPABASE_PROJECT_ID=self-hosted' >> .env && \
+    npm install --legacy-peer-deps && npm run build; \
+    EXIT_CODE=\$?; \
+    cp .env.lovable.bak .env 2>/dev/null || true && \
+    rm -f .env.lovable.bak; \
+    exit \$EXIT_CODE" || {
     log_error "Falha ao compilar o frontend"
     exit 1
 }
