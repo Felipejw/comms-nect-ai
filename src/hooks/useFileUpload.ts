@@ -3,8 +3,8 @@ import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
 // whatsapp-media is more reliably available on VPS (created by webhook/init.sql)
-const PRIMARY_BUCKET = 'whatsapp-media';
-const FALLBACK_BUCKET = 'chat-attachments';
+const PRIMARY_BUCKET = 'chat-attachments';
+const FALLBACK_BUCKET = 'whatsapp-media';
 
 async function ensureBucketViaAdmin(bucketId: string): Promise<boolean> {
   try {
@@ -61,7 +61,7 @@ export function useFileUpload() {
         return await tryUpload(PRIMARY_BUCKET, file);
       } catch (err: any) {
         const msg = (err?.message || '').toLowerCase();
-        if (!msg.includes('bucket') && !msg.includes('not found')) {
+        if (!msg.includes('bucket') && !msg.includes('not found') && !msg.includes('security') && !msg.includes('policy')) {
           throw err;
         }
         console.warn('[useFileUpload] Primary bucket failed, trying fallback...');
@@ -72,7 +72,7 @@ export function useFileUpload() {
         return await tryUpload(FALLBACK_BUCKET, file);
       } catch (err: any) {
         const msg = (err?.message || '').toLowerCase();
-        if (!msg.includes('bucket') && !msg.includes('not found')) {
+        if (!msg.includes('bucket') && !msg.includes('not found') && !msg.includes('security') && !msg.includes('policy')) {
           throw err;
         }
       }
