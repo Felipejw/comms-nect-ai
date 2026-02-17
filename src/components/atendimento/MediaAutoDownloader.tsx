@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Loader2, RefreshCw, Mic, Image, Video, FileText, AlertCircle } from "lucide-react";
+import { Loader2, RefreshCw, Mic, Image, Video, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AudioPlayer } from "@/components/atendimento/AudioPlayer";
 import { supabase } from "@/integrations/supabase/client";
 import { useQueryClient } from "@tanstack/react-query";
+import { cn } from "@/lib/utils";
 
 interface MediaAutoDownloaderProps {
   messageId: string;
@@ -14,23 +15,13 @@ interface MediaAutoDownloaderProps {
 
 const MAX_RETRIES = 2;
 const RETRY_DELAYS = [3000, 6000];
-const GIVE_UP_TIMEOUT = 15000; // After 15s total, show fallback
+const GIVE_UP_TIMEOUT = 15000;
 
-const mediaLabels: Record<string, string> = {
-  audio: "áudio",
-  image: "imagem",
-  video: "vídeo",
-  document: "documento",
-};
-
-const MediaIcon = ({ type }: { type: string }) => {
-  switch (type) {
-    case "audio": return <Mic className="w-4 h-4 text-muted-foreground" />;
-    case "image": return <Image className="w-4 h-4 text-muted-foreground" />;
-    case "video": return <Video className="w-4 h-4 text-muted-foreground" />;
-    case "document": return <FileText className="w-4 h-4 text-muted-foreground" />;
-    default: return <AlertCircle className="w-4 h-4 text-muted-foreground" />;
-  }
+const mediaConfig: Record<string, { label: string; icon: typeof Mic; bgClass: string }> = {
+  audio: { label: "Áudio", icon: Mic, bgClass: "bg-emerald-500/10" },
+  image: { label: "Imagem", icon: Image, bgClass: "bg-blue-500/10" },
+  video: { label: "Vídeo", icon: Video, bgClass: "bg-purple-500/10" },
+  document: { label: "Documento", icon: FileText, bgClass: "bg-amber-500/10" },
 };
 
 export function MediaAutoDownloader({
@@ -43,12 +34,12 @@ export function MediaAutoDownloader({
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const retryCount = useRef(0);
   const cancelledRef = useRef(false);
-  const startTimeRef = useRef(Date.now());
   const queryClient = useQueryClient();
+  const config = mediaConfig[mediaType] || mediaConfig.document;
+  const IconComponent = config.icon;
 
   const attemptDownload = useCallback(async () => {
     try {
-      console.log(`[MediaAutoDownloader] Attempt ${retryCount.current + 1}/${MAX_RETRIES} for ${mediaType} ${messageId}`);
       const { data, error } = await supabase.functions.invoke("download-whatsapp-media", {
         body: { messageId, mediaType, sessionName },
       });
@@ -66,12 +57,9 @@ export function MediaAutoDownloader({
       throw new Error("No URL returned");
     } catch (err) {
       if (cancelledRef.current) return;
-      console.warn(`[MediaAutoDownloader] Attempt ${retryCount.current + 1} failed for ${messageId}:`, err);
-
       retryCount.current++;
       if (retryCount.current < MAX_RETRIES) {
         const delay = RETRY_DELAYS[retryCount.current - 1] || 8000;
-        console.log(`[MediaAutoDownloader] Retrying in ${delay}ms...`);
         setTimeout(() => {
           if (!cancelledRef.current) attemptDownload();
         }, delay);
@@ -84,15 +72,12 @@ export function MediaAutoDownloader({
   useEffect(() => {
     cancelledRef.current = false;
     retryCount.current = 0;
-    startTimeRef.current = Date.now();
     setStatus("loading");
     setResolvedUrl(null);
     attemptDownload();
 
-    // Safety timeout: if still loading after GIVE_UP_TIMEOUT, show fallback
     const safetyTimer = setTimeout(() => {
       if (!cancelledRef.current && status === "loading") {
-        console.log(`[MediaAutoDownloader] Safety timeout reached for ${messageId}, showing fallback`);
         setStatus("error");
       }
     }, GIVE_UP_TIMEOUT);
@@ -110,40 +95,50 @@ export function MediaAutoDownloader({
     attemptDownload();
   };
 
-  // For audio: show inline player when resolved
   if (mediaType === "audio" && status === "success" && resolvedUrl) {
-    return <AudioPlayer src={resolvedUrl} className="mb-2" />;
+    return <AudioPlayer src={resolvedUrl} className="mb-1" />;
   }
 
-  // Success for non-audio: parent will re-render with media_url from query invalidation
   if (status === "success") return null;
 
   if (status === "loading") {
     return (
-      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-        <Loader2 className="w-4 h-4 animate-spin text-primary" />
-        <span className="text-sm text-muted-foreground">
-          Carregando {mediaLabels[mediaType] || "mídia"}...
-        </span>
+      <div className={cn(
+        "flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1",
+        config.bgClass
+      )}>
+        <div className="w-9 h-9 rounded-full bg-background/60 flex items-center justify-center shrink-0">
+          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+        </div>
+        <div className="flex flex-col gap-0.5 min-w-0">
+          <span className="text-sm font-medium text-foreground">{config.label}</span>
+          <span className="text-xs text-muted-foreground">Carregando...</span>
+        </div>
       </div>
     );
   }
 
-  // Error state
+  // Error / fallback state
   return (
-    <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-lg mb-2">
-      <MediaIcon type={mediaType} />
-      <span className="text-sm text-muted-foreground">
-        Mensagem de {mediaLabels[mediaType] || "mídia"}
-      </span>
+    <div className={cn(
+      "flex items-center gap-3 px-3 py-2.5 rounded-xl mb-1",
+      config.bgClass
+    )}>
+      <div className="w-9 h-9 rounded-full bg-background/60 flex items-center justify-center shrink-0">
+        <IconComponent className="w-4 h-4 text-muted-foreground" />
+      </div>
+      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+        <span className="text-sm font-medium text-foreground">{config.label}</span>
+        <span className="text-xs text-muted-foreground">Não foi possível carregar</span>
+      </div>
       <Button
         variant="ghost"
         size="sm"
-        className="h-6 px-2 text-xs"
+        className="h-7 px-2.5 text-xs rounded-lg shrink-0 hover:bg-background/60"
         onClick={handleManualRetry}
       >
         <RefreshCw className="w-3 h-3 mr-1" />
-        Tentar novamente
+        Tentar
       </Button>
     </div>
   );

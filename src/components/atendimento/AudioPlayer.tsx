@@ -8,11 +8,9 @@ interface AudioPlayerProps {
   className?: string;
 }
 
-// Generate random waveform bars (simulated since we can't do real audio analysis cross-origin)
 const generateWaveformBars = (count: number): number[] => {
   const bars: number[] = [];
   for (let i = 0; i < count; i++) {
-    // Create a natural-looking waveform pattern
     const base = 0.3 + Math.random() * 0.4;
     const wave = Math.sin(i * 0.3) * 0.2;
     bars.push(Math.min(1, Math.max(0.15, base + wave)));
@@ -28,85 +26,50 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
-  
-  // Generate waveform bars once per audio source
-  const waveformBars = useMemo(() => generateWaveformBars(32), [src]);
+
+  const waveformBars = useMemo(() => generateWaveformBars(40), [src]);
 
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const handleLoadedMetadata = () => {
-      setDuration(audio.duration);
-      setIsLoading(false);
-      setHasError(false);
-    };
+    const onMeta = () => { setDuration(audio.duration); setIsLoading(false); setHasError(false); };
+    const onTime = () => { if (audio.duration) setProgress((audio.currentTime / audio.duration) * 100); };
+    const onEnd = () => { setIsPlaying(false); setProgress(0); };
+    const onError = () => { setIsLoading(false); setHasError(true); };
+    const onCanPlay = () => { setIsLoading(false); };
 
-    const handleTimeUpdate = () => {
-      if (audio.duration) {
-        setProgress((audio.currentTime / audio.duration) * 100);
-      }
-    };
-
-    const handleEnded = () => {
-      setIsPlaying(false);
-      setProgress(0);
-    };
-
-    const handleError = () => {
-      console.error("Audio error:", audio.error);
-      setIsLoading(false);
-      setHasError(true);
-    };
-
-    const handleCanPlay = () => {
-      setIsLoading(false);
-    };
-
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("ended", handleEnded);
-    audio.addEventListener("error", handleError);
-    audio.addEventListener("canplay", handleCanPlay);
+    audio.addEventListener("loadedmetadata", onMeta);
+    audio.addEventListener("timeupdate", onTime);
+    audio.addEventListener("ended", onEnd);
+    audio.addEventListener("error", onError);
+    audio.addEventListener("canplay", onCanPlay);
 
     return () => {
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("ended", handleEnded);
-      audio.removeEventListener("error", handleError);
-      audio.removeEventListener("canplay", handleCanPlay);
+      audio.removeEventListener("loadedmetadata", onMeta);
+      audio.removeEventListener("timeupdate", onTime);
+      audio.removeEventListener("ended", onEnd);
+      audio.removeEventListener("error", onError);
+      audio.removeEventListener("canplay", onCanPlay);
     };
   }, [src]);
 
   const togglePlay = async () => {
     const audio = audioRef.current;
     if (!audio) return;
-
     try {
-      if (isPlaying) {
-        audio.pause();
-        setIsPlaying(false);
-      } else {
-        await audio.play();
-        setIsPlaying(true);
-      }
-    } catch (error) {
-      console.error("Error playing audio:", error);
-      setHasError(true);
-    }
+      if (isPlaying) { audio.pause(); setIsPlaying(false); }
+      else { await audio.play(); setIsPlaying(true); }
+    } catch { setHasError(true); }
   };
 
   const handleWaveformClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const audio = audioRef.current;
     if (!audio || !audio.duration || isLoading) return;
-    
     const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percentage = (clickX / rect.width) * 100;
-    const newTime = (percentage / 100) * audio.duration;
-    
-    audio.currentTime = newTime;
-    setProgress(percentage);
+    const pct = ((e.clientX - rect.left) / rect.width) * 100;
+    audio.currentTime = (pct / 100) * audio.duration;
+    setProgress(pct);
   };
 
   const toggleMute = () => {
@@ -116,34 +79,37 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
     setIsMuted(!isMuted);
   };
 
-  const formatTime = (time: number) => {
-    if (!isFinite(time) || isNaN(time)) return "0:00";
-    const minutes = Math.floor(time / 60);
-    const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  const formatTime = (t: number) => {
+    if (!isFinite(t) || isNaN(t)) return "0:00";
+    return `${Math.floor(t / 60)}:${Math.floor(t % 60).toString().padStart(2, "0")}`;
   };
 
   const currentTime = audioRef.current?.currentTime || 0;
 
   if (hasError) {
     return (
-      <div className={cn("flex items-center gap-2 p-3 bg-destructive/10 rounded-lg", className)}>
-        <span className="text-xs text-destructive">Erro ao carregar áudio</span>
-        <a 
-          href={src} 
-          target="_blank" 
+      <div className={cn("flex items-center gap-3 px-3 py-2.5 rounded-xl bg-emerald-500/10", className)}>
+        <div className="w-9 h-9 rounded-full bg-background/60 flex items-center justify-center shrink-0">
+          <Play className="w-4 h-4 text-muted-foreground ml-0.5" />
+        </div>
+        <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+          <span className="text-sm font-medium text-foreground">Áudio</span>
+          <span className="text-xs text-muted-foreground">Erro ao carregar</span>
+        </div>
+        <a
+          href={src}
+          target="_blank"
           rel="noopener noreferrer"
-          className="text-xs underline text-primary hover:text-primary/80"
+          className="text-xs underline text-primary hover:text-primary/80 shrink-0"
         >
-          Abrir em nova aba
+          Abrir
         </a>
       </div>
     );
   }
 
   return (
-    <div className={cn("flex items-center gap-2 p-2 bg-muted/50 rounded-lg min-w-[240px]", className)}>
-      {/* Hidden audio element with multiple source types */}
+    <div className={cn("flex items-center gap-2 px-3 py-2 rounded-xl bg-emerald-500/10 min-w-[260px]", className)}>
       <audio ref={audioRef} preload="metadata">
         <source src={src} type="audio/ogg" />
         <source src={src} type="audio/mpeg" />
@@ -152,76 +118,65 @@ export function AudioPlayer({ src, className }: AudioPlayerProps) {
         <source src={src} />
       </audio>
 
-      {/* Play/Pause button */}
+      {/* Play/Pause */}
       <Button
         variant="ghost"
         size="icon"
-        className="h-9 w-9 shrink-0 rounded-full bg-primary/10 hover:bg-primary/20"
+        className="h-9 w-9 shrink-0 rounded-full bg-primary text-primary-foreground hover:bg-primary/90 shadow-sm"
         onClick={togglePlay}
         disabled={isLoading}
       >
         {isLoading ? (
-          <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          <Loader2 className="h-4 w-4 animate-spin" />
         ) : isPlaying ? (
-          <Pause className="h-4 w-4 text-primary" />
+          <Pause className="h-4 w-4" />
         ) : (
-          <Play className="h-4 w-4 text-primary ml-0.5" />
+          <Play className="h-4 w-4 ml-0.5" />
         )}
       </Button>
 
-      {/* Waveform visualization */}
+      {/* Waveform */}
       <div className="flex-1 flex flex-col gap-1">
-        <div 
-          className="relative h-8 flex items-center gap-[2px] cursor-pointer group"
+        <div
+          className="relative h-7 flex items-center gap-[1.5px] cursor-pointer group"
           onClick={handleWaveformClick}
         >
           {waveformBars.map((height, index) => {
-            const barProgress = (index / waveformBars.length) * 100;
-            const isPlayed = barProgress < progress;
-            const isActive = Math.abs(barProgress - progress) < (100 / waveformBars.length);
-            
+            const barPct = (index / waveformBars.length) * 100;
+            const isPlayed = barPct < progress;
+
             return (
               <div
                 key={index}
                 className={cn(
-                  "flex-1 rounded-full transition-all duration-150",
-                  isPlayed ? "bg-primary" : "bg-muted-foreground/30",
-                  isActive && isPlaying && "animate-pulse",
-                  "group-hover:opacity-80"
+                  "flex-1 rounded-full transition-colors duration-150",
+                  isPlayed ? "bg-primary" : "bg-muted-foreground/25",
+                  "group-hover:opacity-90"
                 )}
                 style={{
                   height: `${height * 100}%`,
-                  minHeight: '4px',
-                  transform: isPlaying && isActive ? 'scaleY(1.2)' : 'scaleY(1)',
-                  transition: 'transform 0.1s ease, background-color 0.15s ease'
+                  minHeight: '3px',
                 }}
               />
             );
           })}
-          
-          {/* Progress indicator line */}
-          <div 
-            className="absolute top-0 bottom-0 w-0.5 bg-primary shadow-sm pointer-events-none transition-all duration-100"
-            style={{ left: `${progress}%` }}
-          />
         </div>
-        
-        {/* Time display */}
+
         <div className="flex justify-between px-0.5">
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-[10px] text-muted-foreground font-medium">
             {formatTime(currentTime)}
           </span>
-          <span className="text-[10px] text-muted-foreground">
+          <span className="text-[10px] text-muted-foreground font-medium">
             {formatTime(duration)}
           </span>
         </div>
       </div>
 
-      {/* Mute button */}
+      {/* Mute */}
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7 shrink-0"
+        className="h-7 w-7 shrink-0 rounded-full"
         onClick={toggleMute}
       >
         {isMuted ? (

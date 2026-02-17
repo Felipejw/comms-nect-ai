@@ -171,6 +171,47 @@ if [ $attempt -lt $max_attempts ]; then
     else
         log_info "Nenhuma migration de atualização encontrada"
     fi
+
+    # ==========================================
+    # 5b. Garantir Buckets de Storage
+    # ==========================================
+    log_info "Garantindo buckets de storage..."
+    $DOCKER_COMPOSE exec -T db psql -U postgres -d ${POSTGRES_DB:-postgres} <<'EOSQL' || {
+        INSERT INTO storage.buckets (id, name, public)
+        VALUES ('whatsapp-media', 'whatsapp-media', true)
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO storage.buckets (id, name, public)
+        VALUES ('chat-attachments', 'chat-attachments', true)
+        ON CONFLICT (id) DO NOTHING;
+
+        INSERT INTO storage.buckets (id, name, public)
+        VALUES ('platform-assets', 'platform-assets', true)
+        ON CONFLICT (id) DO NOTHING;
+
+        -- Policies para whatsapp-media (ignora se já existem)
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public read whatsapp-media' AND tablename = 'objects') THEN
+            CREATE POLICY "Public read whatsapp-media" ON storage.objects FOR SELECT USING (bucket_id = 'whatsapp-media');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth upload whatsapp-media' AND tablename = 'objects') THEN
+            CREATE POLICY "Auth upload whatsapp-media" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'whatsapp-media');
+          END IF;
+        END $$;
+
+        -- Policies para chat-attachments (ignora se já existem)
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public read chat-attachments' AND tablename = 'objects') THEN
+            CREATE POLICY "Public read chat-attachments" ON storage.objects FOR SELECT USING (bucket_id = 'chat-attachments');
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth upload chat-attachments' AND tablename = 'objects') THEN
+            CREATE POLICY "Auth upload chat-attachments" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'chat-attachments');
+          END IF;
+        END $$;
+EOSQL
+        log_warning "Verificação de buckets pode ter falhado parcialmente"
+    }
+    log_success "Buckets de storage verificados"
 fi
 
 # ==========================================

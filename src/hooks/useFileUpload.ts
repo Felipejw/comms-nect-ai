@@ -2,8 +2,9 @@ import { useMutation } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
-const PRIMARY_BUCKET = 'chat-attachments';
-const FALLBACK_BUCKET = 'whatsapp-media';
+// whatsapp-media is more reliably available on VPS (created by webhook/init.sql)
+const PRIMARY_BUCKET = 'whatsapp-media';
+const FALLBACK_BUCKET = 'chat-attachments';
 
 async function ensureBucketViaAdmin(bucketId: string): Promise<boolean> {
   try {
@@ -25,10 +26,19 @@ async function ensureBucketViaAdmin(bucketId: string): Promise<boolean> {
   }
 }
 
+function getMediaSubfolder(file: File): string {
+  const mime = file.type || '';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  return 'document';
+}
+
 async function tryUpload(bucket: string, file: File): Promise<string> {
   const fileExt = file.name.split('.').pop();
+  const subfolder = getMediaSubfolder(file);
   const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
-  const path = `attachments/${fileName}`;
+  const path = `${subfolder}/${fileName}`;
 
   const { error: uploadError } = await supabase.storage
     .from(bucket)
@@ -46,29 +56,34 @@ async function tryUpload(bucket: string, file: File): Promise<string> {
 export function useFileUpload() {
   return useMutation({
     mutationFn: async (file: File) => {
-      // Try primary bucket first
+      // Try primary bucket (whatsapp-media) first
       try {
         return await tryUpload(PRIMARY_BUCKET, file);
       } catch (err: any) {
         const msg = (err?.message || '').toLowerCase();
         if (!msg.includes('bucket') && !msg.includes('not found')) {
-          throw err; // Not a bucket issue
+          throw err;
+        }
+        console.warn('[useFileUpload] Primary bucket failed, trying fallback...');
+      }
+
+      // Try fallback bucket
+      try {
+        return await tryUpload(FALLBACK_BUCKET, file);
+      } catch (err: any) {
+        const msg = (err?.message || '').toLowerCase();
+        if (!msg.includes('bucket') && !msg.includes('not found')) {
+          throw err;
         }
       }
 
-      // Primary bucket missing — try to create it
+      // Both missing — try to create primary via admin
       const created = await ensureBucketViaAdmin(PRIMARY_BUCKET);
       if (created) {
-        try {
-          return await tryUpload(PRIMARY_BUCKET, file);
-        } catch {
-          // fall through to fallback
-        }
+        return await tryUpload(PRIMARY_BUCKET, file);
       }
 
-      // Use fallback bucket (whatsapp-media) which exists on VPS
-      console.log('[useFileUpload] Using fallback bucket:', FALLBACK_BUCKET);
-      return await tryUpload(FALLBACK_BUCKET, file);
+      throw new Error('Nenhum bucket de armazenamento disponível. Verifique a configuração do servidor.');
     },
     onError: (error: Error) => {
       toast.error('Erro ao enviar arquivo: ' + error.message);
