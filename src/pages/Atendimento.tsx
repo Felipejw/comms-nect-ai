@@ -1946,8 +1946,7 @@ export default function Atendimento() {
           )}
 
 
-          {/* Audio Processing Status */}
-          {messages && <AudioProcessingStatus messages={messages} />}
+          {/* Audio Processing Status - removido a pedido do usuario */}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 bg-muted/30 scrollbar-thin">
