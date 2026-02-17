@@ -1031,7 +1031,7 @@ BEGIN
   ON storage.objects FOR SELECT USING (bucket_id = 'whatsapp-media');
 
   CREATE POLICY "Service role can upload WhatsApp media"
-  ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'whatsapp-media');
+  ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'whatsapp-media');
 
   CREATE POLICY "Service role can update WhatsApp media"
   ON storage.objects FOR UPDATE USING (bucket_id = 'whatsapp-media');

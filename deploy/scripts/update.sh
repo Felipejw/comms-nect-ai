@@ -189,25 +189,24 @@ if [ $attempt -lt $max_attempts ]; then
         VALUES ('platform-assets', 'platform-assets', true)
         ON CONFLICT (id) DO NOTHING;
 
-        -- Policies para whatsapp-media (ignora se já existem)
+        -- Drop politicas antigas sem TO authenticated e recriar corretamente
+        DROP POLICY IF EXISTS "Auth upload whatsapp-media" ON storage.objects;
+        DROP POLICY IF EXISTS "Auth upload chat-attachments" ON storage.objects;
+        DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
+
+        -- Policies de leitura (ignora se já existem)
         DO $$ BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public read whatsapp-media' AND tablename = 'objects') THEN
             CREATE POLICY "Public read whatsapp-media" ON storage.objects FOR SELECT USING (bucket_id = 'whatsapp-media');
           END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth upload whatsapp-media' AND tablename = 'objects') THEN
-            CREATE POLICY "Auth upload whatsapp-media" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'whatsapp-media');
-          END IF;
-        END $$;
-
-        -- Policies para chat-attachments (ignora se já existem)
-        DO $$ BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Public read chat-attachments' AND tablename = 'objects') THEN
             CREATE POLICY "Public read chat-attachments" ON storage.objects FOR SELECT USING (bucket_id = 'chat-attachments');
           END IF;
-          IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Auth upload chat-attachments' AND tablename = 'objects') THEN
-            CREATE POLICY "Auth upload chat-attachments" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'chat-attachments');
-          END IF;
         END $$;
+
+        -- Policies de upload COM TO authenticated
+        CREATE POLICY "Auth upload whatsapp-media" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'whatsapp-media');
+        CREATE POLICY "Auth upload chat-attachments" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'chat-attachments');
 EOSQL
         log_warning "Verificação de buckets pode ter falhado parcialmente"
     }
