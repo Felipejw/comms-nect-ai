@@ -1089,7 +1089,10 @@ export default function Atendimento() {
               mediaType="video"
             />
           )}
-          {message.content && (
+          {message.content && !(
+            message.message_type !== 'text' && 
+            /^\[(Audio|Áudio|Imagem|Image|Video|Vídeo|Documento|Document|Sticker|Figurinha)\]$/i.test(message.content.trim())
+          ) && (
             <p className="text-sm break-words">
               {messageSearchQuery ? highlightText(message.content, messageSearchQuery) : message.content}
             </p>
