@@ -187,6 +187,7 @@ export function useConversations(status?: 'new' | 'in_progress' | 'resolved' | '
         queue: conv.queue || null,
       })) as Conversation[];
     },
+    refetchInterval: 3000,
   });
 }
 
@@ -307,7 +308,7 @@ export function useMessages(conversationId: string) {
       return (data || []) as Message[];
     },
     enabled: !!conversationId,
-    refetchInterval: 5000,
+    refetchInterval: 1000,
   });
 }
 
