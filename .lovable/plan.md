@@ -1,71 +1,101 @@
 
 
-# Diagnostico: Frontend antigo ainda sendo servido no VPS
+# Analise Completa do Sistema de Deploy VPS
 
-## O que esta acontecendo
+## Problemas Identificados
 
-As mudancas JA ESTAO no codigo-fonte (verificado agora):
-- `AudioProcessingStatus` foi removido da renderizacao (linha 1949)
-- Filtro de `[Audio]` esta implementado (linha 1092-1095)
-- `MediaAutoDownloader` tem o design novo com icones e cores
+### 1. CRITICO: Caminho do frontend inconsistente entre scripts
 
-Porem o VPS continua mostrando a versao ANTIGA. Isso indica que:
-1. O navegador esta servindo cache antigo, OU
-2. O Nginx esta servindo cache antigo
+O `docker-compose.yml` monta o frontend de **dois caminhos diferentes** dependendo do script usado:
 
-## Solucao
+- **docker-compose.yml** (Nginx volume): `./frontend/dist:/usr/share/nginx/html:ro`
+- **install-unified.sh**: copia para `deploy/frontend/dist/` (correto)
+- **update.sh**: copia para `deploy/volumes/frontend/` (ERRADO - caminho inexistente no docker-compose)
+- **install.sh**: copia para `deploy/frontend/dist/` (correto)
 
-### Passo 1: Limpar cache no navegador
+O `update.sh` precisa ser corrigido para copiar para `deploy/frontend/dist/` em vez de `deploy/volumes/frontend/`.
 
-Acesse o sistema no navegador e pressione:
-- **Windows/Linux**: `Ctrl + Shift + R`
-- **Mac**: `Cmd + Shift + R`
+### 2. CRITICO: config.js nao e gerado automaticamente no update
 
-Ou abra em aba anonima/privada.
+O `update.sh` preserva `config.js` de `volumes/frontend/` (caminho errado). Se o config.js nao existir nesse local, o frontend fica sem configuracao runtime e conecta no Lovable Cloud ou falha.
 
-### Passo 2: Se nao resolver - forcar limpeza no Nginx
+### 3. CRITICO: index.html nao inclui `<script src="/config.js">` no source
 
-Rode no VPS:
+O arquivo `index.html` do repositorio NAO tem a tag `<script src="/config.js">`. Ela so e injetada via `sed` durante a instalacao. Se o build sobrescreve o `index.html`, a tag se perde e precisa ser re-injetada.
 
-```bash
-# Verificar se o build novo esta no volume
-ls -la /opt/sistema/deploy/volumes/frontend/assets/ | head -20
+### 4. MEDIO: Dois scripts de instalacao duplicados e divergentes
 
-# Reiniciar Nginx para limpar cache
-cd /opt/sistema/deploy && docker compose restart nginx
+Existem **dois scripts de instalacao** com logicas diferentes:
+- `deploy/scripts/install.sh` (1240 linhas) - gera nginx.conf inline, nao usa `generate_frontend_config()`
+- `deploy/scripts/install-unified.sh` (1185 linhas) - mais robusto, gera `config.js` com `window.location.origin`
+
+O `bootstrap-local.sh` chama `install-unified.sh`. O `install.sh` fica orfao mas pode ser chamado por engano.
+
+### 5. MEDIO: Nginx config divergente entre install.sh e o arquivo em disco
+
+O `install.sh` gera um `nginx.conf` inline (linhas 547-766) que e **diferente** do `deploy/nginx/nginx.conf` em disco:
+- O inline redireciona HTTP->HTTPS e NAO tem `location = /config.js`
+- O em disco serve em HTTP e HTTPS, com `location = /config.js` e headers no-cache
+
+### 6. MENOR: Kong config inconsistente
+
+O `install-unified.sh` gera kong.yml **sem ACLs** (sem `acl` plugin nas rotas REST/Storage). O `install.sh` gera kong.yml **com ACLs** e consumers com `keyauth_credentials`. Ambos devem ter a mesma config.
+
+---
+
+## Plano de Correcoes
+
+### Passo 1: Corrigir `update.sh` - Caminho do frontend
+
+Alterar todas as referencias de `volumes/frontend/` para `frontend/dist/` no `update.sh`, alinhando com o docker-compose.yml.
+
+### Passo 2: Gerar config.js automaticamente no `update.sh`
+
+Apos copiar o build, o `update.sh` deve:
+1. Ler `ANON_KEY` do `.env`
+2. Gerar `config.js` com `window.location.origin` e a `anonKey`
+3. Injetar `<script src="/config.js">` no `index.html` se ausente
+
+### Passo 3: Adicionar `<script src="/config.js">` ao `index.html` no source
+
+Incluir a tag diretamente no `index.html` do repositorio. Assim, nao depende de `sed` pos-build. O Lovable Cloud simplesmente ignora o arquivo (404 silencioso, sem efeito). Na VPS, o `config.js` sera servido pelo Nginx.
+
+### Passo 4: Eliminar `install.sh` duplicado
+
+Renomear ou remover `deploy/scripts/install.sh` (o antigo). O `install-unified.sh` e o script principal e mais robusto. Criar um symlink `install.sh -> install-unified.sh` para compatibilidade.
+
+### Passo 5: Sincronizar `nginx.conf` unico
+
+O `install-unified.sh` e o `install.sh` ambos geram nginx.conf inline. Remover a geracao inline e usar o arquivo `deploy/nginx/nginx.conf` que ja existe e e mais completo (tem `location = /config.js`, suporta HTTP e HTTPS, headers corretos).
+
+### Passo 6: Tornar Kong config consistente
+
+Unificar a geracao do `kong.yml` para incluir ACLs e consumers em ambos os scripts (na pratica, so no `install-unified.sh` apos remover o duplicado).
+
+---
+
+## Detalhes Tecnicos das Alteracoes
+
+### Arquivo: `index.html`
+Adicionar antes de `</head>`:
+```html
+<script src="/config.js"></script>
 ```
 
-### Passo 3: Se ainda nao resolver - rebuild forcado
+### Arquivo: `deploy/scripts/update.sh`
+- Linha 99-113: Trocar `volumes/frontend/` por `frontend/dist/`
+- Adicionar geracao automatica do `config.js` usando ANON_KEY do `.env`
+- Manter a logica de injecao do script tag como fallback
 
-```bash
-cd /opt/sistema
-rm -rf dist
-docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
-cp -r dist/* deploy/volumes/frontend/
-# Preservar config.js se existir
-cd deploy && docker compose restart nginx
-```
+### Arquivo: `deploy/scripts/install-unified.sh`
+- Remover geracao inline do nginx.conf (usar o arquivo existente em `deploy/nginx/nginx.conf`)
+- Adicionar ACLs no kong.yml gerado
+- Na funcao `generate_frontend_config()`, tambem copiar para `frontend/dist/` (ja faz)
 
-## Sobre o erro de upload de audio (RLS)
+### Arquivo: `deploy/scripts/install.sh`
+- Substituir conteudo por redirect para `install-unified.sh` (manter compatibilidade)
 
-As politicas de storage tambem foram corrigidas no `update.sh`, mas so serao aplicadas se o script chegar ate a secao de "Garantindo buckets de storage". Confirme que no output do update voce viu a linha `[OK] Buckets de storage verificados`. Se nao apareceu, rode manualmente no VPS:
-
-```bash
-cd /opt/sistema/deploy && docker compose exec -T db psql -U postgres -d postgres -c "
-DROP POLICY IF EXISTS \"Auth upload whatsapp-media\" ON storage.objects;
-DROP POLICY IF EXISTS \"Auth upload chat-attachments\" ON storage.objects;
-DROP POLICY IF EXISTS \"Service role can upload WhatsApp media\" ON storage.objects;
-CREATE POLICY \"Auth upload whatsapp-media\" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'whatsapp-media');
-CREATE POLICY \"Auth upload chat-attachments\" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'chat-attachments');
-"
-```
-
-## Resumo
-
-| Problema | Causa | Solucao |
-|----------|-------|---------|
-| Visual antigo no VPS | Cache do navegador/Nginx | Ctrl+Shift+R ou restart nginx |
-| "[Audio]" aparecendo | Cache - codigo ja corrigido | Mesma solucao acima |
-| Banner processamento | Cache - codigo ja corrigido | Mesma solucao acima |
-| Erro RLS upload | Politica sem TO authenticated | Rodar SQL acima no banco |
+### Arquivo: `deploy/nginx/nginx.conf`
+- Ja esta correto (tem `location = /config.js`, suporta HTTP+HTTPS)
+- Nenhuma alteracao necessaria
 
