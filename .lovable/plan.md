@@ -1,38 +1,85 @@
 
 
-# Correcao: RLS de Upload + Visual do Audio
+# Correcao: Upload RLS + Audio Design + Remover Banner
 
 ## Problema 1: "new row violates row-level security policy"
 
-O bucket `whatsapp-media` tem politica de INSERT sem restricao de role (`WITH CHECK (bucket_id = 'whatsapp-media')`) -- isso funciona apenas para `service_role`, nao para usuarios autenticados via frontend. O bucket `chat-attachments` tem a politica correta (`TO authenticated`).
+A causa raiz e que as politicas de INSERT no storage do VPS nao incluem `TO authenticated`. No `init.sql`, a politica do `whatsapp-media` (linha 1033) e criada SEM `TO authenticated`, o que significa que so funciona com `service_role`. A politica do `chat-attachments` (linha 1007) esta correta COM `TO authenticated`, porem o `update.sh` (linhas 197-209) cria politicas DUPLICADAS tambem SEM `TO authenticated`.
 
-**Solucao**: Inverter a prioridade no `useFileUpload.ts` -- tentar `chat-attachments` primeiro (que tem politica correta para usuarios autenticados), e usar `whatsapp-media` como fallback. Alem disso, tambem aceitar erros de "security policy" como sinal para tentar o proximo bucket.
+**Solucao**: 
+- Corrigir o `update.sh` para dropar as politicas antigas e recriar com `TO authenticated`
+- Corrigir o `init.sql` para que o `whatsapp-media` tambem tenha `TO authenticated`
+- No `useFileUpload.ts`, manter `chat-attachments` como primario (politica correta)
 
-## Problema 2: Texto "[Audio]" aparecendo abaixo do player
+## Problema 2: Design do audio nao mudou
 
-Na renderizacao de mensagens (Atendimento.tsx, linha 1092), o `message.content` e exibido para TODAS as mensagens, incluindo audio. Quando o webhook salva uma mensagem de audio, o content vem como "[Audio]" -- e esse texto aparece abaixo do player/downloader, ficando feio.
+O print mostra "Mensagem de audio" com "Tentar novamente" e "[Audio]" abaixo -- isso e exatamente o visual antigo do MediaAutoDownloader. Embora as alteracoes tenham sido feitas no codigo, o deploy no VPS pode nao ter atualizado corretamente. O texto "[Audio]" ja foi tratado no ultimo deploy (regex no Atendimento.tsx). O visual do MediaAutoDownloader precisa ser verificado.
 
-**Solucao**: Esconder o `message.content` quando `message_type` for "audio", "image" ou "video" E o conteudo for um placeholder generico como "[Audio]", "[Imagem]", "[Video]", etc.
+## Problema 3: Banner "X audios sendo processados..."
+
+O componente `AudioProcessingStatus` mostra um banner no topo do chat. O usuario quer remove-lo.
+
+**Solucao**: Remover a renderizacao do `AudioProcessingStatus` no Atendimento.tsx (linha 1950).
 
 ---
 
 ## Detalhes Tecnicos
 
-### Arquivo 1: `src/hooks/useFileUpload.ts`
+### Arquivo 1: `deploy/scripts/update.sh` (linhas 192-210)
 
-- Inverter prioridade: `chat-attachments` como primario (tem RLS correta para authenticated)
-- `whatsapp-media` como fallback
-- Incluir "security" e "policy" na lista de erros que disparam fallback
+Corrigir as politicas de storage para incluir `TO authenticated`:
 
-### Arquivo 2: `src/pages/Atendimento.tsx`
+```sql
+-- DROP politicas antigas sem TO authenticated
+DROP POLICY IF EXISTS "Auth upload whatsapp-media" ON storage.objects;
+DROP POLICY IF EXISTS "Auth upload chat-attachments" ON storage.objects;
+DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
 
-- Na linha 1092, adicionar condicao para esconder o content quando for placeholder de midia:
-  - Nao mostrar content se `message_type !== 'text'` E content for `[Audio]`, `[Áudio]`, `[Imagem]`, `[Image]`, `[Video]`, `[Vídeo]`, `[Documento]`, `[Document]`
+-- Recriar COM TO authenticated
+CREATE POLICY "Auth upload whatsapp-media" 
+  ON storage.objects FOR INSERT TO authenticated 
+  WITH CHECK (bucket_id = 'whatsapp-media');
+
+CREATE POLICY "Auth upload chat-attachments" 
+  ON storage.objects FOR INSERT TO authenticated 
+  WITH CHECK (bucket_id = 'chat-attachments');
+```
+
+### Arquivo 2: `deploy/supabase/init.sql` (linhas 1033-1034)
+
+Corrigir a politica do whatsapp-media para incluir `TO authenticated`:
+
+```sql
+CREATE POLICY "Service role can upload WhatsApp media"
+ON storage.objects FOR INSERT TO authenticated 
+WITH CHECK (bucket_id = 'whatsapp-media');
+```
+
+### Arquivo 3: `src/pages/Atendimento.tsx` (linha 1950)
+
+Remover ou comentar a linha que renderiza o `AudioProcessingStatus`:
+
+```tsx
+// REMOVER: {messages && <AudioProcessingStatus messages={messages} />}
+```
+
+### Arquivo 4: `src/hooks/useFileUpload.ts`
+
+Manter como esta (chat-attachments como primario). Sem alteracoes necessarias.
 
 ### Resumo
 
 | Arquivo | Acao |
 |---------|------|
-| `src/hooks/useFileUpload.ts` | Inverter prioridade de buckets e melhorar deteccao de erros |
-| `src/pages/Atendimento.tsx` | Esconder placeholder de midia no content |
+| `deploy/scripts/update.sh` | Corrigir politicas RLS com TO authenticated |
+| `deploy/supabase/init.sql` | Corrigir politica whatsapp-media INSERT |
+| `src/pages/Atendimento.tsx` | Remover AudioProcessingStatus |
+
+### Apos aprovar
+
+Depois de aplicar as mudancas, sera necessario rodar no VPS:
+
+```bash
+cd /opt/sistema && sudo bash deploy/scripts/update.sh
+```
 
