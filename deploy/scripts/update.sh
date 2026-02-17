@@ -83,7 +83,11 @@ log_info "Compilando frontend..."
 # Limpar build anterior para garantir build limpo
 rm -rf dist node_modules/.vite .vite
 
-docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build" || {
+docker run --rm -v "$(pwd)":/app -w /app \
+  -e VITE_SUPABASE_URL=placeholder \
+  -e VITE_SUPABASE_PUBLISHABLE_KEY=placeholder \
+  -e VITE_SUPABASE_PROJECT_ID=self-hosted \
+  node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build" || {
     log_error "Falha ao compilar o frontend"
     exit 1
 }
