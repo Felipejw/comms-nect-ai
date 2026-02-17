@@ -1,85 +1,71 @@
 
 
-# Correcao: Upload RLS + Audio Design + Remover Banner
+# Diagnostico: Frontend antigo ainda sendo servido no VPS
 
-## Problema 1: "new row violates row-level security policy"
+## O que esta acontecendo
 
-A causa raiz e que as politicas de INSERT no storage do VPS nao incluem `TO authenticated`. No `init.sql`, a politica do `whatsapp-media` (linha 1033) e criada SEM `TO authenticated`, o que significa que so funciona com `service_role`. A politica do `chat-attachments` (linha 1007) esta correta COM `TO authenticated`, porem o `update.sh` (linhas 197-209) cria politicas DUPLICADAS tambem SEM `TO authenticated`.
+As mudancas JA ESTAO no codigo-fonte (verificado agora):
+- `AudioProcessingStatus` foi removido da renderizacao (linha 1949)
+- Filtro de `[Audio]` esta implementado (linha 1092-1095)
+- `MediaAutoDownloader` tem o design novo com icones e cores
 
-**Solucao**: 
-- Corrigir o `update.sh` para dropar as politicas antigas e recriar com `TO authenticated`
-- Corrigir o `init.sql` para que o `whatsapp-media` tambem tenha `TO authenticated`
-- No `useFileUpload.ts`, manter `chat-attachments` como primario (politica correta)
+Porem o VPS continua mostrando a versao ANTIGA. Isso indica que:
+1. O navegador esta servindo cache antigo, OU
+2. O Nginx esta servindo cache antigo
 
-## Problema 2: Design do audio nao mudou
+## Solucao
 
-O print mostra "Mensagem de audio" com "Tentar novamente" e "[Audio]" abaixo -- isso e exatamente o visual antigo do MediaAutoDownloader. Embora as alteracoes tenham sido feitas no codigo, o deploy no VPS pode nao ter atualizado corretamente. O texto "[Audio]" ja foi tratado no ultimo deploy (regex no Atendimento.tsx). O visual do MediaAutoDownloader precisa ser verificado.
+### Passo 1: Limpar cache no navegador
 
-## Problema 3: Banner "X audios sendo processados..."
+Acesse o sistema no navegador e pressione:
+- **Windows/Linux**: `Ctrl + Shift + R`
+- **Mac**: `Cmd + Shift + R`
 
-O componente `AudioProcessingStatus` mostra um banner no topo do chat. O usuario quer remove-lo.
+Ou abra em aba anonima/privada.
 
-**Solucao**: Remover a renderizacao do `AudioProcessingStatus` no Atendimento.tsx (linha 1950).
+### Passo 2: Se nao resolver - forcar limpeza no Nginx
 
----
-
-## Detalhes Tecnicos
-
-### Arquivo 1: `deploy/scripts/update.sh` (linhas 192-210)
-
-Corrigir as politicas de storage para incluir `TO authenticated`:
-
-```sql
--- DROP politicas antigas sem TO authenticated
-DROP POLICY IF EXISTS "Auth upload whatsapp-media" ON storage.objects;
-DROP POLICY IF EXISTS "Auth upload chat-attachments" ON storage.objects;
-DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
-
--- Recriar COM TO authenticated
-CREATE POLICY "Auth upload whatsapp-media" 
-  ON storage.objects FOR INSERT TO authenticated 
-  WITH CHECK (bucket_id = 'whatsapp-media');
-
-CREATE POLICY "Auth upload chat-attachments" 
-  ON storage.objects FOR INSERT TO authenticated 
-  WITH CHECK (bucket_id = 'chat-attachments');
-```
-
-### Arquivo 2: `deploy/supabase/init.sql` (linhas 1033-1034)
-
-Corrigir a politica do whatsapp-media para incluir `TO authenticated`:
-
-```sql
-CREATE POLICY "Service role can upload WhatsApp media"
-ON storage.objects FOR INSERT TO authenticated 
-WITH CHECK (bucket_id = 'whatsapp-media');
-```
-
-### Arquivo 3: `src/pages/Atendimento.tsx` (linha 1950)
-
-Remover ou comentar a linha que renderiza o `AudioProcessingStatus`:
-
-```tsx
-// REMOVER: {messages && <AudioProcessingStatus messages={messages} />}
-```
-
-### Arquivo 4: `src/hooks/useFileUpload.ts`
-
-Manter como esta (chat-attachments como primario). Sem alteracoes necessarias.
-
-### Resumo
-
-| Arquivo | Acao |
-|---------|------|
-| `deploy/scripts/update.sh` | Corrigir politicas RLS com TO authenticated |
-| `deploy/supabase/init.sql` | Corrigir politica whatsapp-media INSERT |
-| `src/pages/Atendimento.tsx` | Remover AudioProcessingStatus |
-
-### Apos aprovar
-
-Depois de aplicar as mudancas, sera necessario rodar no VPS:
+Rode no VPS:
 
 ```bash
-cd /opt/sistema && sudo bash deploy/scripts/update.sh
+# Verificar se o build novo esta no volume
+ls -la /opt/sistema/deploy/volumes/frontend/assets/ | head -20
+
+# Reiniciar Nginx para limpar cache
+cd /opt/sistema/deploy && docker compose restart nginx
 ```
+
+### Passo 3: Se ainda nao resolver - rebuild forcado
+
+```bash
+cd /opt/sistema
+rm -rf dist
+docker run --rm -v "$(pwd)":/app -w /app node:20-alpine sh -c "npm install --legacy-peer-deps && npm run build"
+cp -r dist/* deploy/volumes/frontend/
+# Preservar config.js se existir
+cd deploy && docker compose restart nginx
+```
+
+## Sobre o erro de upload de audio (RLS)
+
+As politicas de storage tambem foram corrigidas no `update.sh`, mas so serao aplicadas se o script chegar ate a secao de "Garantindo buckets de storage". Confirme que no output do update voce viu a linha `[OK] Buckets de storage verificados`. Se nao apareceu, rode manualmente no VPS:
+
+```bash
+cd /opt/sistema/deploy && docker compose exec -T db psql -U postgres -d postgres -c "
+DROP POLICY IF EXISTS \"Auth upload whatsapp-media\" ON storage.objects;
+DROP POLICY IF EXISTS \"Auth upload chat-attachments\" ON storage.objects;
+DROP POLICY IF EXISTS \"Service role can upload WhatsApp media\" ON storage.objects;
+CREATE POLICY \"Auth upload whatsapp-media\" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'whatsapp-media');
+CREATE POLICY \"Auth upload chat-attachments\" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'chat-attachments');
+"
+```
+
+## Resumo
+
+| Problema | Causa | Solucao |
+|----------|-------|---------|
+| Visual antigo no VPS | Cache do navegador/Nginx | Ctrl+Shift+R ou restart nginx |
+| "[Audio]" aparecendo | Cache - codigo ja corrigido | Mesma solucao acima |
+| Banner processamento | Cache - codigo ja corrigido | Mesma solucao acima |
+| Erro RLS upload | Politica sem TO authenticated | Rodar SQL acima no banco |
 
