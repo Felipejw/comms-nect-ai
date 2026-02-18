@@ -185,7 +185,8 @@ const handler = async (req: Request): Promise<Response> => {
       .from('whatsapp-media')
       .getPublicUrl(storagePath);
 
-    const publicUrl = publicUrlData.publicUrl;
+    // Remove internal Docker URL prefix (e.g. http://kong:8000), keep only path
+    const publicUrl = publicUrlData.publicUrl.replace(/^https?:\/\/[^/]+/, '');
     console.log(`[download-whatsapp-media] ✅ Media stored successfully: ${publicUrl}`);
 
     return new Response(

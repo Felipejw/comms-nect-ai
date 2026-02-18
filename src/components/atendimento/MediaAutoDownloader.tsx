@@ -119,7 +119,8 @@ async function tryDirectBaileysDownload(
       .from("whatsapp-media")
       .getPublicUrl(storagePath);
 
-    return publicUrlData.publicUrl;
+    // Remove any internal URL prefix, keep only relative path
+    return publicUrlData.publicUrl.replace(/^https?:\/\/[^/]+/, '');
   } catch (err) {
     console.warn("[MediaAutoDownloader] Direct Baileys download error:", err);
     return null;
