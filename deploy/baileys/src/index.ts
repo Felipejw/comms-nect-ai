@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
-import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode, restoreSessions } from './baileys.js';
+import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode, restoreSessions, downloadMedia } from './baileys.js';
 import { logger } from './logger.js';
 
 dotenv.config();
@@ -125,6 +125,25 @@ app.delete('/sessions/:name', async (req: Request, res: Response) => {
 // ==========================================
 // Rotas de Mensagem
 // ==========================================
+
+// Download de midia de mensagem recebida
+app.get('/sessions/:name/messages/:messageId/media', async (req: Request, res: Response) => {
+  try {
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const messageId = Array.isArray(req.params.messageId) ? req.params.messageId[0] : req.params.messageId;
+    
+    const result = await downloadMedia(sessionName, messageId);
+    
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Media not found or message expired from memory' });
+    }
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error({ error }, 'Error downloading media');
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
 
 // Enviar mensagem de texto
 app.post('/sessions/:name/send/text', async (req: Request, res: Response) => {

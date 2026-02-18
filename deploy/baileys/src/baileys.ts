@@ -40,9 +40,11 @@ interface SessionInfo {
 
 const sessions = new Map<string, SessionData>();
 const reconnectAttempts = new Map<string, number>();
+const messageStore = new Map<string, Map<string, proto.IWebMessageInfo>>();
 const SESSIONS_DIR = process.env.SESSIONS_DIR || './sessions';
 const MAX_RECONNECT_DELAY_MS = 60000;
 const BASE_RECONNECT_DELAY_MS = 3000;
+const MAX_STORED_MESSAGES = 500; // maximo de mensagens por sessao
 
 // Garantir que o diretorio de sessoes existe
 if (!fs.existsSync(SESSIONS_DIR)) {
@@ -217,6 +219,20 @@ async function processIncomingMessage(sessionName: string, msg: proto.IWebMessag
 
   const session = sessions.get(sessionName);
   if (!session) return;
+
+  // Armazenar mensagem para download posterior
+  if (msg.key.id) {
+    if (!messageStore.has(sessionName)) {
+      messageStore.set(sessionName, new Map());
+    }
+    const store = messageStore.get(sessionName)!;
+    store.set(msg.key.id, msg);
+    // Limitar tamanho do store
+    if (store.size > MAX_STORED_MESSAGES) {
+      const firstKey = store.keys().next().value;
+      if (firstKey) store.delete(firstKey);
+    }
+  }
 
   const messageContent = msg.message;
   if (!messageContent) return;
@@ -507,6 +523,56 @@ async function sendWebhook(url: string, payload: any): Promise<void> {
     }
   } catch (err) {
     logger.error({ err, url, event: payload?.event }, 'Error sending webhook (network/connection error)');
+  }
+}
+
+// ==========================================
+// Download de midia de mensagens armazenadas
+// ==========================================
+
+export async function downloadMedia(sessionName: string, messageId: string): Promise<{ base64: string; mimetype: string } | null> {
+  const session = sessions.get(sessionName);
+  const store = messageStore.get(sessionName);
+  if (!session || !store) return null;
+
+  const msg = store.get(messageId);
+  if (!msg || !msg.message) return null;
+
+  const contentType = getContentType(msg.message);
+  if (!contentType) return null;
+
+  // Determinar mimetype do conteudo
+  let mimetype = 'application/octet-stream';
+  const messageContent = msg.message;
+  switch (contentType) {
+    case 'imageMessage': mimetype = messageContent.imageMessage?.mimetype || 'image/jpeg'; break;
+    case 'videoMessage': mimetype = messageContent.videoMessage?.mimetype || 'video/mp4'; break;
+    case 'audioMessage': mimetype = messageContent.audioMessage?.mimetype || 'audio/ogg'; break;
+    case 'documentMessage': mimetype = messageContent.documentMessage?.mimetype || 'application/octet-stream'; break;
+    case 'stickerMessage': mimetype = messageContent.stickerMessage?.mimetype || 'image/webp'; break;
+    default: return null;
+  }
+
+  try {
+    const buffer = await downloadMediaMessage(
+      msg as any,
+      'buffer',
+      {},
+      {
+        logger: logger as any,
+        reuploadRequest: session.sock.updateMediaMessage
+      }
+    );
+
+    if (!buffer) return null;
+
+    return {
+      base64: (buffer as Buffer).toString('base64'),
+      mimetype
+    };
+  } catch (err) {
+    logger.error({ err, messageId }, 'Error downloading media for API request');
+    return null;
   }
 }
 

@@ -986,85 +986,118 @@ ALTER DEFAULT PRIVILEGES FOR ROLE postgres
 -- PARTE 9: STORAGE BUCKETS
 -- ============================================================
 
-DO $$
-DECLARE
-  _bucket_error TEXT;
-BEGIN
-  BEGIN
-    INSERT INTO storage.buckets (id, name, public)
-    VALUES ('chat-attachments', 'chat-attachments', true)
-    ON CONFLICT (id) DO NOTHING;
-    RAISE NOTICE 'Bucket chat-attachments OK';
-  EXCEPTION WHEN OTHERS THEN
-    GET STACKED DIAGNOSTICS _bucket_error = MESSAGE_TEXT;
-    RAISE WARNING 'Failed to create bucket chat-attachments: %', _bucket_error;
-  END;
+-- Bucket: chat-attachments
+DO $$ BEGIN
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('chat-attachments', 'chat-attachments', true)
+  ON CONFLICT (id) DO NOTHING;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'Failed to create bucket chat-attachments';
+END $$;
 
+DO $$ BEGIN
   DROP POLICY IF EXISTS "Authenticated users can upload chat attachments" ON storage.objects;
-  DROP POLICY IF EXISTS "Anyone can view chat attachments" ON storage.objects;
-  DROP POLICY IF EXISTS "Authenticated users can delete chat attachments" ON storage.objects;
-
   CREATE POLICY "Authenticated users can upload chat attachments"
   ON storage.objects FOR INSERT TO authenticated
   WITH CHECK (bucket_id = 'chat-attachments');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Anyone can view chat attachments" ON storage.objects;
   CREATE POLICY "Anyone can view chat attachments"
   ON storage.objects FOR SELECT
   USING (bucket_id = 'chat-attachments');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Authenticated users can delete chat attachments" ON storage.objects;
   CREATE POLICY "Authenticated users can delete chat attachments"
   ON storage.objects FOR DELETE TO authenticated
   USING (bucket_id = 'chat-attachments');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
-  INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-  VALUES (
-    'whatsapp-media', 'whatsapp-media', true, 52428800,
-    ARRAY['audio/ogg', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/opus', 'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'video/mp4', 'video/3gpp', 'application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
-  ) ON CONFLICT (id) DO NOTHING;
+-- Bucket: whatsapp-media (SEM restricao de mime types para aceitar qualquer formato)
+DO $$ BEGIN
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('whatsapp-media', 'whatsapp-media', true)
+  ON CONFLICT (id) DO UPDATE SET public = true, file_size_limit = NULL, allowed_mime_types = NULL;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'Failed to create bucket whatsapp-media';
+END $$;
 
-  DROP POLICY IF EXISTS "WhatsApp media is publicly accessible" ON storage.objects;
+DO $$ BEGIN
   DROP POLICY IF EXISTS "Service role can upload WhatsApp media" ON storage.objects;
-  DROP POLICY IF EXISTS "Service role can update WhatsApp media" ON storage.objects;
-  DROP POLICY IF EXISTS "Service role can delete WhatsApp media" ON storage.objects;
+  DROP POLICY IF EXISTS "Anyone can upload whatsapp media" ON storage.objects;
+  CREATE POLICY "Anyone can upload whatsapp media"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'whatsapp-media');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "WhatsApp media is publicly accessible" ON storage.objects;
   CREATE POLICY "WhatsApp media is publicly accessible"
   ON storage.objects FOR SELECT USING (bucket_id = 'whatsapp-media');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
-  CREATE POLICY "Service role can upload WhatsApp media"
-  ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'whatsapp-media');
-
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Service role can update WhatsApp media" ON storage.objects;
   CREATE POLICY "Service role can update WhatsApp media"
-  ON storage.objects FOR UPDATE USING (bucket_id = 'whatsapp-media');
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'whatsapp-media');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Service role can delete WhatsApp media" ON storage.objects;
   CREATE POLICY "Service role can delete WhatsApp media"
-  ON storage.objects FOR DELETE USING (bucket_id = 'whatsapp-media');
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'whatsapp-media');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
-  INSERT INTO storage.buckets (id, name, public) 
+-- Bucket: platform-assets
+DO $$ BEGIN
+  INSERT INTO storage.buckets (id, name, public)
   VALUES ('platform-assets', 'platform-assets', true)
   ON CONFLICT (id) DO NOTHING;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'Failed to create bucket platform-assets';
+END $$;
 
+DO $$ BEGIN
   DROP POLICY IF EXISTS "Platform assets are publicly accessible" ON storage.objects;
-  DROP POLICY IF EXISTS "Authenticated users can upload platform assets" ON storage.objects;
-  DROP POLICY IF EXISTS "Authenticated users can update platform assets" ON storage.objects;
-  DROP POLICY IF EXISTS "Authenticated users can delete platform assets" ON storage.objects;
-
   CREATE POLICY "Platform assets are publicly accessible"
   ON storage.objects FOR SELECT USING (bucket_id = 'platform-assets');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Authenticated users can upload platform assets" ON storage.objects;
   CREATE POLICY "Authenticated users can upload platform assets"
-  ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'platform-assets');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Authenticated users can update platform assets" ON storage.objects;
   CREATE POLICY "Authenticated users can update platform assets"
-  ON storage.objects FOR UPDATE USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
+  ON storage.objects FOR UPDATE TO authenticated
+  USING (bucket_id = 'platform-assets');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
 
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Authenticated users can delete platform assets" ON storage.objects;
   CREATE POLICY "Authenticated users can delete platform assets"
-  ON storage.objects FOR DELETE USING (bucket_id = 'platform-assets' AND auth.role() = 'authenticated');
-
-EXCEPTION WHEN undefined_table THEN
-  RAISE WARNING 'storage schema not available yet - buckets will be created automatically on first upload';
-WHEN OTHERS THEN
-  GET STACKED DIAGNOSTICS _bucket_error = MESSAGE_TEXT;
-  RAISE WARNING 'Storage bucket setup failed: % - buckets will be created automatically on first upload', _bucket_error;
+  ON storage.objects FOR DELETE TO authenticated
+  USING (bucket_id = 'platform-assets');
+EXCEPTION WHEN OTHERS THEN NULL;
 END $$;
 
 -- ============================================================
