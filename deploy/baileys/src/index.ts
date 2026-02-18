@@ -1,6 +1,6 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
-import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode, restoreSessions, downloadMedia } from './baileys.js';
+import { createSession, getSession, getAllSessions, deleteSession, sendTextMessage, sendMediaMessage, getQrCode, restoreSessions, downloadMedia, getContactInfo } from './baileys.js';
 import { logger } from './logger.js';
 
 dotenv.config();
@@ -118,6 +118,28 @@ app.delete('/sessions/:name', async (req: Request, res: Response) => {
     res.json({ success: true, message: 'Session deleted' });
   } catch (error) {
     logger.error({ error }, 'Error deleting session');
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
+
+// ==========================================
+// Rotas de Contato (resolver LID)
+// ==========================================
+
+// Consultar informacoes de contato (usado para resolver LID -> numero real)
+app.get('/sessions/:name/contacts/:jid', async (req: Request, res: Response) => {
+  try {
+    const sessionName = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const jid = Array.isArray(req.params.jid) ? req.params.jid[0] : req.params.jid;
+    const result = await getContactInfo(sessionName, jid);
+    
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    logger.error({ error }, 'Error getting contact info');
     res.status(500).json({ success: false, error: (error as Error).message });
   }
 });

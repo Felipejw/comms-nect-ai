@@ -599,5 +599,30 @@ export async function restoreSessions(): Promise<void> {
   }
 }
 
+// ==========================================
+// Consulta de contatos (resolver LID -> numero real)
+// ==========================================
+
+export async function getContactInfo(sessionName: string, jid: string) {
+  const session = sessions.get(sessionName);
+  if (!session) return null;
+  if (session.status !== 'connected') return null;
+
+  try {
+    const contact = await session.sock.onWhatsApp(jid);
+    if (contact && contact.length > 0) {
+      return {
+        jid: contact[0].jid,
+        exists: contact[0].exists,
+        phone: contact[0].jid?.replace('@s.whatsapp.net', '') || null
+      };
+    }
+    return null;
+  } catch (err) {
+    logger.error({ err, jid }, 'Error getting contact info');
+    return null;
+  }
+}
+
 // NOTA: restoreSessions() agora e chamado pelo index.ts no callback do app.listen
 // para garantir que o servidor esteja pronto antes de restaurar sessoes.
