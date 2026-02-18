@@ -115,6 +115,16 @@ interface MediaPreview {
 
 // AudioAutoDownloader replaced by MediaAutoDownloader component
 
+// Helper to resolve media URLs (converts internal Docker URLs to relative paths)
+const resolveMediaUrl = (url: string | null | undefined): string => {
+  if (!url) return '';
+  // If it's an internal Docker URL (kong:8000, localhost), strip the host
+  if (url.includes('kong:8000') || url.includes('localhost:')) {
+    return url.replace(/^https?:\/\/[^/]+/, '');
+  }
+  return url;
+};
+
 // Helper to normalize phone for search
 const normalizePhone = (phone: string) => {
   return phone.replace(/\D/g, '');
@@ -1035,10 +1045,10 @@ export default function Atendimento() {
         >
           {message.message_type === "image" && message.media_url && (
             <img 
-              src={message.media_url} 
+              src={resolveMediaUrl(message.media_url)} 
               alt="Imagem" 
               className="rounded-lg max-w-full mb-2 cursor-pointer hover:opacity-90"
-              onClick={() => window.open(message.media_url!, '_blank')}
+              onClick={() => window.open(resolveMediaUrl(message.media_url), '_blank')}
             />
           )}
           {message.message_type === "image" && !message.media_url && (
@@ -1051,7 +1061,7 @@ export default function Atendimento() {
           )}
           {message.message_type === "document" && message.media_url && (
             <a 
-              href={message.media_url} 
+              href={resolveMediaUrl(message.media_url)} 
               target="_blank" 
               rel="noopener noreferrer"
               className="flex items-center gap-2 p-2 bg-background/50 rounded mb-2 hover:bg-background/70"
@@ -1061,7 +1071,7 @@ export default function Atendimento() {
             </a>
           )}
           {message.message_type === "audio" && message.media_url && (
-            <AudioPlayer src={message.media_url} className="mb-2" />
+            <AudioPlayer src={resolveMediaUrl(message.media_url)} className="mb-2" />
           )}
           {message.message_type === "audio" && !message.media_url && (
             <MediaAutoDownloader
@@ -1077,7 +1087,7 @@ export default function Atendimento() {
               className="rounded-lg max-w-full mb-2"
               style={{ maxHeight: '300px' }}
             >
-              <source src={message.media_url} />
+              <source src={resolveMediaUrl(message.media_url)} />
               Seu navegador não suporta vídeos.
             </video>
           )}

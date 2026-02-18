@@ -78,8 +78,11 @@ async function storeMediaFromBase64(
       .from("whatsapp-media")
       .getPublicUrl(storagePath);
 
-    console.log("[Baileys Webhook] Media stored:", publicUrlData.publicUrl);
-    return publicUrlData.publicUrl;
+    const publicUrl = publicUrlData.publicUrl;
+    // Remove internal Docker URL prefix (e.g. http://kong:8000), keep only path
+    const relativePath = publicUrl.replace(/^https?:\/\/[^/]+/, '');
+    console.log("[Baileys Webhook] Media stored:", relativePath);
+    return relativePath;
   } catch (error) {
     console.error("[Baileys Webhook] Error processing media:", error);
     return null;
@@ -403,7 +406,8 @@ const handler = async (req: Request): Promise<Response> => {
                       upsert: true,
                     });
                     const { data: pubUrl } = supabaseClient.storage.from("whatsapp-media").getPublicUrl(storagePath);
-                    mediaUrl = pubUrl.publicUrl;
+                    // Remove internal Docker URL prefix, keep only path
+                    mediaUrl = pubUrl.publicUrl.replace(/^https?:\/\/[^/]+/, '');
                     console.log(`[Baileys Webhook] Inline binary media stored: ${mediaUrl}`);
                   }
                 }
