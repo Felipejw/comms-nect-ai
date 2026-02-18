@@ -1,83 +1,108 @@
 
-# Corrigir Midia Recebida (Audio e Imagem)
+# Mostrar Numero do WhatsApp para Contatos LID
 
-## Problema Raiz Identificado
+## Situacao Atual
 
-A funcao `storeMediaFromBase64` no `baileys-webhook` usa `supabaseClient.storage.getPublicUrl()` para gerar a URL da midia. O cliente Supabase dentro da edge function e criado com `SUPABASE_URL = http://kong:8000` (URL interna do Docker).
+Quando um contato envia mensagem usando WhatsApp LID (identificador interno do WhatsApp), o sistema mostra "Contato #XXXXXX" porque:
 
-Resultado: a `media_url` salva no banco e algo como:
-```text
-http://kong:8000/storage/v1/object/public/whatsapp-media/TES/msgid.ogg
-```
-
-O navegador NAO consegue acessar `http://kong:8000` — essa URL so existe dentro da rede Docker. Por isso:
-- Audios recebidos ficam carregando para sempre
-- Imagens recebidas nao aparecem
-
-O envio funciona porque o upload e feito pelo navegador (que usa `https://app.chatbotwhatsapp.store` como base URL).
+1. O campo `phone` do contato fica vazio (so tem `whatsapp_lid`)
+2. O `baileys-webhook` ja tenta resolver o LID chamando `/sessions/{name}/contacts/{lid}@lid` no servidor Baileys
+3. **Porem, esse endpoint NAO existe no servidor Baileys** - o `index.ts` nao tem essa rota
+4. A resolucao falha silenciosamente e o contato continua sem telefone
 
 ## Solucao
 
-Substituir a URL interna (`http://kong:8000`) pela URL publica do site na `media_url` salva no banco.
+Adicionar o endpoint de consulta de contatos no servidor Baileys, que usa a funcao `sock.onWhatsApp()` para verificar se um LID corresponde a um numero real.
 
-### Alteracao 1: `supabase/functions/baileys-webhook/index.ts`
+### Alteracao 1: `deploy/baileys/src/baileys.ts`
 
-Na funcao `storeMediaFromBase64`, apos obter a `publicUrl`, substituir o prefixo interno pelo externo:
-
-```typescript
-// Antes (gera URL interna):
-return publicUrlData.publicUrl;
-
-// Depois (converte para URL relativa):
-const publicUrl = publicUrlData.publicUrl;
-// Remove internal Docker URL prefix, keep only the path
-const storagePath = publicUrl.replace(/^https?:\/\/[^/]+/, '');
-return storagePath; // ex: /storage/v1/object/public/whatsapp-media/TES/msgid.ogg
-```
-
-Fazer a mesma correcao nos outros pontos onde `getPublicUrl` e usado no mesmo arquivo (linhas ~392-406 no fallback inline download).
-
-### Alteracao 2: `src/pages/Atendimento.tsx`
-
-Quando `media_url` for um caminho relativo (comeca com `/storage/`), o frontend precisa prefixa-lo com a URL base do Supabase. Adicionar um helper:
+Exportar uma nova funcao `getContactInfo` que usa a API do Baileys para buscar informacoes do contato:
 
 ```typescript
-const resolveMediaUrl = (url: string) => {
-  if (!url) return url;
-  // Se ja e uma URL absoluta, usar como esta
-  if (url.startsWith('http://') || url.startsWith('https://')) {
-    // Se for URL interna do Docker, converter para relativa
-    if (url.includes('kong:8000') || url.includes('localhost:')) {
-      return url.replace(/^https?:\/\/[^/]+/, '');
+export async function getContactInfo(sessionName: string, jid: string) {
+  const session = sessions.get(sessionName);
+  if (!session) return null;
+  if (session.status !== 'connected') return null;
+
+  try {
+    // Tentar buscar o contato no store interno do Baileys
+    const contact = await session.sock.onWhatsApp(jid);
+    if (contact && contact.length > 0) {
+      return {
+        jid: contact[0].jid,
+        exists: contact[0].exists,
+        phone: contact[0].jid?.replace('@s.whatsapp.net', '') || null
+      };
     }
-    return url;
+    return null;
+  } catch (err) {
+    logger.error({ err, jid }, 'Error getting contact info');
+    return null;
   }
-  return url; // caminhos relativos funcionam naturalmente no mesmo dominio
-};
+}
 ```
 
-Aplicar `resolveMediaUrl()` em todos os locais onde `message.media_url` e usado como `src` (imagem, audio, video, documento).
+### Alteracao 2: `deploy/baileys/src/index.ts`
 
-### Alteracao 3: `supabase/functions/download-whatsapp-media/index.ts`
+Adicionar a rota GET `/sessions/:name/contacts/:jid`:
 
-Mesma correcao: ao retornar a URL publica, usar caminho relativo em vez da URL interna.
+```typescript
+app.get('/sessions/:name/contacts/:jid', async (req, res) => {
+  try {
+    const sessionName = req.params.name;
+    const jid = req.params.jid;
+    const result = await getContactInfo(sessionName, jid);
+    
+    if (!result) {
+      return res.status(404).json({ success: false, error: 'Contact not found' });
+    }
+    
+    res.json({ success: true, data: result });
+  } catch (error) {
+    res.status(500).json({ success: false, error: (error as Error).message });
+  }
+});
+```
 
-### Alteracao 4 (opcional): `src/components/atendimento/MediaAutoDownloader.tsx`
+### Sem alteracoes no frontend
 
-Mesma correcao no `getPublicUrl` do upload local.
+O frontend ja esta preparado:
+- `getContactDisplayName()` ja mostra o telefone formatado quando o campo `phone` existe
+- `resolveLidInBackground()` no webhook ja faz o UPDATE no banco quando consegue resolver
+- A unica peca faltante era o endpoint no Baileys
 
-## Resumo de Arquivos
+## Fluxo Apos a Correcao
+
+```text
+Contato LID envia mensagem
+       |
+baileys-webhook recebe
+       |
+Cria contato com whatsapp_lid (sem phone)
+       |
+Chama resolveLidInBackground()
+       |
+GET /sessions/{name}/contacts/{lid}@lid  <-- AGORA EXISTE
+       |
+Baileys usa onWhatsApp() para resolver
+       |
+Se encontrou: UPDATE contacts SET phone = numero_real
+       |
+Frontend exibe o numero formatado
+```
+
+## Arquivos Alterados
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `supabase/functions/baileys-webhook/index.ts` | Converter `getPublicUrl` para caminho relativo |
-| `supabase/functions/download-whatsapp-media/index.ts` | Converter `getPublicUrl` para caminho relativo |
-| `src/pages/Atendimento.tsx` | Adicionar `resolveMediaUrl` helper para URLs internas |
-| `src/components/atendimento/MediaAutoDownloader.tsx` | Converter `getPublicUrl` para caminho relativo |
+| `deploy/baileys/src/baileys.ts` | Adicionar funcao `getContactInfo` |
+| `deploy/baileys/src/index.ts` | Adicionar rota GET `/sessions/:name/contacts/:jid` |
 
 ## Apos implementar
 
-1. **Publicar** no Lovable
+1. Publicar no Lovable
 2. Na VPS: `cd /opt/sistema && sudo bash deploy/scripts/update.sh`
-3. Enviar uma nova mensagem de audio/imagem para testar
-4. Mensagens antigas com URL interna serao corrigidas automaticamente pelo helper no frontend
+3. Enviar mensagem de um numero que aparece como "Contato #XXXXXX"
+4. O numero real deve aparecer apos a resolucao automatica
+
+**Nota:** Contatos LID antigos serao resolvidos automaticamente quando enviarem uma nova mensagem. Para resolver todos de uma vez, seria necessario um script de migracao separado (opcional).
