@@ -1,108 +1,99 @@
 
-# Mostrar Numero do WhatsApp para Contatos LID
 
-## Situacao Atual
+# Corrigir Exclusao de Contatos e Conversas
 
-Quando um contato envia mensagem usando WhatsApp LID (identificador interno do WhatsApp), o sistema mostra "Contato #XXXXXX" porque:
+## Problema 1: Erro ao excluir contatos
 
-1. O campo `phone` do contato fica vazio (so tem `whatsapp_lid`)
-2. O `baileys-webhook` ja tenta resolver o LID chamando `/sessions/{name}/contacts/{lid}@lid` no servidor Baileys
-3. **Porem, esse endpoint NAO existe no servidor Baileys** - o `index.ts` nao tem essa rota
-4. A resolucao falha silenciosamente e o contato continua sem telefone
+A edge function `bulk-delete-contacts` NAO esta registrada no `config.toml`. Isso significa que a verificacao JWT padrao esta ativada, e como o token enviado pelo navegador nao passa pela validacao interna do Supabase (a funcao ja faz sua propria validacao de auth), a chamada retorna erro.
 
-## Solucao
+**Correcao:** Adicionar `[functions.bulk-delete-contacts]` com `verify_jwt = false` no `config.toml`.
 
-Adicionar o endpoint de consulta de contatos no servidor Baileys, que usa a funcao `sock.onWhatsApp()` para verificar se um LID corresponde a um numero real.
+## Problema 2: Conversa nao desaparece apos excluir
 
-### Alteracao 1: `deploy/baileys/src/baileys.ts`
+O hook `useDeleteConversation` deleta mensagens e depois a conversa, mas:
+- A tabela `conversation_tags` pode ter registros vinculados que bloqueiam a exclusao (foreign key)
+- O `refetchInterval: 3000` e o canal realtime re-buscam as conversas imediatamente, fazendo parecer que a conversa ainda existe
+- A invalidacao do cache acontece no `onSuccess`, mas o refetch automatico pode trazer dados antigos antes do banco processar
 
-Exportar uma nova funcao `getContactInfo` que usa a API do Baileys para buscar informacoes do contato:
+**Correcao:**
+1. Deletar `conversation_tags` antes de deletar mensagens e a conversa
+2. Remover otimisticamente a conversa do cache antes de esperar o banco confirmar
+3. Garantir que a conversa selecionada seja limpa imediatamente
+
+## Detalhes Tecnicos
+
+### Arquivo 1: `supabase/config.toml`
+Adicionar entrada para a funcao bulk-delete-contacts:
+```toml
+[functions.bulk-delete-contacts]
+verify_jwt = false
+```
+
+### Arquivo 2: `src/hooks/useConversations.ts` - `useDeleteConversation`
+Atualizar para deletar conversation_tags antes e usar invalidacao otimista:
 
 ```typescript
-export async function getContactInfo(sessionName: string, jid: string) {
-  const session = sessions.get(sessionName);
-  if (!session) return null;
-  if (session.status !== 'connected') return null;
+export function useDeleteConversation() {
+  const queryClient = useQueryClient();
 
-  try {
-    // Tentar buscar o contato no store interno do Baileys
-    const contact = await session.sock.onWhatsApp(jid);
-    if (contact && contact.length > 0) {
-      return {
-        jid: contact[0].jid,
-        exists: contact[0].exists,
-        phone: contact[0].jid?.replace('@s.whatsapp.net', '') || null
-      };
-    }
-    return null;
-  } catch (err) {
-    logger.error({ err, jid }, 'Error getting contact info');
-    return null;
-  }
+  return useMutation({
+    mutationFn: async (conversationId: string) => {
+      // 1. Deletar tags da conversa
+      await supabase
+        .from('conversation_tags')
+        .delete()
+        .eq('conversation_id', conversationId);
+
+      // 2. Deletar mensagens
+      await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', conversationId);
+
+      // 3. Deletar a conversa
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', conversationId);
+
+      if (error) throw error;
+    },
+    onMutate: async (conversationId) => {
+      // Cancelar refetches pendentes
+      await queryClient.cancelQueries({ queryKey: ['conversations'] });
+
+      // Remover otimisticamente do cache
+      queryClient.setQueriesData(
+        { queryKey: ['conversations'] },
+        (old: any) => old?.filter((c: any) => c.id !== conversationId) ?? []
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      toast.success('Conversa excluida!');
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      toast.error('Erro ao excluir conversa: ' + error.message);
+    },
+  });
 }
 ```
 
-### Alteracao 2: `deploy/baileys/src/index.ts`
+### Arquivo 3: `src/hooks/useBulkConversationActions.ts`
+Mesma correcao para exclusao em massa: deletar `conversation_tags` antes.
 
-Adicionar a rota GET `/sessions/:name/contacts/:jid`:
-
-```typescript
-app.get('/sessions/:name/contacts/:jid', async (req, res) => {
-  try {
-    const sessionName = req.params.name;
-    const jid = req.params.jid;
-    const result = await getContactInfo(sessionName, jid);
-    
-    if (!result) {
-      return res.status(404).json({ success: false, error: 'Contact not found' });
-    }
-    
-    res.json({ success: true, data: result });
-  } catch (error) {
-    res.status(500).json({ success: false, error: (error as Error).message });
-  }
-});
-```
-
-### Sem alteracoes no frontend
-
-O frontend ja esta preparado:
-- `getContactDisplayName()` ja mostra o telefone formatado quando o campo `phone` existe
-- `resolveLidInBackground()` no webhook ja faz o UPDATE no banco quando consegue resolver
-- A unica peca faltante era o endpoint no Baileys
-
-## Fluxo Apos a Correcao
-
-```text
-Contato LID envia mensagem
-       |
-baileys-webhook recebe
-       |
-Cria contato com whatsapp_lid (sem phone)
-       |
-Chama resolveLidInBackground()
-       |
-GET /sessions/{name}/contacts/{lid}@lid  <-- AGORA EXISTE
-       |
-Baileys usa onWhatsApp() para resolver
-       |
-Se encontrou: UPDATE contacts SET phone = numero_real
-       |
-Frontend exibe o numero formatado
-```
-
-## Arquivos Alterados
+## Resumo
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `deploy/baileys/src/baileys.ts` | Adicionar funcao `getContactInfo` |
-| `deploy/baileys/src/index.ts` | Adicionar rota GET `/sessions/:name/contacts/:jid` |
+| `supabase/config.toml` | Registrar `bulk-delete-contacts` com `verify_jwt = false` |
+| `src/hooks/useConversations.ts` | Deletar tags antes da conversa + update otimista do cache |
+| `src/hooks/useBulkConversationActions.ts` | Deletar tags antes da conversa em exclusao em massa |
 
 ## Apos implementar
 
 1. Publicar no Lovable
 2. Na VPS: `cd /opt/sistema && sudo bash deploy/scripts/update.sh`
-3. Enviar mensagem de um numero que aparece como "Contato #XXXXXX"
-4. O numero real deve aparecer apos a resolucao automatica
-
-**Nota:** Contatos LID antigos serao resolvidos automaticamente quando enviarem uma nova mensagem. Para resolver todos de uma vez, seria necessario um script de migracao separado (opcional).
+3. Testar exclusao de contato (individual e em massa)
+4. Testar exclusao de conversa (deve sumir imediatamente)
