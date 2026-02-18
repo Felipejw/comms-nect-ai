@@ -1,66 +1,140 @@
 
-# Corrigir Upload e Download de Audio na VPS
 
-## Problema 1: "Bucket not found" ao enviar arquivo
+# Corrigir Upload e Download de Midia na VPS
 
-O hook `useFileUpload.ts` tenta usar o bucket `chat-attachments` primeiro. Se falha, tenta criar o bucket via edge function `admin-write` -- que na VPS pode apontar para o Lovable Cloud em vez do Supabase local. O fallback final usa `whatsapp-media`, mas so chega la apos duas falhas.
+## Problemas Identificados
 
-### Solucao
+### Problema 1: "new row violates row-level security policy" ao enviar audio
 
-Alterar `useFileUpload.ts` para tentar `whatsapp-media` como bucket primario (que e o bucket garantido no `init.sql` da VPS com todas as policies corretas) e `chat-attachments` como fallback.
+A secao de storage no `init.sql` esta dentro de um unico bloco `DO/EXCEPTION` (linhas 989-1068). Se qualquer policy falha na criacao (ex: conflito de nomes), o `EXCEPTION` captura o erro e **nenhuma das policies seguintes e criada**. Resultado: o bucket `whatsapp-media` existe mas nao tem permissao de INSERT para usuarios autenticados.
 
-**Arquivo:** `src/hooks/useFileUpload.ts`
-- Inverter a ordem dos buckets: `whatsapp-media` primeiro, `chat-attachments` depois
-- Remover a tentativa de criar bucket via `admin-write` (desnecessaria e causa problemas na VPS)
-- Simplificar a logica de fallback
+Alem disso, o bucket `whatsapp-media` tem uma lista restrita de `allowed_mime_types` que **nao inclui `audio/webm`** (formato padrao de gravacao de audio no navegador).
 
----
+### Problema 2: Audios recebidos nao carregam
 
-## Problema 2: Audios recebidos nao carregam
+O `MediaAutoDownloader` tenta baixar midia do endpoint `GET /sessions/{name}/messages/{id}/media` no servidor Baileys. **Esse endpoint nao existe.** O servidor Baileys so tem endpoints para criar/listar sessoes e enviar mensagens. A funcao `downloadMediaMessage` do Baileys ja e usada internamente (no processamento de mensagens recebidas), mas nao esta exposta via HTTP.
 
-O `MediaAutoDownloader` chama a edge function `download-whatsapp-media` via `supabase.functions.invoke()`. Na VPS, o cliente Supabase agora aponta para o banco local, mas as edge functions do Lovable Cloud nao tem acesso ao Baileys server da VPS.
+A midia ja e enviada como base64 no webhook, mas se o upload para o storage falha (por causa das policies quebradas), a `media_url` fica nula e o `MediaAutoDownloader` tenta baixar de um endpoint que nao existe.
 
-O problema e que o `download-whatsapp-media` precisa:
-1. Consultar `system_settings` para obter a URL do Baileys server
-2. Fazer download da midia do Baileys
-3. Salvar no storage local
+## Solucao
 
-Na VPS, as edge functions rodam no Lovable Cloud e nao conseguem acessar o Baileys server (que esta na rede interna da VPS).
+### 1. Corrigir policies de storage no `init.sql`
 
-### Solucao
+Separar cada bucket em seu proprio bloco `DO/EXCEPTION` independente para que uma falha nao afete os outros. Adicionar `audio/webm` e `audio/wav` aos tipos permitidos. Usar `TO authenticated` explicitamente nas policies de INSERT.
 
-Alterar o `MediaAutoDownloader` para tentar baixar a midia diretamente do Baileys server local antes de chamar a edge function. Isso funciona porque o navegador do usuario ja tem acesso ao dominio da VPS.
+**Arquivo:** `deploy/supabase/init.sql` (linhas 989-1068)
 
-**Arquivo:** `src/components/atendimento/MediaAutoDownloader.tsx`
-- Adicionar tentativa de download direto via Baileys API (lendo `baileys_server_url` das `system_settings`)
-- Se o download direto funcionar, fazer upload para o storage local e atualizar a mensagem
-- Manter a edge function como fallback
+### 2. Adicionar endpoint de download de midia no servidor Baileys
 
----
+Criar a rota `GET /sessions/:name/messages/:messageId/media` que:
+- Busca a mensagem no store interno do Baileys
+- Usa `downloadMediaMessage` para baixar o conteudo
+- Retorna como JSON `{ base64, mimetype }` ou como binario
 
-## Resumo das alteracoes
+**Arquivos:**
+- `deploy/baileys/src/baileys.ts` - exportar nova funcao `downloadMedia(sessionName, messageId)`
+- `deploy/baileys/src/index.ts` - adicionar rota GET
+
+### 3. Remover restricao de mime types do bucket
+
+O bucket `whatsapp-media` passara a aceitar qualquer tipo de arquivo (removendo `allowed_mime_types` e `file_size_limit`), pois a validacao ja e feita no codigo. Isso evita problemas futuros com formatos nao previstos.
+
+### 4. Guardar mensagens para download posterior
+
+Para que o endpoint de download funcione, o Baileys precisa manter as mensagens em memoria. Adicionar um store de mensagens simples no `baileys.ts`.
+
+## Detalhes Tecnicos
+
+### Alteracoes em `deploy/supabase/init.sql`
+
+Substituir o bloco unico de storage (linhas 989-1068) por blocos independentes:
+
+```text
+-- Bucket: chat-attachments
+DO $$ BEGIN
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('chat-attachments', 'chat-attachments', true)
+  ON CONFLICT (id) DO NOTHING;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Authenticated users can upload chat attachments" ON storage.objects;
+  CREATE POLICY "Authenticated users can upload chat attachments"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'chat-attachments');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+-- (repetir para SELECT e DELETE)
+
+-- Bucket: whatsapp-media (SEM restricao de mime types)
+DO $$ BEGIN
+  INSERT INTO storage.buckets (id, name, public)
+  VALUES ('whatsapp-media', 'whatsapp-media', true)
+  ON CONFLICT (id) DO UPDATE SET public = true;
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  DROP POLICY IF EXISTS "Anyone can upload whatsapp media" ON storage.objects;
+  CREATE POLICY "Anyone can upload whatsapp media"
+  ON storage.objects FOR INSERT TO authenticated
+  WITH CHECK (bucket_id = 'whatsapp-media');
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+-- (repetir para SELECT, UPDATE, DELETE)
+```
+
+### Alteracoes em `deploy/baileys/src/baileys.ts`
+
+Adicionar store de mensagens e funcao de download:
+
+```text
+// Store de mensagens para download posterior
+const messageStore = new Map<string, Map<string, proto.IWebMessageInfo>>();
+
+// Na funcao processIncomingMessage, armazenar mensagem:
+// messageStore.get(sessionName)?.set(msgId, msg);
+
+// Nova funcao exportada:
+export async function downloadMedia(sessionName, messageId) {
+  const session = sessions.get(sessionName);
+  const msg = messageStore.get(sessionName)?.get(messageId);
+  if (!session || !msg) return null;
+
+  const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+    logger, reuploadRequest: session.sock.updateMediaMessage
+  });
+
+  return { base64: buffer.toString('base64'), mimetype: ... };
+}
+```
+
+### Alteracoes em `deploy/baileys/src/index.ts`
+
+Adicionar nova rota:
+
+```text
+// Download de midia de mensagem
+app.get('/sessions/:name/messages/:messageId/media', async (req, res) => {
+  const { name, messageId } = req.params;
+  const result = await downloadMedia(name, messageId);
+  if (!result) return res.status(404).json({ error: 'Media not found' });
+  res.json(result);
+});
+```
+
+## Resumo de arquivos alterados
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `src/hooks/useFileUpload.ts` | Inverter ordem dos buckets, remover criacao via admin-write |
-| `src/components/atendimento/MediaAutoDownloader.tsx` | Adicionar download direto via Baileys antes da edge function |
+| `deploy/supabase/init.sql` | Separar policies de storage em blocos independentes, remover restricao de mime types |
+| `deploy/baileys/src/baileys.ts` | Adicionar store de mensagens e funcao `downloadMedia` |
+| `deploy/baileys/src/index.ts` | Adicionar endpoint GET `/sessions/:name/messages/:messageId/media` |
 
-## Detalhes tecnicos
+## Apos implementar
 
-### useFileUpload.ts - Nova logica
+1. **Publicar** o projeto no Lovable
+2. Na VPS, executar: `cd /opt/sistema && sudo bash deploy/scripts/update.sh`
+3. Executar o SQL de correcao no banco local da VPS (sera fornecido como comando para rodar via `psql`)
 
-```text
-1. Tentar upload no bucket 'whatsapp-media' (garantido no init.sql)
-2. Se falhar com erro de bucket, tentar 'chat-attachments'
-3. Se ambos falharem, mostrar erro
-```
-
-### MediaAutoDownloader.tsx - Nova logica
-
-```text
-1. Buscar configuracao do Baileys nas system_settings
-2. Tentar download direto: GET {baileysUrl}/sessions/{session}/messages/{msgId}/media
-3. Se obtiver o arquivo, fazer upload para storage local (whatsapp-media)
-4. Se falhar, tentar via edge function (fallback original)
-5. Se tudo falhar, mostrar botao "Tentar novamente"
-```
