@@ -1,140 +1,83 @@
 
+# Corrigir Midia Recebida (Audio e Imagem)
 
-# Corrigir Upload e Download de Midia na VPS
+## Problema Raiz Identificado
 
-## Problemas Identificados
+A funcao `storeMediaFromBase64` no `baileys-webhook` usa `supabaseClient.storage.getPublicUrl()` para gerar a URL da midia. O cliente Supabase dentro da edge function e criado com `SUPABASE_URL = http://kong:8000` (URL interna do Docker).
 
-### Problema 1: "new row violates row-level security policy" ao enviar audio
+Resultado: a `media_url` salva no banco e algo como:
+```text
+http://kong:8000/storage/v1/object/public/whatsapp-media/TES/msgid.ogg
+```
 
-A secao de storage no `init.sql` esta dentro de um unico bloco `DO/EXCEPTION` (linhas 989-1068). Se qualquer policy falha na criacao (ex: conflito de nomes), o `EXCEPTION` captura o erro e **nenhuma das policies seguintes e criada**. Resultado: o bucket `whatsapp-media` existe mas nao tem permissao de INSERT para usuarios autenticados.
+O navegador NAO consegue acessar `http://kong:8000` — essa URL so existe dentro da rede Docker. Por isso:
+- Audios recebidos ficam carregando para sempre
+- Imagens recebidas nao aparecem
 
-Alem disso, o bucket `whatsapp-media` tem uma lista restrita de `allowed_mime_types` que **nao inclui `audio/webm`** (formato padrao de gravacao de audio no navegador).
-
-### Problema 2: Audios recebidos nao carregam
-
-O `MediaAutoDownloader` tenta baixar midia do endpoint `GET /sessions/{name}/messages/{id}/media` no servidor Baileys. **Esse endpoint nao existe.** O servidor Baileys so tem endpoints para criar/listar sessoes e enviar mensagens. A funcao `downloadMediaMessage` do Baileys ja e usada internamente (no processamento de mensagens recebidas), mas nao esta exposta via HTTP.
-
-A midia ja e enviada como base64 no webhook, mas se o upload para o storage falha (por causa das policies quebradas), a `media_url` fica nula e o `MediaAutoDownloader` tenta baixar de um endpoint que nao existe.
+O envio funciona porque o upload e feito pelo navegador (que usa `https://app.chatbotwhatsapp.store` como base URL).
 
 ## Solucao
 
-### 1. Corrigir policies de storage no `init.sql`
+Substituir a URL interna (`http://kong:8000`) pela URL publica do site na `media_url` salva no banco.
 
-Separar cada bucket em seu proprio bloco `DO/EXCEPTION` independente para que uma falha nao afete os outros. Adicionar `audio/webm` e `audio/wav` aos tipos permitidos. Usar `TO authenticated` explicitamente nas policies de INSERT.
+### Alteracao 1: `supabase/functions/baileys-webhook/index.ts`
 
-**Arquivo:** `deploy/supabase/init.sql` (linhas 989-1068)
+Na funcao `storeMediaFromBase64`, apos obter a `publicUrl`, substituir o prefixo interno pelo externo:
 
-### 2. Adicionar endpoint de download de midia no servidor Baileys
+```typescript
+// Antes (gera URL interna):
+return publicUrlData.publicUrl;
 
-Criar a rota `GET /sessions/:name/messages/:messageId/media` que:
-- Busca a mensagem no store interno do Baileys
-- Usa `downloadMediaMessage` para baixar o conteudo
-- Retorna como JSON `{ base64, mimetype }` ou como binario
-
-**Arquivos:**
-- `deploy/baileys/src/baileys.ts` - exportar nova funcao `downloadMedia(sessionName, messageId)`
-- `deploy/baileys/src/index.ts` - adicionar rota GET
-
-### 3. Remover restricao de mime types do bucket
-
-O bucket `whatsapp-media` passara a aceitar qualquer tipo de arquivo (removendo `allowed_mime_types` e `file_size_limit`), pois a validacao ja e feita no codigo. Isso evita problemas futuros com formatos nao previstos.
-
-### 4. Guardar mensagens para download posterior
-
-Para que o endpoint de download funcione, o Baileys precisa manter as mensagens em memoria. Adicionar um store de mensagens simples no `baileys.ts`.
-
-## Detalhes Tecnicos
-
-### Alteracoes em `deploy/supabase/init.sql`
-
-Substituir o bloco unico de storage (linhas 989-1068) por blocos independentes:
-
-```text
--- Bucket: chat-attachments
-DO $$ BEGIN
-  INSERT INTO storage.buckets (id, name, public)
-  VALUES ('chat-attachments', 'chat-attachments', true)
-  ON CONFLICT (id) DO NOTHING;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  DROP POLICY IF EXISTS "Authenticated users can upload chat attachments" ON storage.objects;
-  CREATE POLICY "Authenticated users can upload chat attachments"
-  ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'chat-attachments');
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
--- (repetir para SELECT e DELETE)
-
--- Bucket: whatsapp-media (SEM restricao de mime types)
-DO $$ BEGIN
-  INSERT INTO storage.buckets (id, name, public)
-  VALUES ('whatsapp-media', 'whatsapp-media', true)
-  ON CONFLICT (id) DO UPDATE SET public = true;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  DROP POLICY IF EXISTS "Anyone can upload whatsapp media" ON storage.objects;
-  CREATE POLICY "Anyone can upload whatsapp media"
-  ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK (bucket_id = 'whatsapp-media');
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
--- (repetir para SELECT, UPDATE, DELETE)
+// Depois (converte para URL relativa):
+const publicUrl = publicUrlData.publicUrl;
+// Remove internal Docker URL prefix, keep only the path
+const storagePath = publicUrl.replace(/^https?:\/\/[^/]+/, '');
+return storagePath; // ex: /storage/v1/object/public/whatsapp-media/TES/msgid.ogg
 ```
 
-### Alteracoes em `deploy/baileys/src/baileys.ts`
+Fazer a mesma correcao nos outros pontos onde `getPublicUrl` e usado no mesmo arquivo (linhas ~392-406 no fallback inline download).
 
-Adicionar store de mensagens e funcao de download:
+### Alteracao 2: `src/pages/Atendimento.tsx`
 
-```text
-// Store de mensagens para download posterior
-const messageStore = new Map<string, Map<string, proto.IWebMessageInfo>>();
+Quando `media_url` for um caminho relativo (comeca com `/storage/`), o frontend precisa prefixa-lo com a URL base do Supabase. Adicionar um helper:
 
-// Na funcao processIncomingMessage, armazenar mensagem:
-// messageStore.get(sessionName)?.set(msgId, msg);
-
-// Nova funcao exportada:
-export async function downloadMedia(sessionName, messageId) {
-  const session = sessions.get(sessionName);
-  const msg = messageStore.get(sessionName)?.get(messageId);
-  if (!session || !msg) return null;
-
-  const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
-    logger, reuploadRequest: session.sock.updateMediaMessage
-  });
-
-  return { base64: buffer.toString('base64'), mimetype: ... };
-}
+```typescript
+const resolveMediaUrl = (url: string) => {
+  if (!url) return url;
+  // Se ja e uma URL absoluta, usar como esta
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    // Se for URL interna do Docker, converter para relativa
+    if (url.includes('kong:8000') || url.includes('localhost:')) {
+      return url.replace(/^https?:\/\/[^/]+/, '');
+    }
+    return url;
+  }
+  return url; // caminhos relativos funcionam naturalmente no mesmo dominio
+};
 ```
 
-### Alteracoes em `deploy/baileys/src/index.ts`
+Aplicar `resolveMediaUrl()` em todos os locais onde `message.media_url` e usado como `src` (imagem, audio, video, documento).
 
-Adicionar nova rota:
+### Alteracao 3: `supabase/functions/download-whatsapp-media/index.ts`
 
-```text
-// Download de midia de mensagem
-app.get('/sessions/:name/messages/:messageId/media', async (req, res) => {
-  const { name, messageId } = req.params;
-  const result = await downloadMedia(name, messageId);
-  if (!result) return res.status(404).json({ error: 'Media not found' });
-  res.json(result);
-});
-```
+Mesma correcao: ao retornar a URL publica, usar caminho relativo em vez da URL interna.
 
-## Resumo de arquivos alterados
+### Alteracao 4 (opcional): `src/components/atendimento/MediaAutoDownloader.tsx`
+
+Mesma correcao no `getPublicUrl` do upload local.
+
+## Resumo de Arquivos
 
 | Arquivo | Alteracao |
 |---------|-----------|
-| `deploy/supabase/init.sql` | Separar policies de storage em blocos independentes, remover restricao de mime types |
-| `deploy/baileys/src/baileys.ts` | Adicionar store de mensagens e funcao `downloadMedia` |
-| `deploy/baileys/src/index.ts` | Adicionar endpoint GET `/sessions/:name/messages/:messageId/media` |
+| `supabase/functions/baileys-webhook/index.ts` | Converter `getPublicUrl` para caminho relativo |
+| `supabase/functions/download-whatsapp-media/index.ts` | Converter `getPublicUrl` para caminho relativo |
+| `src/pages/Atendimento.tsx` | Adicionar `resolveMediaUrl` helper para URLs internas |
+| `src/components/atendimento/MediaAutoDownloader.tsx` | Converter `getPublicUrl` para caminho relativo |
 
 ## Apos implementar
 
-1. **Publicar** o projeto no Lovable
-2. Na VPS, executar: `cd /opt/sistema && sudo bash deploy/scripts/update.sh`
-3. Executar o SQL de correcao no banco local da VPS (sera fornecido como comando para rodar via `psql`)
-
+1. **Publicar** no Lovable
+2. Na VPS: `cd /opt/sistema && sudo bash deploy/scripts/update.sh`
+3. Enviar uma nova mensagem de audio/imagem para testar
+4. Mensagens antigas com URL interna serao corrigidas automaticamente pelo helper no frontend
