@@ -10,17 +10,7 @@ export function useBulkDeleteConversations() {
 
   return useMutation({
     mutationFn: async (conversationIds: string[]) => {
-      // Delete messages first
-      for (const id of conversationIds) {
-        const { error: messagesError } = await supabase
-          .from("messages")
-          .delete()
-          .eq("conversation_id", id);
-        
-        if (messagesError) throw messagesError;
-      }
-      
-      // Delete conversation tags
+      // 1. Delete conversation tags first (FK constraint)
       for (const id of conversationIds) {
         const { error: tagsError } = await supabase
           .from("conversation_tags")
@@ -30,7 +20,17 @@ export function useBulkDeleteConversations() {
         if (tagsError) throw tagsError;
       }
       
-      // Delete conversations
+      // 2. Delete messages
+      for (const id of conversationIds) {
+        const { error: messagesError } = await supabase
+          .from("messages")
+          .delete()
+          .eq("conversation_id", id);
+        
+        if (messagesError) throw messagesError;
+      }
+      
+      // 3. Delete conversations
       const { error } = await supabase
         .from("conversations")
         .delete()
