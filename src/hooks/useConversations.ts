@@ -443,7 +443,13 @@ export function useDeleteConversation() {
 
   return useMutation({
     mutationFn: async (conversationId: string) => {
-      // First delete all messages in the conversation
+      // 1. Delete conversation tags first (FK constraint)
+      await supabase
+        .from('conversation_tags')
+        .delete()
+        .eq('conversation_id', conversationId);
+
+      // 2. Delete messages
       const { error: messagesError } = await supabase
         .from('messages')
         .delete()
@@ -451,7 +457,7 @@ export function useDeleteConversation() {
 
       if (messagesError) throw messagesError;
 
-      // Then delete the conversation
+      // 3. Delete the conversation
       const { error } = await supabase
         .from('conversations')
         .delete()
@@ -459,11 +465,19 @@ export function useDeleteConversation() {
 
       if (error) throw error;
     },
+    onMutate: async (conversationId) => {
+      await queryClient.cancelQueries({ queryKey: ['conversations'] });
+      queryClient.setQueriesData(
+        { queryKey: ['conversations'] },
+        (old: any) => old?.filter((c: any) => c.id !== conversationId) ?? []
+      );
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
       toast.success('Conversa excluída!');
     },
     onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
       toast.error('Erro ao excluir conversa: ' + error.message);
     },
   });

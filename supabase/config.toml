@@ -74,3 +74,6 @@ verify_jwt = false
 
 [functions.save-system-setting]
 verify_jwt = false
+
+[functions.bulk-delete-contacts]
+verify_jwt = false
