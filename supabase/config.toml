@@ -77,3 +77,6 @@ verify_jwt = false
 
 [functions.bulk-delete-contacts]
 verify_jwt = false
+
+[functions.bootstrap-admin]
+verify_jwt = false
