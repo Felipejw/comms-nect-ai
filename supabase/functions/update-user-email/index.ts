@@ -25,6 +25,16 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`Updating email for user ${userId} to ${newEmail}`)
 
+    // Bloquear alteração de email do admin@admin.com
+    const { data: targetUser } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (targetUser?.user?.email === "admin@admin.com") {
+      console.error("[update-email] Cannot update email for protected admin user");
+      return new Response(
+        JSON.stringify({ error: "Este usuário é protegido e não pode ter o email alterado" }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 403 }
+      );
+    }
+
     // Atualizar email no auth.users usando API Admin
     const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
       userId,

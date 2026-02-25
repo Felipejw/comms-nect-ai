@@ -544,14 +544,18 @@ export default function Usuarios() {
                             <Edit className="w-4 h-4 mr-2" />
                             Editar
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleOpenResetPassword(user.user_id, user.name)}>
-                            <Key className="w-4 h-4 mr-2" />
-                            Redefinir senha
-                          </DropdownMenuItem>
-                          <DropdownMenuItem className="text-destructive" onClick={() => handleOpenDelete({ id: user.user_id, name: user.name })}>
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            Excluir
-                          </DropdownMenuItem>
+                          {user.email !== "admin@admin.com" && (
+                            <DropdownMenuItem onClick={() => handleOpenResetPassword(user.user_id, user.name)}>
+                              <Key className="w-4 h-4 mr-2" />
+                              Redefinir senha
+                            </DropdownMenuItem>
+                          )}
+                          {user.email !== "admin@admin.com" && (
+                            <DropdownMenuItem className="text-destructive" onClick={() => handleOpenDelete({ id: user.user_id, name: user.name })}>
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Excluir
+                            </DropdownMenuItem>
+                          )}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

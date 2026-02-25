@@ -88,6 +88,16 @@ const handler = async (req: Request): Promise<Response> => {
 
     console.log(`[reset-password] Resetting password for user: ${userId}`);
 
+    // 3.5 Bloquear alteração de senha do admin@admin.com
+    const { data: targetUser } = await supabaseAdmin.auth.admin.getUserById(userId);
+    if (targetUser?.user?.email === "admin@admin.com") {
+      console.error("[reset-password] Cannot reset password for protected admin user");
+      return new Response(
+        JSON.stringify({ error: "Este usuário é protegido e não pode ter a senha alterada" }),
+        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // 4. Resetar senha via Admin API
     const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(
       userId,
