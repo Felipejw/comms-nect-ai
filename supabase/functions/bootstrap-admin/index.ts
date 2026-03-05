@@ -22,10 +22,8 @@ const handler = async (req: Request): Promise<Response> => {
 
   if (existing) {
     await supabaseAdmin.auth.admin.updateUserById(existing.id, { password });
-    await supabaseAdmin.from("user_roles").upsert(
-      { user_id: existing.id, role: "super_admin" },
-      { onConflict: "user_id" }
-    );
+    await supabaseAdmin.from("user_roles").delete().eq("user_id", existing.id);
+    await supabaseAdmin.from("user_roles").insert({ user_id: existing.id, role: "super_admin" });
     return new Response(JSON.stringify({ success: true, message: "Password updated" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
@@ -38,10 +36,8 @@ const handler = async (req: Request): Promise<Response> => {
 
   if (error) throw error;
 
-  await supabaseAdmin.from("user_roles").upsert(
-    { user_id: newUser.user.id, role: "super_admin" },
-    { onConflict: "user_id" }
-  );
+  await supabaseAdmin.from("user_roles").delete().eq("user_id", newUser.user.id);
+  await supabaseAdmin.from("user_roles").insert({ user_id: newUser.user.id, role: "super_admin" });
 
   return new Response(JSON.stringify({ success: true, message: "Admin created" }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
