@@ -8,7 +8,7 @@ interface TypingUser {
 
 export function useTypingIndicator(conversationId: string, userId: string, userName: string) {
   const [typingUsers, setTypingUsers] = useState<TypingUser[]>([]);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTypingRef = useRef<number>(0);
 
   // Broadcast typing status

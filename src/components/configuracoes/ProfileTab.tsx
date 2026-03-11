@@ -14,7 +14,7 @@ export function ProfileTab() {
   const { user, profile } = useAuth();
   const updateProfile = useUpdateProfile();
 
-  const isProtectedAdmin = profile?.email === "admin@admin.com";
+  const isProtectedAdmin = user?.email === "admin@admin.com";
 
   const [profileData, setProfileData] = useState({
     name: profile?.name || "",
@@ -172,6 +172,7 @@ export function ProfileTab() {
                 setProfileData((prev) => ({ ...prev, name: e.target.value }))
               }
               placeholder="Seu nome"
+              disabled={isProtectedAdmin}
             />
           </div>
           <div className="space-y-2">
@@ -186,10 +187,12 @@ export function ProfileTab() {
                 setProfileData((prev) => ({ ...prev, phone: e.target.value }))
               }
               placeholder="+55 (11) 99999-9999"
+              disabled={isProtectedAdmin}
             />
           </div>
         </div>
 
+        {!isProtectedAdmin && (
         <Button onClick={handleSaveProfile} disabled={isSavingProfile}>
           {isSavingProfile ? (
             <>
@@ -200,6 +203,7 @@ export function ProfileTab() {
             "Salvar Alterações"
           )}
         </Button>
+        )}
       </div>
 
       {/* Change Email - hidden for protected admin */}
