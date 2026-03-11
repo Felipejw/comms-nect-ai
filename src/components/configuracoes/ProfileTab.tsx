@@ -14,7 +14,7 @@ export function ProfileTab() {
   const { user, profile } = useAuth();
   const updateProfile = useUpdateProfile();
 
-  const isProtectedAdmin = profile?.email === "admin@admin.com";
+  const isProtectedAdmin = user?.email === "admin@admin.com";
 
   const [profileData, setProfileData] = useState({
     name: profile?.name || "",
